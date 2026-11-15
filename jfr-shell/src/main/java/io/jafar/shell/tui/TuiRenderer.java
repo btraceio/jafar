@@ -146,6 +146,7 @@ public final class TuiRenderer {
     try {
       backendName = " | [" + BackendRegistry.getInstance().getCurrent().getId() + "]";
     } catch (Exception ignore) {
+      // no backend selected: leave the name out of the status bar
     }
 
     String altMod = (TuiContext.PLATFORM == TuiContext.Platform.MACOS) ? "Opt" : "Alt";

@@ -175,7 +175,12 @@ won varied between runs: `Code generation failed for datadog.ProfilerCounter` ap
 and in none of the next five. It looked flaky and was deterministic per ordering.
 
 The cache is now keyed by `UntypedCodeGenerator.cacheKey` — name, id and full reachable layout —
-and each chunk keeps its own id → deserializer map. The typed path was already safe: it chooses its
+and each chunk keeps its own id → deserializer map. Since then the cache has outgrown the parse: a
+`ParsingContext` hands one cache to every untyped parse made from it, so the same key now has to
+hold between *recordings*. It does, for the reason it holds between chunks — a chunk is
+self-contained, so two chunks of one file are no more related than two files — and
+`SharedUntypedDeserializerCacheTest` pins it with recordings that reuse an id, rename a field, or
+differ only in a `@Timestamp` annotation. The typed path was already safe: it chooses its
 cache by `MetadataFingerprint`. Anything else that outlives a chunk must not be keyed by a class id
 either.
 
@@ -279,6 +284,29 @@ The same evaluator read `chunks/0/size` one way in `evaluate` (`0` is the chunk 
 in `evaluateValues` (`0` is a field of every chunk), so the projection found no field `0` and
 returned an empty list — in jfr-shell too, where it had always printed `(no values)`. When two
 methods interpret one path, check that they agree segment by segment.
+
+### A fact about one chunk is not a fact about the recording
+
+Metadata is per chunk: two chunks of one recording need not declare the same types, and the ids of
+the types they share are chunk-local. Anything derived from metadata and kept "once per session" is
+therefore one chunk's answer applied to all of them, and chunks are parsed in parallel, so which
+chunk's answer it is depends on timing.
+
+`TypedJafarParserImpl` kept the set of types reachable from the registered handlers in one field
+of the chunk listener, computed by whichever chunk read its metadata first, and each chunk's
+constant-pool filter was a lambda that read that field. In `tck-test.jfr` only the first of the two
+chunks declares `jdk.GCHeapSummary`. When both chunks reached `onMetadata` together, the second
+could store its set (no `jdk.types.GCWhen`) after the first had stored its own, and the first chunk
+then skipped its `GCWhen` pool: `JFRGCHeapSummary.when()` returned `null` for all 1,892 events, with
+no error. It showed up as `SharedParsingContextStressTest` failing on CI and passing on the re-run
+of the same commit (`expected ... when=After GC ... but was ... when=null`, or the reverse when the
+reference parse was the one hit). Locally it failed once in 78 runs on an idle machine, 4 times in
+40 with the cores oversubscribed, and 5 times in 150 cold single parses under the same load. Even without the race only one chunk ever got a
+filter. The set is now a local of each chunk's `onMetadata`, and `TypedChunkTypeFilterTest` pins
+that every chunk has a filter answering from its own metadata.
+
+Two things to take from it. A lambda that reads a field is not a snapshot: capture a local. And
+when a test fails rarely, load the machine before concluding anything from a run of passes.
 
 ---
 

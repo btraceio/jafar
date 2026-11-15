@@ -69,23 +69,6 @@ final class CodeGenerator {
     }
   }
 
-  private static void addLog(MethodVisitor mv, String msg) {
-    if (LOGS_ENABLED) {
-      mv.visitFieldInsn(
-          Opcodes.GETSTATIC,
-          Type.getInternalName(System.class),
-          "out",
-          Type.getDescriptor(PrintStream.class));
-      mv.visitLdcInsn(msg);
-      mv.visitMethodInsn(
-          Opcodes.INVOKEVIRTUAL,
-          Type.getInternalName(PrintStream.class),
-          "println",
-          Type.getMethodDescriptor(Type.VOID_TYPE, Type.getType(String.class)),
-          false);
-    }
-  }
-
   private static void addLogIntWithMsg(MethodVisitor mv, String msg) {
     if (LOGS_ENABLED) {
       // [int]

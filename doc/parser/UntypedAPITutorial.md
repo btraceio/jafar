@@ -578,6 +578,12 @@ try (UntypedJafarParser parser = ctx.newUntypedParser(Paths.get("recording2.jfr"
 System.out.println("Total uptime: " + ctx.uptime() + "ns");
 ```
 
+Parsers made from the same context reuse each other's generated event deserializers: the second
+parse of a recording, or of another recording written by the same JVM build and agents, generates
+none. Recordings from different producers usually share nothing, because the cache key includes
+the type ids the producer assigned. `UntypedJafarParser.open(path)` takes no context and reuses
+nothing between parses.
+
 ### Early Termination
 
 Stop parsing when done:

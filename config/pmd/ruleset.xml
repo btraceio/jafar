@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Jafar PMD ruleset: the clean-code gate that runs on every module's main sources
+  (pmdMain, part of `check`, so every `./gradlew build` runs it; CI is the final gate).
+
+  This is deliberately a curated, high-signal list, not a category dump: every rule here
+  must be green on the current tree or it does not ship. Rules that produce historical
+  noise are not added — the point is to catch *new* mistakes, not to relitigate old code.
+  Spotless (google-java-format) already owns formatting; nothing here overlaps with it.
+
+  When adding a rule: run `./gradlew pmdMain` first. If the current tree violates it,
+  either fix the code or leave the rule out — a ruleset that ships red teaches agents
+  to ignore it.
+-->
+<ruleset name="jafar"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+  <description>Jafar clean-code rules (see doc/agents/Architecture.md, "Clean code")</description>
+
+  <!-- Real bugs first: swallowed exceptions and empty control flow hide failures.
+       (PMD 7 folded the old EmptyIf/While/For/Try/Finally rules into EmptyControlStatement.) -->
+  <rule ref="category/java/errorprone.xml/EmptyCatchBlock">
+    <properties>
+      <property name="allowCommentedBlocks" value="true"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/errorprone.xml/EmptyFinalizer"/>
+  <rule ref="category/java/codestyle.xml/EmptyControlStatement"/>
+  <!-- Calling an overridable method from a constructor leaks `this` before the object
+       is built. Deliberate template methods suppress this at the call site with
+       @SuppressWarnings("PMD.ConstructorCallsOverridableMethod") and a comment saying why
+       (AbstractMetadataElement is the example: its ctor dispatches to the overridable
+       onAttribute hook through a final processAttributes()). -->
+  <rule ref="category/java/errorprone.xml/ConstructorCallsOverridableMethod"/>
+
+  <!-- Dead code: unused locals, fields and methods are how abstractions rot quietly.
+       Reflection or updater-driven members (invisible to this analysis) suppress at
+       the member with @SuppressWarnings("PMD.Unused...") and a comment saying why
+       (JafarMcpServer's test-dispatched legacy handlers; MetadataClass.typeSkipper via
+       AtomicReferenceFieldUpdater). Everything else is genuinely dead: delete it. -->
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
+</ruleset>

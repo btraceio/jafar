@@ -70,6 +70,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A typed parse no longer returns `null` for a constant-pool field when another chunk of the
+  recording does not declare the field's type.** The typed parser indexes only the constant pools
+  of types its handlers reference, and kept that set of types, computed from one chunk's metadata,
+  in a field shared by the threads parsing the chunks. When two chunks computed it at the same
+  time, the set from a chunk without the type could be applied to the chunk that has it: its pool
+  was skipped and every reference into it read as `null`, with no error (in `tck-test.jfr`, all
+  1,892 `jdk.GCHeapSummary.when` values of an affected parse). The set is now computed per
+  chunk. A side effect: chunks after the first are filtered too, where they used to
+  index every pool
+- **A typed parser made from `ParsingContextImpl.EMPTY` handed every handler a `null` event.** The
+  constant was initialized before its class had looked up the deserializer factory, so its typed
+  parses had none. `TypedJafarParser.open(path)` and `ParsingContext.create()` were not affected
 - **A chunk's duration was converted as ticks; it is nanoseconds.** `Control.ChunkInfo.duration()`
   and the Go parser's `ChunkInfo.Duration()` multiplied the header's duration by the tick length.
   That is the same number only at 1e9 ticks per second: on a JDK 21 recording with a tick
@@ -88,6 +100,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `events/T | count()` returned 316,700 to 317,233 for 320,000 events of a 32-chunk recording, and
   `sum`, `stats`, `groupBy`, plain row listings, projections, decorations and flame graphs shared
   the defect. The consumers now guard their state (#204)
+- **Untyped parsers made from one `ParsingContext` share their generated deserializers.** The
+  context returned a new deserializer cache for every `run()`, so two untyped parsers of one
+  context, or two runs of one parser, each generated every event deserializer again, although the
+  documentation said the context shares them. The context now owns one cache for all its untyped
+  parses, strategies and `withParallelism` views; it is emptied when it holds more than 4096
+  deserializers. `UntypedJafarParser.open(path)`, which takes no context, keeps a cache per parse
 - **A corrupted or truncated JFR recording is rejected with an `IOException` that says what is
   wrong with it.** The Java parser followed sizes, counts and offsets from the file without
   checking them, so a damaged recording failed with whatever the JDK threw on the way

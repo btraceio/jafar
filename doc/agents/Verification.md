@@ -111,7 +111,7 @@ In this repository the recurring multiplicities are:
 | JfrPath execution | via `JfrSelector` when supplied; via `JfrPathEvaluator` directly when not |
 | LLM backends | `llm-anthropic`, and `llm-openai`'s `openai` + `ollama` profiles |
 | Untyped parsers | Java (`parser-core`) and Go (`go-parser`) — see the [parity rule](../../AGENTS.md#rules) |
-| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses) and generated `EventStreamGenerated` (`parser-codegen`, not reachable from the public API) — held equal by `GeneratedUntypedParityTest` |
+| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses when `parser-codegen` is not on the classpath, or with `-Djafar.untyped.generated=false`) and generated `EventStreamGenerated` (`parser-codegen`; what `UntypedJafarParser` uses otherwise, `UntypedJafarParserImpl.usesGeneratedReader`) — held equal by `GeneratedUntypedParityTest` |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
 | Chunks | one parsing task per chunk on a pool of `max(availableProcessors - 2, 1)` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
 
@@ -144,6 +144,25 @@ In this repository the recurring multiplicities are:
 > self-contained, so a recording concatenated with itself is a valid N-chunk recording
 > (`AbortProbe.fixtures`, Go's `TestMultipleChunks`). Constant-pool ids are chunk-local as well: key
 > anything per id on (chunk, id).
+
+> **Case file — one chunk's answer kept for every chunk.** `SharedParsingContextStressTest` failed
+> once in a CI run and once in 18 local runs with `round 3 parse 0 (typed): chunk 1 differs from the
+> reference first at index 0: expected … when=After GC … but was … when=null`. The order was
+> right and the value was not, so neither the test's per-chunk bookkeeping nor the shared
+> `ParsingContext` was involved. `TypedJafarParserImpl`'s listener computed the set of types its
+> handlers reference from a chunk's metadata, `if (referencedTypes == null)`, into a field shared
+> by the chunk threads, and the type filter that decides which constant pools are indexed read
+> that field each time it was asked. Chunk 2 of `tck-test.jfr` (a different producer) declares
+> neither `jdk.GCHeapSummary` nor `jdk.types.GCWhen`. When both chunk threads found the field
+> unset and chunk 2 wrote last, chunk 1 skipped its `GCWhen` pool and all 1,892 `when()` values
+> were `null`, with no error. Forcing that interleaving with two latches gave 1,892 nulls in 3 of 3
+> runs. The set is now a local of each chunk's metadata callback. Three things to keep: **when a
+> comparison fails, read which side of it is wrong before suspecting the harness** (the message was
+> lost the first time because a later run overwrote the JUnit XML; loop to the first failure and
+> copy the report); **a lambda that reads a field is not a snapshot of it**; and **anything derived
+> from one chunk's metadata belongs to that chunk**, since the other chunks of a recording need not
+> declare the same types. `TypedTypeFilterChunkRaceTest` lines the two chunk threads up at the
+> computation and fails in 30 of 30 runs on the old code, at `ActiveProcessorCount` 1, 4 and 16.
 
 > **Case file — two modes of one shell.** `unified/Shell` gained a terminal-free script mode with
 > a private constructor taking `out` and `err` — the same names as its fields. The anonymous

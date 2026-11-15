@@ -21,7 +21,6 @@ import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -215,7 +214,6 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
           private final AtomicBoolean aborted = new AtomicBoolean();
           private final ThreadLocal<Control> control =
               ThreadLocal.withInitial(() -> new ControlImpl(aborted));
-          private Set<String> referencedTypes = null;
 
           @Override
           public void onRecordingStart(ParserContext context) {
@@ -289,10 +287,14 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
               }
             }
 
-            // Build transitive closure of all types referenced by registered handlers (once per
-            // session)
-            if (!globalHandlerMap.isEmpty() && referencedTypes == null) {
-              referencedTypes = computeReferencedTypes(context, globalHandlerMap.keySet());
+            // Build the transitive closure of all types referenced by registered handlers, for
+            // this chunk, from this chunk's metadata. Chunks are parsed in parallel and need not
+            // declare the same types, so the closure is a local captured by this chunk's filter:
+            // a field shared by the chunks let one chunk's filter read another chunk's closure,
+            // and constant pools the handlers needed were then never loaded.
+            if (!globalHandlerMap.isEmpty()) {
+              Set<String> referencedTypes =
+                  computeReferencedTypes(context, globalHandlerMap.keySet());
               lContext.setTypeFilter(t -> t != null && referencedTypes.contains(t.getName()));
             }
 
@@ -497,13 +499,5 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     }
 
     return referencedTypes;
-  }
-
-  private static CustomByteBuffer openJfrStream(Path jfrFile) {
-    try {
-      return CustomByteBuffer.map(jfrFile, Integer.MAX_VALUE);
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
   }
 }

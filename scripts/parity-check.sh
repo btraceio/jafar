@@ -79,8 +79,9 @@ if [[ $java_touched -eq $go_touched ]]; then
     exit 0
 fi
 
-side="go-parser (Go)"
-[[ $go_touched -eq 1 ]] && side="parser-core (Java)"
+# the side that changed; the statement is about the other one
+side="parser-core (Java)"
+[[ $go_touched -eq 1 ]] && side="go-parser (Go)"
 
 if [[ -n "$base" ]]; then
     printf 'parity-check: this branch changes the untyped parser on the %s side only.\n' "$side"

@@ -192,9 +192,8 @@ public final class TreeRenderer {
             pager.println(indent(indent + 3) + "annotations:");
             for (Object v : fa) pager.println(indent(indent + 4) + String.valueOf(v));
           }
-          if (pathVisited.contains(fieldType)) {
-            // avoid cycles in current path; show type only
-          } else {
+          // cycle guard: a type already on the current path is shown as a name only
+          if (!pathVisited.contains(fieldType)) {
             pathVisited.add(fieldType);
             // Inline the subtree under this field if metadata is available
             renderMetadataRecursive(

@@ -254,7 +254,6 @@ public final class HdumpPathEvaluator {
         new java.util.PriorityQueue<>(topOp.n() + 1, comparator);
 
     long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
     stream.forEach(
         obj -> {
@@ -281,7 +280,6 @@ public final class HdumpPathEvaluator {
       Stream<HeapObject> stream, long totalObjects, GroupByOp op) {
     Map<List<Object>, GroupAccumulator> groups = new LinkedHashMap<>();
     long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
     stream.forEach(
         obj -> {
@@ -343,7 +341,6 @@ public final class HdumpPathEvaluator {
 
     // Build filtered stream
     Stream<HeapObject> stream = dump.getObjects();
-    long totalObjects = dump.getObjectCount();
     String filterDesc = "";
 
     // Filter by type pattern
@@ -395,7 +392,6 @@ public final class HdumpPathEvaluator {
         new BoundedGroupAccumulator(groupByOp, bufferSize, topOp.n());
 
     long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
     stream.forEach(
         obj -> {
@@ -432,7 +428,6 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> evaluateObjectsStreamingCountFromStream(
       Stream<HeapObject> stream, long totalObjects) {
     long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
     stream.forEach(
         obj -> {
@@ -449,7 +444,6 @@ public final class HdumpPathEvaluator {
       Stream<HeapObject> stream, long totalObjects, SumOp op) {
     double[] sum = {0.0};
     long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
     stream.forEach(
         obj -> {
@@ -475,7 +469,6 @@ public final class HdumpPathEvaluator {
     double[] max = {Double.NEGATIVE_INFINITY};
     long[] count = {0};
     long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
     stream.forEach(
         obj -> {
@@ -578,14 +571,12 @@ public final class HdumpPathEvaluator {
   private static class BoundedGroupAccumulator {
     private final Map<List<Object>, GroupAccumulator> groups;
     private final int bufferSize;
-    private final int targetSize;
     private final GroupByOp op;
     private long totalAccumulated = 0;
 
     BoundedGroupAccumulator(GroupByOp op, int bufferSize, int targetSize) {
       this.op = op;
       this.bufferSize = bufferSize;
-      this.targetSize = targetSize;
       this.groups = new LinkedHashMap<>();
     }
 
@@ -648,11 +639,6 @@ public final class HdumpPathEvaluator {
    * type.
    */
   private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
-      HeapDump dump, Query query, PipelineOp firstOp, List<PipelineOp> remainingOps) {
-    return evaluateObjectsStreamingWithFilters(dump, null, query, firstOp, remainingOps);
-  }
-
-  private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
       HeapDump dump,
       HeapSession session,
       Query query,
@@ -661,9 +647,7 @@ public final class HdumpPathEvaluator {
 
     // Build filtered stream
     Stream<HeapObject> stream;
-    long totalObjects = dump.getObjectCount();
     String filterDesc = "";
-    boolean usedClassIndex = false;
 
     // Try to use class-instances index for type filtering
     if (query.typePattern() != null && dump.hasClassInstancesIndex()) {
@@ -681,7 +665,6 @@ public final class HdumpPathEvaluator {
               .map(Optional::get)
               .flatMap(cls -> dump.getObjectsOfClassFast(cls));
 
-      usedClassIndex = true;
     } else {
       // SLOW PATH: Full scan with per-object filtering
       stream = dump.getObjects();
@@ -1296,7 +1279,7 @@ public final class HdumpPathEvaluator {
       case SelectOp s -> applySelect(results, s);
       case TopOp t -> applyTop(results, t);
       case GroupByOp g -> applyGroupBy(results, g);
-      case CountOp c -> applyCount(results);
+      case CountOp _ -> applyCount(results);
       case SumOp s -> applySum(results, s);
       case StatsOp s -> applyStats(results, s);
       case SortByOp s -> applySortBy(results, s);
@@ -1370,14 +1353,14 @@ public final class HdumpPathEvaluator {
                 if (v instanceof Number n) return (long) Math.ceil(n.doubleValue());
                 return v;
               });
-      case PathToRootOp p -> {
+      case PathToRootOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "pathToRoot requires heap session context (not available after streaming aggregation)");
         }
         yield applyPathToRoot(session.getHeapDump(), results);
       }
-      case RetentionPathsOp r -> {
+      case RetentionPathsOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "retentionPaths requires heap session context (not available after streaming aggregation)");
@@ -1405,56 +1388,56 @@ public final class HdumpPathEvaluator {
         }
         yield applyDominators(session, session.getHeapDump(), results, d);
       }
-      case WasteOp w -> {
+      case WasteOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "waste requires heap session context (not available after streaming aggregation)");
         }
         yield applyWaste(session.getHeapDump(), results);
       }
-      case ObjectsOp o -> {
+      case ObjectsOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "objects requires heap session context (not available after streaming aggregation)");
         }
         yield applyObjectsDrillDown(session, results);
       }
-      case ThreadOwnerOp t -> {
+      case ThreadOwnerOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "threadOwner requires heap session context (not available after streaming aggregation)");
         }
         yield applyThreadOwner(session, results);
       }
-      case DominatedSizeOp d -> {
+      case DominatedSizeOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "dominatedSize requires heap session context (not available after streaming aggregation)");
         }
         yield applyDominatedSize(session, results);
       }
-      case EstimateAgeOp e -> {
+      case EstimateAgeOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "estimateAge requires heap session context (not available after streaming aggregation)");
         }
         yield applyEstimateAge(session, results);
       }
-      case WhatIfOp w -> {
+      case WhatIfOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "whatif() requires heap session context (not available after streaming aggregation)");
         }
         yield applyWhatIf(session, results);
       }
-      case CacheStatsOp c -> {
+      case CacheStatsOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "cacheStats() requires heap session context (not available after streaming aggregation)");
         }
         yield applyCacheStats(session, results);
       }
-      case JoinOp j ->
+      case JoinOp _ ->
           throw new IllegalStateException(
               "join() is not supported in this context (no multi-session access available)");
     };
@@ -1738,23 +1721,6 @@ public final class HdumpPathEvaluator {
     return String.valueOf(v1).compareTo(String.valueOf(v2));
   }
 
-  @SuppressWarnings({"unchecked", "rawtypes"})
-  private static Comparable<Object> toComparable(Object value) {
-    if (value == null) return o -> 1; // nulls sort last
-    if (value instanceof Comparable comp) {
-      // Wrap to handle type mismatch gracefully (e.g., comparing Integer with String)
-      return o -> {
-        if (o == null) return -1;
-        if (value.getClass().isInstance(o)) {
-          return comp.compareTo(o);
-        }
-        // Fall back to string comparison for incompatible types
-        return String.valueOf(value).compareTo(String.valueOf(o));
-      };
-    }
-    return o -> String.valueOf(value).compareTo(String.valueOf(o));
-  }
-
   private static List<Map<String, Object>> applyGroupBy(
       List<Map<String, Object>> results, GroupByOp op) {
     // Group by the specified fields
@@ -1926,7 +1892,7 @@ public final class HdumpPathEvaluator {
       case FieldRef fr -> isRetainedField(fr.field());
       case BinaryExpr be ->
           valueExprReferencesRetained(be.left()) || valueExprReferencesRetained(be.right());
-      case NumberLiteral nl -> false;
+      case NumberLiteral _ -> false;
     };
   }
 
@@ -1944,10 +1910,10 @@ public final class HdumpPathEvaluator {
           g.groupFields().stream().anyMatch(HdumpPathEvaluator::isRetainedField)
               || (g.valueExpr() != null && valueExprReferencesRetained(g.valueExpr()));
       // Ops that always produce or consume retained sizes
-      case PathToRootOp p -> true;
-      case RetentionPathsOp r -> true;
-      case CheckLeaksOp c -> true;
-      case CacheStatsOp c -> true;
+      case PathToRootOp _ -> true;
+      case RetentionPathsOp _ -> true;
+      case CheckLeaksOp _ -> true;
+      case CacheStatsOp _ -> true;
       default -> false;
     };
   }

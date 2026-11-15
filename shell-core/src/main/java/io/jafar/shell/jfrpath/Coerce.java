@@ -69,6 +69,7 @@ final class Coerce {
       try {
         return Double.parseDouble(String.valueOf(actual));
       } catch (Exception ignore) {
+        // not a number; fall through to string comparison
       }
     }
     if (lit instanceof String) return String.valueOf(actual);

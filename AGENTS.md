@@ -119,7 +119,8 @@ Key components:
 ./gradlew build                       # everything; generates the test recordings first
 ./get_resources.sh                    # optional: real recordings instead of generated ones
 ./gradlew test                        # tests
-./gradlew spotlessApply               # formatting (every build runs spotlessCheck)
+./gradlew spotlessApply                # formatting (every build runs spotlessCheck)
+./gradlew :arch-tests:test             # architectural invariants (also runs in build)
 ./gradlew :jfr-shell:run --console=plain
 ```
 

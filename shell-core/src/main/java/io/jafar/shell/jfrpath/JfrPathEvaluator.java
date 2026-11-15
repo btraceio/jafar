@@ -568,7 +568,7 @@ public final class JfrPathEvaluator {
     JfrPath.PipelineOp op = query.pipeline.get(0);
     List<Map<String, Object>> result =
         switch (op) {
-          case JfrPath.CountOp c -> aggregations.aggregateCount(session, query);
+          case JfrPath.CountOp _ -> aggregations.aggregateCount(session, query);
           case JfrPath.StatsOp s -> aggregations.aggregateStats(session, query, s.valuePath);
           case JfrPath.QuantilesOp q ->
               aggregations.aggregateQuantiles(session, query, q.valuePath, q.qs);
@@ -639,7 +639,7 @@ public final class JfrPathEvaluator {
               profiles.aggregateFlameGraph(session, query, fg.direction);
           case JfrPath.AsDateTimeOp ft ->
               aggregations.aggregateAsDateTime(session, query, ft.valuePath, ft.format);
-          case JfrPath.CrossrefOp cr -> aggregations.aggregateCrossref(session, query);
+          case JfrPath.CrossrefOp _ -> aggregations.aggregateCrossref(session, query);
         };
 
     // Apply remaining operators in sequence
@@ -846,7 +846,7 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows, JfrPath.PipelineOp op) {
     return switch (op) {
       case JfrPath.TopOp top -> RowOps.applyTop(rows, top.n, top.byPath, top.ascending);
-      case JfrPath.CountOp c -> RowOps.applyCount(rows);
+      case JfrPath.CountOp _ -> RowOps.applyCount(rows);
       case JfrPath.SumOp sum -> RowOps.applySum(rows, sum.valuePath);
       case JfrPath.StatsOp stats -> RowOps.applyStats(rows, stats.valuePath);
       case JfrPath.SelectOp sel -> RowOps.applySelect(rows, sel);
@@ -889,7 +889,7 @@ public final class JfrPathEvaluator {
       case JfrPath.AsDateTimeOp ft -> RowOps.applyAsDateTime(rows, ft.valuePath, ft.format);
       // Not a row transform: it re-reads the whole recording, so on rows it would silently
       // ignore what came before it.
-      case JfrPath.CrossrefOp cr -> throw new IllegalArgumentException(Aggregations.CROSSREF_USAGE);
+      case JfrPath.CrossrefOp _ -> throw new IllegalArgumentException(Aggregations.CROSSREF_USAGE);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
   }

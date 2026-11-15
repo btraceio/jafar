@@ -40,13 +40,14 @@ executed (R4); the wall-time column records what those runs measured.
 | Formatting (Spotless) | Every Java file is formatted; runs on every Gradle build | `./gradlew spotlessCheck` | `./gradlew spotlessApply` rewrites the files — no baseline to regenerate | none | inside every Gradle invocation in `tests` | 9.5 s warm, local (measured) |
 | Named failing set (R6) | Test failures are compared by name, never by count — a constant count can hide a swap | `scripts/failing-set.sh \| diff <before-dump> -` (dump before the change, diff after) | none — the standing set is dumped per run; compare dumps with `diff` | none | `aggregate-test-report` | the script is sub-second; the cost is the test suite's, not its own |
 | API compatibility (japicmp per plane) | Every gated surface in `gradle/api-surfaces.txt` (parser, shell, mcp, hdump, pprof, otlp, llm-spi) is compared against the released bytes of its plane's baseline; incompatible changes beyond the accepted ratchet need a statement | `scripts/api-baseline.sh && ./gradlew apiCompat && scripts/api-break-check.sh --reports build/reports/api-compat --base origin/main` | shrink `gradle/api-accepted-breaks.txt`: entries are deleted when a baseline tag moves past the break; adding one is growth and needs the statement | `API-Break: <non-empty reason>` in the PR body | `api-compat` (comparison, every trigger) + `api-break` (statement, pull_request only) | 12.6 s warm with cached baselines, full chain (measured); ~26 s cold — 12.5 s baseline materialization + 13 s `apiCompat` (measured); CI numbers land with the PR that adds the jobs |
-| Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, and parser implementation code declares no mutable static field | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
+| Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, parser implementation code declares no mutable static field, `api` packages never expose implementation types in public or protected signatures, nothing outside `pprof-parser`/`otlp-parser` depends on their internals, the six ServiceLoader SPI types remain interfaces, and SPI packages never depend on their implementations | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
+| Clean code (PMD) | Every Java module's main sources pass the curated ruleset `config/pmd/ruleset.xml`: no empty catch blocks, no empty control statements, no constructors calling overridable methods, no dead locals/fields/methods. A member that is invisible to the analysis on purpose (reflection-driven, updater-driven, a template-method ctor) suppresses at the member with `@SuppressWarnings("PMD.<Rule>")` and a comment saying why | `./gradlew pmdMain` | none — the ruleset ships green by policy; a rule that fires on the tree does not ship, and a finding is fixed or suppressed with its reason, never waved through | the in-code `@SuppressWarnings("PMD.<Rule>")` plus reason comment | `tests` (both matrix cells, inside every Gradle `check`) | 59 s all modules cold (measured); 14–28 s single module warm |
 | Allocation budgets | Every public parse entry point (untyped JFR, typed JFR, hdump, pprof, otlp) allocates, per fixed fixture, at most the bytes recorded in `gradle/allocation-budgets.properties` on its own JDK cell — chunk-pool decode threads included | `./gradlew :parser-core:allocationTest :parser-codegen:allocationTest :hdump-parser:test :pprof-parser:test :otlp-parser:test :parser-core:allocationTest8 :parser-codegen:allocationTest8` | edit `gradle/allocation-budgets.properties` (re-measure per the recipe in its comments); lowering a value is free, a raise needs the statement | `Alloc-Budget: <non-empty reason>` in the PR body | `tests` (both matrix cells) + `alloc-budget` (statement, pull_request only) | the four allocation tasks ~4 s each warm (measured; ~17 s combined); hdump/pprof/otlp add no task — their budget tests run inside the modules' existing `test` suites |
 | Golden value dumps | Every corpus fixture — JFR: the committed two-chunk `tck-test.jfr` plus the two generated recordings; hdump, pprof, otlp: their deterministic builders' fixtures — is rendered to a sorted, value-complete canonical dump and compared against a committed digest plus per-type counts; the JFR digests cover events, constants and metadata | `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' --rerun`; `./gradlew :hdump-parser:cleanTest :pprof-parser:cleanTest :hdump-parser:test --tests '*Golden*' :pprof-parser:test --tests '*Golden*' --no-build-cache`; `./gradlew :otlp-parser:cleanTest :otlp-parser:test --tests '*Golden*' --no-build-cache` (the `cleanTest` + `--no-build-cache` pairs work around the same `--rerun` cache lie the allocation gate records) | `-Pjafar.golden.update --rerun` per fixture: `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :hdump-parser:test --tests '*HdumpGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :pprof-parser:test --tests '*PprofGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :otlp-parser:test --tests '*OtlpGoldenDumpTest' -Pjafar.golden.update --rerun` | none — an intended value change regenerates the golden and the diff *is* the review; a real recording that replaced a generated fixture is refused, never compared (the D1 skip below) | `tests` (JDK 21 cell, inside `./gradlew build`) | JFR suite 3.7–4.1 s warm (measured); hdump+pprof ~1.8 s combined, otlp ~1.8 s (measured) |
 | Jazzer regression corpus | The committed inputs under `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/` replay through the `@FuzzTest` target inside ordinary `:parser-core:test`; the cause-chain oracle fails on any `Error` anywhere in the chain and on any root cause that is neither `io.jafar.*` nor `IOException`, and bounds each input's runtime (the hang oracle) | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` | none — the corpus is the committed seeds; a new input is a hand-minimized crash file from a fuzz session, committed like any other change | the known-escapes allowlist below — a pinned escape, never a PR-body statement | `tests` (JDK 21 cell, inside `:parser-core:test`) | ~6 s warm (measured) |
 | Adversarial recordings | The six `adv-*` seeds regenerate byte-identically from the committed enum — drift fails naming the seed and the regen command — and each seed's parse delivers one pinned specific outcome: a named exception class plus message fragment, or an exact delivered-event count ("did not crash" is not an outcome) | `./gradlew :test-recordings:generateAdversarialRecordings :test-recordings:test` | `./gradlew :test-recordings:generateAdversarialRecordings` | none — drift is fixed, or the case is deliberately rebuilt and re-pinned in the diff | `tests` (JDK 21 cell: drift in `:test-recordings:test`, pinned outcomes in `:parser-core:test`) | ~2 s warm (measured) |
 | Known-escapes allowlist | An input listed in `parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` may escape the oracle only with exactly its pinned delivered throwable; an entry whose input no longer escapes FAILS "stale known-escape <sha>: remove the entry" — the list is shrink-only | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` (the oracle enforces it; `EscapeOracleTest` proves each rule permanently) | none — no test or tool ever writes the list; growth is a visible hand edit in the diff, always with a `# reason:` line | the list itself — there is deliberately no third PR-body statement (I1, D3) | `tests` (JDK 21 cell, inside `:parser-core:test`) | included in the corpus row's ~6 s |
-| Processor-count matrix (concurrency) | The three shell determinism nets, the pool-mirror abort tests, the JFR golden dumps and the shared-`ParsingContext` stress test all hold at both pool extremes — `-XX:ActiveProcessorCount=1` and `=16`, i.e. `StreamingChunkParser` pool sizes 1 and 14 — and every covered class's JUnit XML carries the `availableProcessors=<n> …` audit line proving the flag reached that JVM (R9) | `./gradlew -Pjafar.activeProcessorCount=1 :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun` — then the same command with `=16` | none — the nets are the oracle | none — a race must be fixed | `concurrency-matrix` (both cells) | measured as separate invocations in the step-5 reports: nets 10 s at =1 / 6 s at =16; abort + goldens ~4 s / ~3 s; stress ~8 s / ~7.3 s warm; the single combined invocation lands with the first CI run (see the subsection's R8 note) |
+| Processor-count matrix (concurrency) | The three shell determinism nets, the pool-mirror abort tests, the JFR golden dumps, the shared-`ParsingContext` stress test and the typed type-filter race test all hold at both pool extremes — `-XX:ActiveProcessorCount=1` and `=16`, i.e. `StreamingChunkParser` pool sizes 1 and 14 — and every covered class's JUnit XML carries the `availableProcessors=<n> …` audit line proving the flag reached that JVM (R9) | `./gradlew -Pjafar.activeProcessorCount=1 :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --tests '*TypedTypeFilterChunkRaceTest' --rerun` — then the same command with `=16` | none — the nets are the oracle | none — a race must be fixed | `concurrency-matrix` (both cells) | measured as separate invocations in the step-5 reports: nets 10 s at =1 / 6 s at =16; abort + goldens ~4 s / ~3 s; stress ~8 s / ~7.3 s warm; the single combined invocation lands with the first CI run (see the subsection's R8 note) |
 | Java/Go differential oracle | The Java and the Go untyped parser dump every corpus fixture plus the shared `go-parser/jfr/testdata` node-pool recordings under the one canonical line format (`JfrCanonicalDump` on the Java side, `go-parser/internal/differential` on the Go side), and the dumps must be identical modulo the root-caused allowlist: headers validated first (fixture sha256, event count vs line count, one-sided errors), then event totals and per-type histograms exact, then a line merge whose first mismatch names the event type, the field path and both lines | `./gradlew :parser-core:differentialTest --rerun` (needs `go` on PATH — a missing `go` fails the test naming PATH and the exact attempted command, never skips) | none — the allowlist `parser-core/src/test/resources/differential/allowlist.txt` is hand-edited and shrink-only; fixing a divergence is forced to shrink it | none — each allowlist entry documents a root-caused divergence with its proof in its `# reason:` line; a new divergence is fixed or root-caused, never waved through | `differential` (runs when `parser-core/`, `parser-codegen/` or `go-parser/` changes, and on every non-PR trigger) | ~9 s warm locally over the 6 fixtures (measured); the task deliberately sits outside `check` because it needs the Go toolchain |
 
 ## API evolution
@@ -85,7 +86,7 @@ rather than a code path.
 ## Architecture boundaries (ArchUnit freeze)
 
 **The rules.** The `arch-tests` module
-(`arch-tests/src/test/java/io/jafar/arch/`) runs five frozen ArchUnit rules,
+(`arch-tests/src/test/java/io/jafar/arch/`) runs nine frozen ArchUnit rules,
 in plain words:
 
 - **(a)** only the parser plane (`parser-core`, `parser-codegen`) may depend
@@ -101,7 +102,26 @@ in plain words:
   modules (shells, plugins, MCP, processors, tools) — the dependency direction
   is shells → shell-core → parser, never the reverse;
 - **(e)** classes in the parser modules' non-api packages declare no field
-  that is `static` and not `final` (synthetic fields are ignored).
+  that is `static` and not `final` (synthetic fields are ignored);
+- **(f)** within `parser-core`, `hdump-parser`, `pprof-parser` and
+  `otlp-parser`, classes in an `..api..` package never expose that module's
+  implementation types in public or protected *signatures* — parameters,
+  returns, throws, fields, supertypes, generic arguments included. Rule (c)
+  governs dependencies; this sharpens the api-facing half: an api factory may
+  construct an impl class behind the api type (`HeapDumpParser.parse` builds a
+  `HeapDumpImpl` behind `HeapDump`), but a signature may not leak one;
+- **(g)** only `pprof-parser` may depend on `io.jafar.pprof.internal..`, and
+  only `otlp-parser` on `io.jafar.otlp.internal..` — the pprof/otlp analogue
+  of rule (b);
+- **(h)** the ServiceLoader SPI types (`JfrBackend`, `ShellModule`,
+  `LlmBackend`, `HandlerFactory`, `DeserializerFactory`,
+  `UntypedEventStreamFactory`) remain interfaces — converting any of them
+  breaks every external implementation at once;
+- **(i)** the ServiceLoader SPIs never know their implementations: classes in
+  `io.jafar.shell.backend..` outside `..backend.impl..` never depend on
+  `io.jafar.shell.backend.impl..`, and classes in
+  `io.jafar.shell.core.llm..` never depend on `io.jafar.shell.llm..` —
+  backends are discovered, never hard-wired.
 
 **Membership comes from class dirs.** Every covered module's *compiled*
 classes are imported from `<module>/build/classes/java/main`, and module
@@ -139,6 +159,37 @@ failing and a passing check.
 - The store also freezes transitive bytecode dependencies (generic type
   arguments flowing through public signatures) that source-text reach-in
 counts do not include; all are frozen, so the ratchet still holds.
+
+## Clean code (PMD)
+
+**What it checks.** Every Java module's *main* sources are analyzed by PMD with the curated
+ruleset `config/pmd/ruleset.xml`, wired into `check` (so `./gradlew build` runs it) as a manual
+`pmdMain` task per module: no empty catch blocks, no empty control statements, no constructors
+calling overridable methods, no dead locals/fields/methods. A member that is deliberately
+invisible to that analysis — invoked reflectively by tests, written through an
+`AtomicReferenceFieldUpdater` by field name, or a template-method constructor dispatching to
+an overridable hook — suppresses at the member with `@SuppressWarnings("PMD.<Rule>")` and a
+comment saying why; the two living examples are `JafarMcpServer` (test-reflective legacy
+handlers) and `MetadataClass.typeSkipper` (updater-driven).
+
+**Ships green by policy.** A rule that fires on the current tree does not ship; a finding is
+fixed or suppressed with its reason, never waved through. When deleting dead code, keep the
+side effects: an "unused" local in a parser is often a stream-advancing read — drop the
+variable, keep the call.
+
+**Why not the Gradle `pmd` plugin.** The plugin registers a `pmd<SourceSet>` task for every
+source set and wires them into `check`, and those tasks depend on their source set's compile
+tasks. parser-core's MR-JAR source sets (`java9`/`java13`/`java21`) have auto-created compile
+tasks with no `--release` option that nothing in the tree executes (they fail on a JDK 8
+toolchain); the plugin would drag them into every build. One manual task per module, main
+sources only, keeps the graph exactly as it was.
+
+**R8 — what this gate does not see.**
+
+- Test sources: local shortcuts are allowed there, and keeping the gate on main sources
+  keeps the graph clean (above).
+- Reflection and updater patterns: invisible to static analysis; the suppression comment
+  is the honest record that a human confirmed the use.
 
 ## Allocation budgets
 
@@ -515,8 +566,8 @@ and the trailing space in the needle pins `=1` against `=16`.
 (`MultiChunkDeterminismTest`, `ConstantPoolChunkLocalityTest`,
 `JFRSessionDeterminismTest`), the pool-mirror abort tests
 (`EventDecodeFailureTest`, `GeneratedEventDecodeFailureTest`), the JFR
-golden dumps — their digests are identical at `=1` and `=16` — and the
-shared-`ParsingContext` stress test.
+golden dumps — their digests are identical at `=1` and `=16` — the
+shared-`ParsingContext` stress test, and `TypedTypeFilterChunkRaceTest`.
 
 **The stress test.** `SharedParsingContextStressTest` (parser-codegen) runs,
 through one shared `ParsingContext`, N=8 concurrent parses of `tck-test.jfr`
@@ -525,6 +576,54 @@ rounds. Each parse's per-chunk event sequences must `equals` a
 fresh-context reference exactly — bucketed by chunk ordinal, written only by
 the chunk's own pool thread — with no sleeps and no timing assertions;
 `@Timeout(10, MINUTES)` is a hang guard only.
+
+What the parses share: the typed ones, the context's `TypedParserContextFactory`
+and the process-wide `GlobalHandlerCache`; the untyped ones, the context's one
+`UntypedDeserializerCache` (`ParsingContextImpl.untypedContextFactory`). The
+stress test does not check that the cache is one instance — a parse with a
+cache of its own produces the same events. `SharedUntypedDeserializerCacheTest`
+does: it reads the cache instance off each chunk context and asserts a second
+parse generates nothing.
+
+> **Case file — the shared cache that was not shared.** Until that test
+> existed, `untypedContextFactory` returned a new factory, with a new cache,
+> on every `run()`. The stress test, this section and three Javadocs described
+> a cache shared through the `ParsingContext`; what the untyped half stressed
+> was the sharing between the chunk threads of one parse. Nothing was red: the
+> assertion compares events, and events are the same either way. Against that
+> code 7 of the new test's 12 cases fail, each on
+> `both parses must carry the context's one cache`. **When a test's name says
+> "shared", assert the identity of the shared thing.**
+
+**The typed failure this section used to call standing.** The stress test
+could fail on a *typed* parse: `round 3 parse 4 (typed): chunk 1 differs …
+expected … when=After GC … but was … when=null` — seen once in 7 runs at
+`=16` on a 4-core host, and recorded here as cause unknown. The cause is the
+race the next paragraph describes, fixed in `TypedJafarParserImpl` (#211): it
+needs no untyped parse and no shared `ParsingContext`, which is why 8
+concurrent typed-only parses, each with a context of its own, showed it too.
+With the fix the stress test and `TypedTypeFilterChunkRaceTest` passed 300
+consecutive runs at the default count on 4 cores.
+
+**The typed type-filter race test.** `TypedTypeFilterChunkRaceTest`
+(parser-codegen) provokes a race the stress test caught only once in 16
+and once in 18 consecutive local runs: `TypedJafarParserImpl` kept the set
+of types its handlers reference in one field shared by the chunk threads of a parse, so the set computed from a
+chunk that does not declare a type (`tck-test.jfr` chunk 2 has no
+`jdk.types.GCWhen`) could decide which constant pools another chunk indexed,
+and that chunk's references read as `null`. The test parses the recording 60
+times with two chunk threads and compares every `when()` of
+`jdk.GCHeapSummary` with a one-thread parse. It brings the two threads to
+the computation together through a handler factory's `bind` callback (the
+class comment says how) and asserts that this line-up happened in all 60
+parses, so losing the seam fails the test instead of weakening it. It asks
+for two chunk threads itself (`withParallelism(2)`), so both matrix cells
+exercise the same interleaving; it is in the matrix for the audit line and
+because the fix must hold at both counts. Without the fix it failed in 30 of
+30 runs (20 at the default count on 4 cores, 5 at `=1`, 5 at `=16`), each
+with "1892 of 1892 values are null", first at attempt 1 to 14 of 60. Its
+companion `TypedChunkTypeFilterTest` pins the cause without the interleaving:
+every chunk has a filter built from its own metadata.
 
 **The recorded fire cases (R5).** Both recorded races are probabilistic; each
 was re-run until it failed, then reverted (sha-verified against the
@@ -546,6 +645,10 @@ pre-mutation file):
   mutation runs). The `=1` outcome of that specific mutation was not
   separately recorded (R8): with pool = 1 each parse's chunks are
   serialized, so the same blindness as the first case is expected.
+  This was recorded while each untyped parse still had its own cache (see the
+  case file above), so the race it caught was between the chunk threads of
+  one parse; the mutation has not been re-run since the cache became one per
+  context (R8).
 
 **Times.** Measured warm, as separate invocations, in the step-5 task
 reports: the determinism nets 10 s at `=1` / 6 s at `=16`; the abort + golden

@@ -4,6 +4,7 @@ import io.jafar.shell.plugin.DependencyResolver.DependencyException;
 import io.jafar.shell.plugin.DependencyResolver.ResolutionResult;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -240,10 +241,8 @@ final class PluginInstaller {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       try (InputStream is = Files.newInputStream(jarPath);
           DigestInputStream dis = new DigestInputStream(is, digest)) {
-        byte[] buffer = new byte[8192];
-        while (dis.read(buffer) != -1) {
-          // Just reading to compute digest
-        }
+        // Drain the stream: reading through DigestInputStream is what updates the digest
+        dis.transferTo(OutputStream.nullOutputStream());
       }
       String actualChecksum = HexFormat.of().formatHex(digest.digest());
 

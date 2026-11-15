@@ -169,6 +169,7 @@ public final class Shell implements AutoCloseable {
       try {
         Files.createDirectories(histPath.getParent());
       } catch (Exception ignore) {
+        // history dir may be unwritable; history is best-effort
       }
     }
 
@@ -1853,17 +1854,20 @@ public final class Shell implements AutoCloseable {
     try {
       globalStore.clear();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
 
     try {
       sessions.closeAll();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
 
     if (history != null) {
       try {
         history.save();
       } catch (Exception ignore) {
+        // best-effort history save; shutdown continues
       }
     }
 

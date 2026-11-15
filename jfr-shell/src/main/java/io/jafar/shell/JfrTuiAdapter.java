@@ -29,12 +29,10 @@ import org.jline.reader.Completer;
  */
 public final class JfrTuiAdapter implements TuiAdapter {
 
-  private final SessionManager<?> sessions;
   private final Completer completer;
 
   @SuppressWarnings("unchecked")
   public JfrTuiAdapter(SessionManager<?> sessions, Object context) {
-    this.sessions = sessions;
     CommandDispatcher dispatcher = context instanceof CommandDispatcher cd ? cd : null;
     // Erasure-safe wildcard-to-Session view (see JfrModule.getCompleter); ShellCompleter
     // narrows per-call where it needs JFRSession, so a live session flows through safely.

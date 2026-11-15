@@ -108,6 +108,7 @@ final class PagedPrinter {
       try {
         return Math.max(5, Integer.parseInt(env.trim()));
       } catch (NumberFormatException ignore) {
+        // malformed JFR_SHELL_PAGE_SIZE: fall back to the default
       }
     }
     return 24; // conservative default

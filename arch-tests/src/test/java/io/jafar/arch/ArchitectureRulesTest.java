@@ -5,7 +5,7 @@ import com.tngtech.archunit.library.freeze.FreezingArchRule;
 import org.junit.jupiter.api.Test;
 
 /**
- * The boundary rules (a)–(e) as freeze rules (AC-2.1/AC-2.2): each rule is checked against the real
+ * The boundary rules (a)–(i) as freeze rules (AC-2.1/AC-2.2): each rule is checked against the real
  * module classes with the committed violation store ({@code
  * arch-tests/src/test/resources/archunit_store}), so the suite is green on the branch base and
  * fails only on NEW violations — existing reach-ins are grandfathered, never fixed here.
@@ -44,6 +44,32 @@ class ArchitectureRulesTest {
   @Test
   void ruleE_parserImplementationPackagesMustHaveNoMutableStaticFields() {
     frozen(ArchitectureRules.ruleE(MODULES));
+  }
+
+  @Test
+  void ruleF_apiSignaturesMustNotExposeImplementationTypes() {
+    for (ArchRule rule : ArchitectureRules.ruleF(MODULES)) {
+      frozen(rule);
+    }
+  }
+
+  @Test
+  void ruleG_outsidePprofAndOtlpMustNotReachIntoTheirInternals() {
+    for (ArchRule rule : ArchitectureRules.ruleG(MODULES)) {
+      frozen(rule);
+    }
+  }
+
+  @Test
+  void ruleH_spiTypesRemainInterfaces() {
+    frozen(ArchitectureRules.ruleH());
+  }
+
+  @Test
+  void ruleI_spiPackagesMustNotKnowTheirImplementations() {
+    for (ArchRule rule : ArchitectureRules.ruleI()) {
+      frozen(rule);
+    }
   }
 
   private static void frozen(ArchRule rule) {

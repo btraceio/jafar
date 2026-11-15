@@ -43,6 +43,14 @@ import org.junit.jupiter.api.Timeout;
  * deserializers for the typed ones), so the shared-context stress exercises it, not just the
  * generic reader (kb/design-concurrency item 2).
  *
+ * <p><b>What the parses share.</b> The typed ones share the context's {@code
+ * TypedParserContextFactory} and the process-wide {@code GlobalHandlerCache}. The untyped ones
+ * share the context's one {@code UntypedDeserializerCache}: in round 1 the four untyped parses race
+ * to generate each deserializer, in rounds 2 and 3 they only read. That this cache really is one
+ * instance across parses is asserted by {@code SharedUntypedDeserializerCacheTest}, not here; until
+ * that test existed each untyped parse had a cache of its own, and this test stressed only the
+ * sharing between the chunk threads of one parse while describing more.
+ *
  * <p><b>Why per-chunk sequences and not one flat list:</b> a chunk's events are delivered
  * sequentially, on the one pool thread that parses that chunk, so the per-chunk order is exact and
  * needs no synchronization; chunks themselves are parsed in parallel, so a single flat list would

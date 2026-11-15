@@ -30,6 +30,55 @@ documented gaps are in [Gates.md](Gates.md).
 - The repository ships no git hooks; do not set `core.hooksPath` for it — that would
   replace your own global hooks.
 
+## Architectural invariants
+
+The boundary rules live in the `arch-tests` module as frozen ArchUnit rules and are catalogued in
+[Gates.md](Gates.md#architecture-boundaries-archunit-freeze): the (a)–(i) plain-words list, the
+committed freeze store and the fire tests that prove each rule fires. The load-bearing ones, in one
+line each:
+
+- **(c)/(f)** — a module's `api` package is its public surface: no dependencies on its
+  implementation packages, and no implementation types in public or protected signatures
+  (generic arguments included). Factories may construct impl classes *in method bodies* —
+  `HeapDumpParser.parse` builds a `HeapDumpImpl` behind `HeapDump` — but signatures may not leak
+  them.
+- **(a)/(b)/(g)** — `impl`/`internal`/`index` packages are module-private.
+  `io.jafar.parser.internal_api` is the parser plane's shared internal contract; extending its
+  consumer list is an architecture decision, not a convenience import.
+- **(h)/(i)** — every extension point is a ServiceLoader-discovered SPI
+  (`JfrBackend`, `ShellModule`, `LlmBackend`, `HandlerFactory`, `DeserializerFactory`,
+  `UntypedEventStreamFactory`): the types stay interfaces, and the SPI packages never know their
+  implementations. An integration that special-cases a concrete backend defeats the plugin
+  architecture the shells are built on.
+- The published API surfaces are guarded by japicmp against the last release
+  ([Gates.md](Gates.md#api-evolution)); changing an SPI is a release decision — evolve compatibly
+  or deprecate first. The jfr-shell-tck is the behavioural net for backends.
+
+Existing reach-ins are grandfathered in the committed freeze store (shrink-only: a new one fails
+the build, a deliberate grandfathering is a visible hand edit). Run `./gradlew :arch-tests:test`
+locally in the dev loop — CI is the final gate, not the first place you learn.
+
+### Clean code
+
+Mechanically enforced on main sources by PMD (`./gradlew pmdMain`, part of `check`; ruleset:
+`config/pmd/ruleset.xml` — curated, must stay green): no empty catch blocks, no empty control
+statements, no constructors calling overridable methods, no dead locals/fields/methods. When a
+member is reflection-driven or updater-driven (invisible to the analysis), suppress at the member
+with `@SuppressWarnings("PMD.<Rule>")` and a comment saying why — see `JafarMcpServer` and
+`MetadataClass.typeSkipper` for the two living examples. Everything the ruleset flags that is not
+suppressed is genuinely dead: delete it, keep the side effects (an "unused" local in a parser is
+often a stream-advancing read — drop the variable, keep the call).
+
+Beyond the gates, the conventions the codebase already follows:
+
+- Keep public API minimal; package-private is the default, `public` earns its place.
+- Reach for the pattern the area already uses: Factory (api entry points), Strategy/Adapter
+  (shell output formats, providers), Command (command dispatch), sealed exhaustive hierarchies
+  for value types (`Value`, `BoolExpr`, `ValueExpr`), SPI for anything pluggable. The full
+  pattern inventory lives in `doc/cli/Architecture.md` (Design Patterns).
+- Prefer sealed types + exhaustive switches: the compiler catches the missed case.
+- Fail loud over fail quiet — except where a comment documents a deliberate best-effort catch.
+
 ## Parser APIs
 - **Typed API**: Uses interface definitions with `@JfrType("event.name")` annotations
 - **Untyped API**: Returns events as `Map<String, Object>` with wrapper types for arrays/complex values

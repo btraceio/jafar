@@ -219,7 +219,7 @@ jobs:
             :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun \
             :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun \
             :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun \
-            :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun
+            :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --tests '*TypedTypeFilterChunkRaceTest' --rerun
 
       # R9: a green task proves nothing about which JVM produced it. Every
       # covered class calls test-support's ProcessorCount.assertExpected() in
@@ -242,6 +242,7 @@ jobs:
             JfrGoldenDumpTest
             GeneratedEventDecodeFailureTest
             SharedParsingContextStressTest
+            TypedTypeFilterChunkRaceTest
           )
           needle="availableProcessors=${{ matrix.apc }} "
           status=0

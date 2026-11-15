@@ -75,11 +75,6 @@ public final class PluginManager {
     return r;
   }
 
-  private MavenResolver resolver() {
-    registry();
-    return resolver;
-  }
-
   private PluginInstaller installer() {
     registry();
     return installer;

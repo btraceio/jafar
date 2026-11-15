@@ -192,16 +192,4 @@ public final class TypeDiscovery {
 
     return false;
   }
-
-  /**
-   * Convert JFR type name to Java interface name. e.g., "jdk.ExecutionSample" ->
-   * "JFRExecutionSample"
-   *
-   * @param typeName JFR type name
-   * @return Java interface name
-   */
-  private String toJavaInterfaceName(String typeName) {
-    String simpleName = typeName.substring(typeName.lastIndexOf('.') + 1);
-    return "JFR" + simpleName;
-  }
 }
