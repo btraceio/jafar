@@ -2,8 +2,8 @@
 # jmh_trend.py — advisory JMH trend report: current run vs the previous run's results.
 #
 # The nightly workflow (.github/workflows/nightly-jmh.yml) runs the :parser-core:jmh and
-# :pprof-parser:jmh tasks with `-rf json -rff build/jmh/<module>.json`, uploads those
-# JSON files as the `jmh-results` artifact, and points this script at the freshly
+# :pprof-parser:jmh tasks, and QueryPushdownBenchmark from :parser-codegen:jmh, each with
+# `-rf json -rff build/jmh/<name>.json`, uploads those JSON files as the `jmh-results` artifact, and points this script at the freshly
 # produced directory plus (when it exists) the previous successful run's downloaded
 # artifact. The script turns them into one markdown table for $GITHUB_STEP_SUMMARY:
 # benchmark, params, score ± error, and the delta in percent against the previous run.
@@ -17,8 +17,14 @@
 #           compare against (first nightly run, or no previous artifact)
 #   exit 2  the data is not what it claims to be (R3: refuse to pass on garbage):
 #           unreadable/malformed JSON, a results directory with no JSON files, or a
-#           record missing the fields the table is built from. Failing loudly here is
-#           fine: that is a pipeline bug, not a timing change.
+#           record missing the fields the table is built from, or a benchmark named
+#           with --require that the current run has no record of. Failing loudly here
+#           is fine: that is a pipeline bug, not a timing change.
+#
+# --require exists because a missing benchmark is otherwise invisible. A benchmark
+# method that throws (QueryPushdownBenchmark checks what it counted and throws on a
+# mismatch) is left out of the result JSON, the Gradle task still exits 0, and with
+# other result files present this script would print a shorter table and exit 0.
 #
 # Both module result files are merged per side, because a directory (current or
 # previous) holds one JSON file per JMH run (parser-core.json, pprof-parser.json).
@@ -153,11 +159,31 @@ def main():
     )
     parser.add_argument("--current", required=True, help="directory with the current run's JMH result JSON files")
     parser.add_argument("--previous", default=None, help="directory with the previous run's JMH result JSON files")
+    parser.add_argument(
+        "--require",
+        action="append",
+        default=[],
+        metavar="BENCHMARK",
+        help="a benchmark the current run must have a record of: its fully qualified name, or any "
+        "dot-separated tail of it (Class.method). Repeatable. A missing one is exit 2.",
+    )
     args = parser.parse_args()
 
     current = load_records(args.current, "current")
     if current is None:
         die(f"no JMH result JSON files in --current {args.current}")
+
+    absent = [
+        name
+        for name in args.require
+        if not any(r["benchmark"] == name or r["benchmark"].endswith("." + name) for r in current)
+    ]
+    if absent:
+        die(
+            f"--current {args.current} has no result for required benchmark(s): {', '.join(absent)} "
+            "— a benchmark that throws is left out of the JSON while its Gradle task exits 0; "
+            "read that run's log"
+        )
 
     previous = load_records(args.previous, "previous") if args.previous else None
     prev_by_key = {}

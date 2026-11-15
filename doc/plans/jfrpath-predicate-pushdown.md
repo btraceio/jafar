@@ -465,3 +465,6 @@ Found on the way and not fixed here:
 
 Both were fixed afterwards, in separate commits: the chunk duration in `ChunkInfoImpl` and the Go
 `ChunkInfo.Duration()`, and the time window in `JfrAnalyses.resolveTimeWindow`.
+
+Task 7 followed: `nightly-jmh.yml` runs `QueryPushdownBenchmark` and the trend step requires
+each of its methods to have a result (`jmh_trend.py --require`).
