@@ -77,12 +77,13 @@ public final class LlmConfig {
 
   private final Function<String, String> lookup;
   private final java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile;
+  private final Function<String, String> env;
 
   /**
    * @param lookup resolves a setting name (e.g. {@code llm.model}) to a value, or {@code null}
    */
   public LlmConfig(Function<String, String> lookup) {
-    this(lookup, LlmSettingsFile::find);
+    this(lookup, LlmSettingsFile::find, System::getenv);
   }
 
   /**
@@ -94,8 +95,24 @@ public final class LlmConfig {
   public LlmConfig(
       Function<String, String> lookup,
       java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile) {
+    this(lookup, settingsFile, System::getenv);
+  }
+
+  /**
+   * Creates a config with an explicitly supplied settings-file source and environment lookup.
+   *
+   * <p>This seam lets integrations and tests control both external inputs — the settings file and
+   * the process environment — without mutating process-wide state. Tests pass {@code name -> null}
+   * for no environment, or a map-backed lookup to assert on specific variables. A {@code null}
+   * {@code env} means "no environment at all", never the process one.
+   */
+  public LlmConfig(
+      Function<String, String> lookup,
+      java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile,
+      Function<String, String> env) {
     this.lookup = lookup == null ? name -> null : lookup;
     this.settingsFile = settingsFile;
+    this.env = env == null ? name -> null : env;
   }
 
   /** A config backed only by environment variables and defaults. */
@@ -262,7 +279,7 @@ public final class LlmConfig {
     if (value != null && !value.isBlank()) {
       return value.trim();
     }
-    value = System.getenv(envVar);
+    value = env.apply(envVar);
     if (value != null && !value.isBlank()) {
       return value.trim();
     }
@@ -296,7 +313,7 @@ public final class LlmConfig {
     if (value != null && !value.isBlank()) {
       return Source.SHELL_VARIABLE;
     }
-    value = System.getenv(envVar);
+    value = env.apply(envVar);
     if (value != null && !value.isBlank()) {
       return Source.ENVIRONMENT;
     }

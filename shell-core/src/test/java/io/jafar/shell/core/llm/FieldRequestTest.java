@@ -76,7 +76,8 @@ class FieldRequestTest {
                   "java.lang.Thread", List.of(new FieldEntry("javaName", "java.lang.String"))));
 
   private static LlmService service(LlmBackend backend) {
-    return new LlmService(backend, new LlmConfig(Map.<String, String>of()::get));
+    return new LlmService(
+        backend, new LlmConfig(Map.<String, String>of()::get, Optional::empty, name -> null));
   }
 
   @Test

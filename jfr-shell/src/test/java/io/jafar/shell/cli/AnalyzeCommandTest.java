@@ -125,13 +125,17 @@ class AnalyzeCommandTest {
 
   private static LlmCommands commands(Host host, ScriptedBackend backend) {
     LlmCommands commands = new LlmCommands(host);
-    commands.pinService(new LlmService(backend, new LlmConfig(host.settings::get)));
+    commands.pinService(
+        new LlmService(backend, new LlmConfig(host.settings::get, Optional::empty, name -> null)));
     return commands;
   }
 
   @Test
   void everyStepShowsTheRowsItGot() {
     Host host = new Host();
+    // The display cap comes from a config built from live env/file; pin the session variable so a
+    // machine with JAFAR_LLM_MAX_ROWS set cannot truncate what this test inspects.
+    host.settings.put("llm.max-rows", "50");
     ScriptedBackend backend =
         new ScriptedBackend(
             "QUERY: events/jdk.GarbageCollection | groupBy(name, agg=sum, value=sumOfPauses)",

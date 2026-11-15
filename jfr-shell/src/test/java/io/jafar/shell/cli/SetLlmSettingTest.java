@@ -11,6 +11,7 @@ import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.llm.LlmConfig;
 import java.nio.file.Path;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -60,7 +61,7 @@ class SetLlmSettingTest {
   private LlmConfig config() {
     LlmCommands commands = dispatcher.llmCommands();
     assertNotNull(commands);
-    return new LlmConfig(commands.host()::setting);
+    return new LlmConfig(commands.host()::setting, Optional::empty, name -> null);
   }
 
   @Test

@@ -23,7 +23,7 @@ class AnthropicBackendCredentialTest {
 
   /** A config with no shell variables, so only the explicit lookup below can supply a value. */
   private static LlmConfig configWith(Map<String, String> settings) {
-    return new LlmConfig(settings::get);
+    return new LlmConfig(settings::get, java.util.Optional::empty, name -> null);
   }
 
   @Test

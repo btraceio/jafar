@@ -68,7 +68,7 @@ class LlmServiceTest {
   }
 
   private static LlmConfig config(Map<String, String> settings) {
-    return new LlmConfig(settings::get);
+    return new LlmConfig(settings::get, Optional::empty, name -> null);
   }
 
   @Test

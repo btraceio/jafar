@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 class LlmConfigTest {
 
   private static LlmConfig of(Map<String, String> settings) {
-    return new LlmConfig(settings::get, Optional::empty);
+    return new LlmConfig(settings::get, Optional::empty, name -> null);
   }
 
   @Test

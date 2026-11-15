@@ -124,7 +124,11 @@ Architecture, and the reasons it is shaped this way:
   with `ANTHROPIC_API_KEY` set could make live billable calls during the test suite, and a
   machine with Ollama running would change which backend `auto` picks. `llm-openai`'s own tests
   drive a `com.sun.net.httpserver.HttpServer` bound to loopback — a real socket, no provider
-  account.
+  account. The same holds one layer down: tests construct `LlmConfig` with an explicit
+  settings-file supplier *and* environment lookup (`new LlmConfig(vars, Optional::empty, name ->
+  null)`), so the developer's `llm.properties` and `JAFAR_LLM_*` exports cannot reach an assertion.
+  `build.gradle` additionally scrubs test JVMs, but the tests do not rely on it — an IDE run has no
+  scrub.
 - **`CommandDispatcher` has two query paths and the LLM host adapter must know both.** With a
   `JfrSelector` it delegates; without one (how the interactive `io.jafar.shell.Shell` builds it) it
   parses and evaluates JfrPath directly. `LlmHostAdapterTest` guards this: an adapter that knows
