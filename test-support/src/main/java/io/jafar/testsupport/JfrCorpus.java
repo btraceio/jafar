@@ -28,10 +28,14 @@ public enum JfrCorpus {
    */
   TCK_TEST("jfr-shell-tck/src/main/resources/tck-test.jfr", false),
 
-  /** Deterministic recording written by {@code test-recordings}; regenerated, never committed. */
+  /**
+   * Recording written by {@code test-recordings}; regenerated, never committed. Value-deterministic
+   * across JDK builds, but not byte-reproducible across them either (see {@code
+   * test-recordings/README.md}); the golden gate pins its parsed values, not its bytes.
+   */
   TEST_AP("parser-core/src/test/resources/test-ap.jfr", true),
 
-  /** Deterministic recording written by {@code test-recordings}; regenerated, never committed. */
+  /** Same as {@link #TEST_AP}. */
   TEST_JFR("parser-core/src/test/resources/test-jfr.jfr", true);
 
   /** System property holding the repo root, set by the Gradle test wiring (see T20). */

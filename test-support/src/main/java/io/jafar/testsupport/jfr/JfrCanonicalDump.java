@@ -114,8 +114,9 @@ public final class JfrCanonicalDump {
    * The sorted event lines of {@code recording}: one canonical line per delivered event, no header
    * and no golden-only sections. The differential dump is exactly these lines under the header.
    *
-   * <p>The full dump is materialized (the ~480 MB tck-test.jfr deep-resolved dump needs a large
-   * heap); only {@link DumpDigest} keeps a small fixed-size identity of it.
+   * <p>The full dump is materialized (the ~454 MB (453,889,122 bytes measured) tck-test.jfr
+   * deep-resolved dump needs a large heap); only {@link DumpDigest} keeps a small fixed-size
+   * identity of it.
    */
   public static List<String> events(Path recording) throws IOException {
     return dump(recording, false);
@@ -133,17 +134,29 @@ public final class JfrCanonicalDump {
     return sorted(lines);
   }
 
+  /** As {@link #digest(Path, boolean, boolean)}, pinning the fixture's byte sha256. */
+  public static DumpDigest digest(Path recording, boolean withConstantsAndMetadata)
+      throws IOException {
+    return digest(recording, withConstantsAndMetadata, true);
+  }
+
   /**
    * The value identity of {@code recording} (see {@link DumpDigest}): per-line hashes over the
    * sorted event lines, plus — when {@code withConstantsAndMetadata} — the golden-only {@code C }
    * and {@code M } lines, and the per-event-type counts.
+   *
+   * <p>{@code pinFixtureSha} controls whether the fixture's byte sha256 is recorded. The
+   * JMC-written test recordings ({@code test-ap.jfr}/{@code test-jfr.jfr}) are not
+   * byte-reproducible across JDK builds, so their goldens record an empty {@code fixture-sha256}
+   * line; the value identity is unaffected either way. A committed recording (the TCK fixture)
+   * keeps the pin.
    */
-  public static DumpDigest digest(Path recording, boolean withConstantsAndMetadata)
-      throws IOException {
+  public static DumpDigest digest(
+      Path recording, boolean withConstantsAndMetadata, boolean pinFixtureSha) throws IOException {
     List<String> lines = Collections.synchronizedList(new ArrayList<String>());
     Map<String, Long> counts = new ConcurrentHashMap<String, Long>();
     parse(recording, withConstantsAndMetadata, lines, counts);
-    return DumpDigest.of(sha256Of(recording), sorted(lines), counts);
+    return DumpDigest.of(pinFixtureSha ? sha256Of(recording) : null, sorted(lines), counts);
   }
 
   /**
