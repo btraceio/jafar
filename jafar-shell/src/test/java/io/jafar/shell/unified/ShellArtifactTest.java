@@ -669,7 +669,9 @@ class ShellArtifactTest {
       assertTrue(shell.execute("open " + recording), out.toString());
       assertTrue(shell.execute("show events/jdk.GarbageCollection/cause"), out.toString());
       var redactor =
-          io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+          io.jafar.shell.core.llm.Redactor.from(
+              new io.jafar.shell.core.llm.LlmConfig(
+                  k -> null, () -> java.util.Optional.empty(), k -> null));
 
       String sent = String.valueOf(redactor.redactRows(shell.rememberedRows()));
 
@@ -713,7 +715,9 @@ class ShellArtifactTest {
       assertFalse(json.contains("duration"), json);
 
       var redactor =
-          io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+          io.jafar.shell.core.llm.Redactor.from(
+              new io.jafar.shell.core.llm.LlmConfig(
+                  k -> null, () -> java.util.Optional.empty(), k -> null));
       String sent = String.valueOf(redactor.redactRows(shell.rememberedRows()));
       assertTrue(sent.contains("cause=") && sent.contains("System.gc()"), sent);
       assertFalse(sent.contains("<redacted>"), sent);
@@ -755,7 +759,9 @@ class ShellArtifactTest {
     assertEquals("name", column.apply("constants/jdk.types.GCName/name"));
     // a field that is sensitive by name is still redacted, now on its own name
     var redactor =
-        io.jafar.shell.core.llm.Redactor.from(new io.jafar.shell.core.llm.LlmConfig(k -> null));
+        io.jafar.shell.core.llm.Redactor.from(
+            new io.jafar.shell.core.llm.LlmConfig(
+                k -> null, () -> java.util.Optional.empty(), k -> null));
     assertEquals(
         "[{message=<redacted>}]",
         String.valueOf(
