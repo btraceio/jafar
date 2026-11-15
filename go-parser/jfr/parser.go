@@ -70,10 +70,35 @@ type Options struct {
 	// type is rejected are skipped without being decoded.
 	TypeFilter func(*ClassType) bool
 
+	// StartTime, when set, tells the parser that the caller only wants events
+	// whose startTime is in the range, so that it can skip whole chunks that
+	// cannot hold one. A skipped chunk costs its header and its metadata; its
+	// constant pools and events are not read.
+	//
+	// It is a hint, not a filter: from the chunks that are read every event the
+	// TypeFilter accepts is delivered, in the range or not, so the handler still
+	// has to check startTime (TimeRange.Contains). No event that starts in the
+	// range is ever withheld.
+	//
+	// Only the range's lower bound saves work. A chunk that ends before the
+	// range begins is skipped; a chunk that starts after the range ends is not,
+	// because an event is written when it is committed and can carry a start
+	// time long before the chunk it was written to. A chunk that was never
+	// finished (its header carries no duration) is always read, and so is one
+	// in which a wanted type's startTime is not a tick timestamp.
+	StartTime *TimeRange
+
 	// OnChunkStart, when set, is called once per chunk after its metadata and
 	// constant pools have been read and before any of its events are decoded.
 	// Returning ErrStop ends parsing successfully; any other error aborts it.
+	// It is not called for a chunk skipped because of StartTime.
 	OnChunkStart func(*ChunkInfo, *Metadata) error
+
+	// OnChunkSkipped, when set, is called once per chunk skipped because of
+	// StartTime, after its metadata has been read; neither OnChunkStart nor
+	// OnChunkEnd is called for such a chunk. Returning ErrStop ends parsing
+	// successfully; any other error aborts it.
+	OnChunkSkipped func(*ChunkInfo, *Metadata) error
 
 	// OnChunkEnd, when set, is called once per chunk after its last event.
 	OnChunkEnd func(*ChunkInfo) error
@@ -221,6 +246,12 @@ func (p *Parser) parse(opts Options, fn EventFunc) error {
 		c.pools = newConstantPools(c)
 		if err := c.readChunkMetadata(); err != nil {
 			return fmt.Errorf("%s: chunk %d: %w", p.name, header.Order, err)
+		}
+		if opts.StartTime != nil && !needsChunk(opts.TypeFilter, opts.StartTime, header, c.md) {
+			if opts.OnChunkSkipped != nil {
+				return opts.OnChunkSkipped(c.info, c.md)
+			}
+			return nil
 		}
 		if err := c.readCheckpoints(); err != nil {
 			return fmt.Errorf("%s: chunk %d: %w", p.name, header.Order, err)

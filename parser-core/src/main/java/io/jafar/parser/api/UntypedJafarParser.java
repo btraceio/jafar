@@ -1,5 +1,7 @@
 package io.jafar.parser.api;
 
+import io.jafar.parser.TimeRange;
+import io.jafar.parser.TypeFilter;
 import io.jafar.parser.impl.ParsingContextImpl;
 import io.jafar.parser.impl.UntypedJafarParserImpl;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
@@ -221,6 +223,110 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    * @return a registration that can be closed to stop receiving events
    */
   HandlerRegistration<?> handle(EventHandler handler);
+
+  /**
+   * Registers a handler for the event types {@code filter} accepts.
+   *
+   * <p>The handler receives exactly the events whose type the filter accepts. An event is decoded
+   * only if at least one registered handler wants its type, so a parser whose handlers are all
+   * filtered skips every other event at the cost of reading its header: on a recording where the
+   * wanted type is rare this is several times faster than decoding everything and ignoring most of
+   * it in the handler. {@link #handle(EventHandler)} accepts every type, so one unfiltered handler
+   * makes the parser decode everything again.
+   *
+   * <pre>{@code
+   * parser.handle(
+   *     TypeFilter.named("jdk.ExecutionSample"),
+   *     (type, event, ctl) -> samples.increment());
+   * }</pre>
+   *
+   * <p>{@link TypeFilter#named(String...)} covers selection by name; any predicate on the type
+   * works.
+   *
+   * <p>The filter is asked once per chunk and event type, not once per event, on the thread parsing
+   * that chunk; it is asked again when the set of registered handlers changes. It must be
+   * thread-safe and must answer the same for the same type every time.
+   *
+   * <p>An event that is not decoded cannot fail to decode: a corrupted event of a type no handler
+   * wants is no longer reported to {@link #onDecodeError(DecodeErrorHandler)} and does not fail the
+   * parse. It is still reported to a {@link #withParserListener parser listener}'s {@code onEvent}.
+   *
+   * <p>Otherwise as {@link #handle(EventHandler)}: a handler is called once per event even when it
+   * is registered several times, with or without a filter; registering the same filter and handler
+   * again (both {@code equals} the earlier ones) counts a further registration; and it is safe to
+   * call while {@code run()} is in progress.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; parsers created by {@link #open} support it.
+   *
+   * @param filter decides, per event type, whether the handler wants its events
+   * @param handler consumer of event maps
+   * @return a registration that can be closed to stop receiving events
+   * @throws UnsupportedOperationException if this implementation does not support type filters
+   */
+  default HandlerRegistration<?> handle(TypeFilter filter, EventHandler handler) {
+    throw new UnsupportedOperationException(
+        getClass().getName() + " does not support type filters");
+  }
+
+  /**
+   * Registers a handler for the event types {@code filter} accepts, for a caller that only wants
+   * events whose {@code startTime} is in {@code startTime}.
+   *
+   * <p><b>The range is a hint, not a filter.</b> It lets the parser skip a whole chunk that cannot
+   * hold an event starting in the range: such a chunk costs its header and its metadata, and
+   * neither its constant pools nor its events are read. From the chunks that are read the handler
+   * receives every event of the accepted types, in the range or not, so it still has to check
+   * {@code startTime} itself. No event that starts in the range is ever withheld.
+   *
+   * <pre>{@code
+   * TimeRange lastMinute = TimeRange.since(endNanos - 60_000_000_000L);
+   * parser.handle(
+   *     TypeFilter.named("jdk.ExecutionSample"),
+   *     lastMinute,
+   *     (type, event, ctl) -> {
+   *       if ((Long) event.get("startTime") >= lastMinute.fromEpochNanos()) samples.increment();
+   *     });
+   * }</pre>
+   *
+   * <p>What can be skipped is narrower than a chunk's header suggests, because an event is written
+   * when it is committed and carries whatever start time its writer gave it:
+   *
+   * <ul>
+   *   <li>A chunk that ends before the range begins is skipped. No event starts after the chunk it
+   *       was written to has ended.
+   *   <li>A chunk that starts after the range ends is <b>not</b> skipped: it can hold events that
+   *       started long before it did. So only the range's lower bound saves work, and {@code
+   *       TimeRange.until(t)} skips nothing. This is true of events with a duration, which are
+   *       written when they end, and of others too: a profiler may emit an event when the chunk is
+   *       finished, stamped with a much earlier time.
+   *   <li>A chunk that was never finished (its header carries no duration) is always read, and so
+   *       is a chunk in which an accepted type's {@code startTime} is not a tick timestamp.
+   * </ul>
+   *
+   * <p>A chunk is skipped only when no registered handler can need it: one handler registered
+   * without a range keeps every chunk. The handlers registered when {@link #run()} starts decide
+   * whether chunks are examined at all; a range registered later skips nothing. For skipping, the
+   * filter is asked about each of a chunk's types once more than {@link #handle(TypeFilter,
+   * EventHandler)} asks it.
+   *
+   * <p>A skipped chunk is reported to a {@link #withParserListener parser listener} with {@code
+   * onChunkStart}, {@code onMetadata} and {@code onChunkEnd(skipped = true)}.
+   *
+   * <p>Otherwise as {@link #handle(TypeFilter, EventHandler)}. The default implementation throws
+   * {@link UnsupportedOperationException}; parsers created by {@link #open} support it.
+   *
+   * @param filter decides, per event type, whether the handler wants its events
+   * @param startTime the start times the caller is interested in
+   * @param handler consumer of event maps
+   * @return a registration that can be closed to stop receiving events
+   * @throws UnsupportedOperationException if this implementation does not support time ranges
+   */
+  default HandlerRegistration<?> handle(
+      TypeFilter filter, TimeRange startTime, EventHandler handler) {
+    throw new UnsupportedOperationException(
+        getClass().getName() + " does not support start-time ranges");
+  }
 
   /**
    * Sets what happens to an event whose payload cannot be decoded (a corrupted or non-conforming
