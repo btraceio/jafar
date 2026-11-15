@@ -21,8 +21,11 @@ read them:
 | `parser-core/src/test/resources/test-{ap,jfr,dd}.jfr` | copies | `test-dd.jfr` there is a copy of `test-jfr.jfr`, as `get_resources.sh` has always made it |
 
 Every test task, and every test-resource task, depends on this task (root `build.gradle`), so a plain
-`./gradlew test` generates them first. Output is deterministic: fixed seeds, a fixed chunk start
-(2024-01-01T00:00:00Z) and fixed tick base.
+`./gradlew test` generates them first. Output is deterministic on a given JDK build: fixed seeds,
+a fixed chunk start (2024-01-01T00:00:00Z) and fixed tick base. It is **not** byte-reproducible
+across JDK builds — measured: Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 all write different bytes for the
+same input (the parsed values are identical; only the on-disk layout differs). The golden dumps
+therefore pin the digest, not the fixture bytes, for these fixtures.
 
 Each generated recording is a single chunk, like the recordings the suites were written against. Some tests
 assume that (an abort in one chunk does not stop chunks parsing in parallel; constant-pool ids are

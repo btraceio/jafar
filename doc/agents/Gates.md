@@ -257,11 +257,12 @@ do not run the guard on it.
 
 **The fixture-sha rule.** The golden pins the fixture bytes' sha256
 (pprof and otlp builders produce deterministic bytes, so theirs is
-pinned; the hdump case is the exception below). A differing sha fails
+pinned; the hdump case and the two generated JFR fixtures are the
+exceptions below). A differing sha fails
 with "fixture bytes changed (generator/builder output), not a parser
 value change — regenerate: <cmd>": a builder change can never masquerade
 as a parser value change, and a parser change can never be waved away
-as a builder change.
+as a builder change. The committed `tck-test.jfr` keeps its pin.
 
 **Where the full dump goes.** On a digest mismatch the full sorted dump
 is written to `<module>/build/golden-actual/<fixture>.dump`, with the
@@ -358,6 +359,13 @@ case table and the file-naming rule.
   bytes differ on every build. The timestamp is excluded from the dump
   and commented in the test, but the fixture-sha rule cannot guard that
   golden against builder changes.
+- The two generated JFR fixtures (`test-ap.jfr`, `test-jfr.jfr`) also pin
+  a null fixture sha: the generator is deterministic only per JDK build —
+  measured: Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 all write different bytes
+  for identical input (same digest, different layout), so a pinned sha
+  fails on every machine but the one that generated the golden. The
+  digest, which is JDK-independent, is the gate; the fixture-sha rule
+  survives only for the committed `tck-test.jfr`.
 - `parser-core/src/test/resources/test-dd.jfr` is deliberately not in
   the corpus: it is a byte-for-byte copy of `test-jfr.jfr`, so a golden
   for it would be a permanently identical second file with no added
