@@ -124,9 +124,11 @@ which is exactly what it is for.
 
 ## R6. Compare failure sets by name, never by count
 
-Parts of this suite fail in any environment that cannot fetch the binary recordings
-(`./get_resources.sh`, Dropbox). Those failures are `NoSuchFileException`, not logic errors — and a
-count that stays at 126 can still hide a swap.
+Watch a failure for how it fails, not just whether it fails. The fixtures used to be fetched from
+Dropbox, so any environment without network access saw `NoSuchFileException` from tests that need a
+recording — not a logic error. The fixtures are small and offline now (`./get_resources.sh` needs no
+network), so a missing fixture is a genuinely broken checkout or a broken script — and a count that
+stays at 126 can still hide a swap.
 
 ```bash
 ./gradlew :jfr-shell:test --rerun-tasks
@@ -224,9 +226,10 @@ Find out what actually covers the code you are about to move, in *this* environm
 in the repository; what runs.
 
 > **Case file — nineteen hundred lines with nothing watching.** `jfr_use`, `jfr_tsa` and
-> `jfr_diagnose` are exercised only by `McpJfrTransportTest`, which cannot run without the binary
-> recordings `get_resources.sh` downloads and is one of this environment's standing failures, and by
-> `McpEndToEndTest`, a separate task. Moving them on a green `./gradlew :jfr-mcp:test` would have
+> `jfr_diagnose` are exercised only by `McpJfrTransportTest`, which needs a real Datadog-flavoured
+> recording (`get_resources.sh` copies the checked-in `tck-test.jfr` into place) and is one of this
+> environment's standing failures, and by `McpEndToEndTest`, a separate task. Moving them on a
+> green `./gradlew :jfr-mcp:test` would have
 > been a guess dressed as a refactor. `JfrAnalysesCharacterizationTest` was written first, against a
 > synthetic recording so no download is needed, and pins the keys callers bind to rather than
 > numbers that depend on the recording.
@@ -290,8 +293,9 @@ the real command. A rule without one degrades into advice, and advice is ignored
 write the case file, you have not understood the bug well enough to generalise from it yet.
 
 Keep the case files even after the bug is fixed — they are the evidence for the rule, not a bug
-list. But correct them when they become untrue: if `get_resources.sh` starts working here, R6 and
-R10 change shape, and a stale case file is worse than none because it is quotable.
+list. But correct them when they become untrue: `get_resources.sh` now works offline everywhere, so
+the `NoSuchFileException` chapter of R6 is historical context, not a live failure mode — and a stale
+case file is worse than none because it is quotable.
 
 When a rule earns its place, add the one-line summary to the table in
 [AGENTS.md](../../AGENTS.md#read-this-first) as well — that table is what gets read; this file is
@@ -340,11 +344,12 @@ same command tells you in a second.
 
 ## Test fixtures
 
-The recordings in this tree are stripped and several do not parse
+The `dd-trace-java-stripped` recordings in this tree are deliberately mangled and several do not parse
 (`IllegalArgumentException: newPosition > limit`). To verify behaviour end to end, record a real one:
 
 ```bash
 java -XX:StartFlightRecording=duration=10s,filename=/tmp/spin.jfr,settings=profile Spin.java
 ```
 
-`./get_resources.sh` downloads the full set from Dropbox where the network allows it.
+`./get_resources.sh` copies small checked-in fixtures (no network); `./get_resources.sh --full`
+downloads the full-size set from Dropbox where the network allows it.

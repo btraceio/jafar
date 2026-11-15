@@ -19,7 +19,7 @@ This document provides baseline performance metrics for JAFAR parser operations.
 - Threads: 1 thread (single-threaded parsing)
 - Mode: Average time per operation
 
-**Test File**: `test-jfr.jfr` (real-world JFR recording)
+**Test File**: `test-jfr.jfr` (full-size real-world recording, via `./get_resources.sh --full`)
 
 ## Benchmark Results
 
@@ -238,8 +238,8 @@ Results are saved to: `benchmarks/build/results/jmh/results.json`
 git clone https://github.com/btraceio/jafar.git
 cd jafar
 
-# Fetch test resources
-./get_resources.sh
+# Fetch test resources (the full benchmark corpus)
+./get_resources.sh --full
 
 # Run benchmarks
 ./gradlew :benchmarks:jmh

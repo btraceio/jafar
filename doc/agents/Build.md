@@ -6,11 +6,14 @@ See [Verification.md](Verification.md) for how to know a change actually works.
 ## Prerequisites
 - Java 25+ (shell and MCP modules: `shell-core`, `jfr-shell`, `jfr-mcp`, `hdump-shell`, `pprof-shell`, `otlp-shell`)
 - Java 8+ (parser and tools modules: `parser-core`, `tools`, `demo`)
-- Binary test recordings are fetched via `./get_resources.sh` (downloads from Dropbox), not Git LFS — see below
+- Binary test recordings come from `./get_resources.sh` (offline by default — it copies small
+  checked-in fixtures; `--full` downloads the multi-hundred-MB originals from Dropbox). Not Git LFS.
+  Fixture inventory and regeneration: [test-fixtures/README.md](../../test-fixtures/README.md)
 
 ## Essential Commands
 ```bash
-# Fetch binary test resources (required before first build)
+# Prepare test resources (offline; copies small checked-in fixtures).
+# Use --full only if you need the big recordings (benchmarks): downloads from Dropbox
 ./get_resources.sh
 
 # Build all modules
@@ -64,7 +67,7 @@ interfaces discovered at run time and has no Go equivalent - do not attempt to p
 
 The Go and Java untyped parsers must be kept at parity - see the parity rule under **Rules** below
 before changing either of them.
-Benchmarks need real recordings, and the large ones are not in the repository - `./get_resources.sh`
+Large recordings for benchmarks are not in the repository - `./get_resources.sh --full`
 downloads them. The **Go Parser Benchmarks** workflow (`.github/workflows/go-parser-bench.yml`) runs
 them where that download works: on demand (`workflow_dispatch`, with inputs for benchtime, count,
 benchmark pattern and an optional baseline ref to diff against via benchstat), weekly, and on pushes

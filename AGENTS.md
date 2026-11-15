@@ -112,7 +112,7 @@ Key components:
 ## Quick start
 
 ```bash
-./get_resources.sh                    # binary test recordings — required before the first build
+./get_resources.sh                    # prepare test fixtures — offline; required before the first build
 ./gradlew build                       # everything
 ./gradlew test                        # tests
 ./gradlew spotlessApply               # formatting (a pre-commit hook also runs this)

@@ -1,7 +1,7 @@
 name: Go Parser Benchmarks
 
 # The Go parser benchmarks are only meaningful against real recordings, and the
-# large ones live outside the repository - ./get_resources.sh downloads them.
+# large ones live outside the repository - ./get_resources.sh --full downloads them.
 # This job runs where that download works and publishes the numbers, rather than
 # leaving them to whatever recording a developer happens to have locally.
 #
@@ -95,11 +95,11 @@ jobs:
           path: |
             parser-core/src/test/resources/test-*.jfr
             demo/src/test/resources/test-*.jfr
-          key: jfr-recordings-${{ hashFiles('get_resources.sh') }}
+          key: jfr-recordings-full-${{ hashFiles('get_resources.sh') }}
 
       - name: Download benchmark recordings
         if: steps.recordings.outputs.cache-hit != 'true'
-        run: ./get_resources.sh
+        run: ./get_resources.sh --full
 
       - name: Report available recordings
         run: |

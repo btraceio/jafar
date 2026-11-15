@@ -16,9 +16,9 @@ import (
 // references, which is where a real recording keeps its stack traces.
 //
 // Every benchmark runs once per available recording. By default that is the
-// recordings checked into the repository plus the larger ones ./get_resources.sh
-// downloads; set JAFAR_BENCH_JFR to benchmark specific files instead, separated
-// by the platform's path list separator.
+// recordings checked into the repository plus the larger ones that
+// ./get_resources.sh --full downloads; set JAFAR_BENCH_JFR to benchmark
+// specific files instead, separated by the platform's path list separator.
 //
 // The workload types are chosen per recording rather than hardcoded, so the
 // suite measures the same shapes whichever recording it is pointed at.

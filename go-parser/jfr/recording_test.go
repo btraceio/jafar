@@ -19,8 +19,9 @@ const (
 
 // wellFormedRecordings lists the recordings expected to decode without a single
 // recoverable problem, in reporting order. The first is checked into the
-// repository; the rest are the larger ones ./get_resources.sh downloads, and are
-// simply absent when it has not been run.
+// repository; the rest are filled in by ./get_resources.sh — small checked-in
+// fixtures by default, the full-size originals with --full — and are simply
+// absent when it has not been run.
 //
 // The deliberately malformed dd-trace-java fixtures are not listed here; they
 // have their own test.
@@ -249,6 +250,7 @@ func TestStrippedRecordings(t *testing.T) {
 // absorb fails the test instead. It is the check that gains the most from
 // ./get_resources.sh having been run, since the larger recordings exercise far
 // more of the format than the ones checked in.
+// ./get_resources.sh --full provides them.
 func TestAvailableRecordingsDecodeCleanly(t *testing.T) {
 	paths := availableRecordings()
 	if len(paths) == 0 {

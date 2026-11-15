@@ -10,7 +10,7 @@ JAFAR provides both typed (interface-based) and untyped (Map-based) APIs for par
 - Java 21+
 
 ## Build
-1) Fetch binary resources: `./get_resources.sh`
+1) Prepare test resources: `./get_resources.sh` (offline; `--full` downloads the large benchmark recordings)
 2) Build all modules: `./gradlew build`
 3) Build shadow JARs (optional): `./gradlew shadowJar`
 

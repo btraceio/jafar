@@ -23,7 +23,10 @@ public class UntypedJafarParserTest {
   void testUntypedParsingCountsEvents() throws Exception {
     URI uri = UntypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
     ParsingContext ctx = ParsingContext.create();
-    Instant cutOffDate = Instant.parse("2024-08-13T16:24:00Z");
+    // Any cutoff works as an upper bound: the assertion exists to prove the
+    // parsed startTime is a real instant. Tie it to now so synthetic or
+    // freshly recorded fixtures pass as well as archived ones.
+    Instant cutOffDate = Instant.now().plus(1, ChronoUnit.MINUTES);
     try (UntypedJafarParser p = ctx.newUntypedParser(Paths.get(new File(uri).getAbsolutePath()))) {
       AtomicInteger count = new AtomicInteger();
       HandlerRegistration<?> reg =

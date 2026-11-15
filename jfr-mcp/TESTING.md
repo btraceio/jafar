@@ -8,11 +8,11 @@
 ```
 **Results**: 15 tests (HandlerLogicTest only), ~0.4 seconds, 21% code coverage
 
-### Integration Tests (Large JFR Files)
+### Integration Tests (Real Datadog recording)
 ```bash
 ./gradlew :jfr-mcp:test -DenableIntegrationTests=true
 ```
-**Note**: Requires real 171MB JFR file at `demo/src/test/resources/test-ap.jfr`
+**Note**: Requires the Datadog test recording at `demo/src/test/resources/test-dd.jfr` (~2.3 MB, prepared by `./get_resources.sh`; a full-size alternative is fetched with `--full`)
 **Results**: 97+ tests, several seconds, requires 2GB+ heap
 **Warning**: These tests are disabled by default to avoid CI failures
 
@@ -31,7 +31,7 @@ open jfr-mcp/build/reports/jacoco/test/html/index.html
 - **Execution Time**: < 1 second
 
 ### Integration Tests (Slow)
-- **HandlerLogicIntegrationTest**: Tests using real 171MB JFR files
+- **HandlerLogicIntegrationTest**: Tests using the real Datadog recording at `demo/src/test/resources/test-dd.jfr` (~2.3 MB)
 - **Coverage**: Deep processing (flamegraph, callgraph, hotmethods)
 - **Execution Time**: Several seconds
 - **Status**: Some tests fail due to missing data in test files
@@ -41,7 +41,7 @@ open jfr-mcp/build/reports/jacoco/test/html/index.html
 ### 1. Integration Tests Disabled by Default
 **Status**: RESOLVED - Integration tests now require explicit flag
 - **Tests**: JafarMcpServer*Test and HandlerLogicIntegrationTest classes (97+ tests)
-- **Reason**: These tests load 171MB JFR files and cause OOM in CI
+- **Reason**: These tests exercise a real-world recording and are heavy enough to keep out of the default CI job
 - **Solution**: Annotated with `@EnabledIfSystemProperty(named = "enableIntegrationTests", matches = "true")`
 - **To run**: Use `-DenableIntegrationTests=true` flag
 

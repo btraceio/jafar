@@ -27,7 +27,7 @@ public class DatadogProfilerDemoUntyped {
       if (Files.exists(jfrFile)) {
         System.err.println("Using the default value of " + jfrFile.toAbsolutePath());
       } else {
-        System.err.println("Use ../get_resources.sh to download the test resources");
+        System.err.println("Use ../get_resources.sh to prepare the test resources");
         System.exit(1);
       }
     } else {

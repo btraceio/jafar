@@ -139,7 +139,7 @@ pool and stay valid either way.
 
 ### On large recordings
 
-Measured on the benchmark corpus `./get_resources.sh` downloads, on a GitHub
+Measured on the benchmark corpus `./get_resources.sh --full` downloads, on a GitHub
 `ubuntu-latest` runner (AMD EPYC 7763), one iteration per benchmark:
 
 | Recording | Size | Events | Decode every event | …with `ReuseValues` |
@@ -182,7 +182,7 @@ Two other things matter more than they look:
 Run `go test -bench . ./...` to reproduce. Every benchmark runs once per
 available recording, and picks its workload event types per recording rather
 than by name, so the numbers stay comparable across files. Run
-`./get_resources.sh` from the repository root first to add the larger
+`./get_resources.sh --full` from the repository root first to add the larger
 recordings; set `JAFAR_BENCH_JFR` to benchmark one specific file.
 
 ## Error handling
@@ -253,11 +253,12 @@ gofmt -l .
 ```
 
 The tests and benchmarks pick up whatever recordings are present.
-`./get_resources.sh` in the repository root downloads the larger ones from
-Dropbox into `parser-core/src/test/resources/` and `demo/src/test/resources/`;
-both the suite and the benchmarks find them there and report each file
-separately. Without them they fall back to the recordings checked into the
-repository.
+`./get_resources.sh` in the repository root copies the small fixture it
+maintains into `parser-core/src/test/resources/` and
+`demo/src/test/resources/`; `./get_resources.sh --full` downloads the larger
+ones from Dropbox instead. Both the suite and the benchmarks find them there
+and report each file separately. Without them they fall back to the
+recordings checked into the repository.
 
 The **Go Parser Benchmarks** GitHub Actions workflow does this download and runs
 the benchmarks on demand, weekly, and on pushes to `main`, publishing the numbers
