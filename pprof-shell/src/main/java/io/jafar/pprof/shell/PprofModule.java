@@ -21,8 +21,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Shell module for pprof profile analysis. Provides pprof file support for the Jafar shell.
  *
- * <p>Supports gzip-compressed protobuf profiles ({@code .pb.gz}, {@code .pprof}) as produced by Go,
- * Java (async-profiler), Rust, and other pprof-compatible profilers.
+ * <p>Supports protobuf profiles ({@code .pb.gz}, {@code .pprof}), gzipped or not, as produced by
+ * Go, Java (async-profiler), Rust, and other pprof-compatible profilers.
  *
  * <p>Discovered via ServiceLoader.
  */
@@ -58,7 +58,6 @@ public final class PprofModule implements ShellModule {
     String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
     boolean extMatch = name.endsWith(".pprof") || name.endsWith(".pb.gz");
 
-    // Verify gzip magic bytes regardless of extension
     try (FileChannel fc = FileChannel.open(path, StandardOpenOption.READ)) {
       if (fc.size() < GZIP_MAGIC.length) {
         return false;
@@ -66,13 +65,13 @@ public final class PprofModule implements ShellModule {
       ByteBuffer buf = ByteBuffer.allocate(GZIP_MAGIC.length);
       fc.read(buf);
       buf.flip();
-      for (int i = 0; i < GZIP_MAGIC.length; i++) {
-        if (buf.get(i) != GZIP_MAGIC[i]) {
-          return false;
-        }
+      boolean gzip = buf.get(0) == GZIP_MAGIC[0] && buf.get(1) == GZIP_MAGIC[1];
+      if (gzip) {
+        // Magic bytes match: accept if extension also matched, otherwise fall through
+        return extMatch || isValidPprofContent(path, true);
       }
-      // Magic bytes match: accept if extension also matched, otherwise fall through
-      return extMatch || isValidPprofContent(path);
+      // A one-byte protobuf tag is too weak to claim a file on content alone: it needs the name too
+      return extMatch && isValidPprofContent(path, false);
     } catch (IOException e) {
       LOG.debug("Failed to check magic bytes for {}: {}", path, e.getMessage());
       return extMatch;
@@ -80,13 +79,13 @@ public final class PprofModule implements ShellModule {
   }
 
   /**
-   * Reads a few bytes after gzip decompression to confirm the content starts with a valid pprof
-   * protobuf field tag (field numbers 1–14, wire types 0 or 2).
+   * Reads a few bytes, decompressing if {@code gzip}, to confirm the content starts with a valid
+   * pprof protobuf field tag (field numbers 1–14, wire types 0 or 2).
    */
-  private static boolean isValidPprofContent(Path path) {
+  private static boolean isValidPprofContent(Path path, boolean gzip) {
     try (java.io.InputStream is = Files.newInputStream(path);
-        java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(is)) {
-      byte[] header = gzis.readNBytes(2);
+        java.io.InputStream content = gzip ? new java.util.zip.GZIPInputStream(is) : is) {
+      byte[] header = content.readNBytes(2);
       if (header.length < 1) return false;
       // First byte is a protobuf tag: (fieldNumber << 3) | wireType
       int tag = header[0] & 0xFF;

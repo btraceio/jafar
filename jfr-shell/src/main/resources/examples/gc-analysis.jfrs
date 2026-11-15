@@ -37,7 +37,7 @@ events/jdk.GarbageCollection --limit 10
 
 echo
 echo "=== Object Allocation by Class ==="
-events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name) | top(20, by=sum(allocationSize))
+events/jdk.ObjectAllocationInNewTLAB | groupBy(objectClass/name, agg=sum, value=allocationSize) | top(20, by=value)
 
 echo
 echo "=== Total Allocated Memory ==="

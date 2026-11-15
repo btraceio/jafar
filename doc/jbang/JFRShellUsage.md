@@ -15,8 +15,6 @@ jbang jfr-shell@btraceio recording.jfr
 # From GitHub script URL
 jbang https://github.com/btraceio/jbang-catalog/blob/main/jfr-shell.java recording.jfr
 
-# From JitPack coordinates
-jbang io.github.btraceio:jfr-shell:0.1.0 recording.jfr
 ```
 
 ### Install as Command
@@ -96,11 +94,11 @@ jbang jfr-shell@btraceio show recording.jfr "events/jdk.ExecutionSample | count(
 
 # Top 10 files by bytes read
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.FileRead | top(10, by=bytes)"
+  "events/jdk.FileRead | top(10, by=bytesRead)"
 
 # Thread analysis
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.ExecutionSample | groupBy(thread/name)"
+  "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)"
 
 # GC statistics
 jbang jfr-shell@btraceio show recording.jfr \
@@ -114,12 +112,12 @@ Get JSON output for integration with other tools:
 ```bash
 # JSON format
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.FileRead | top(10, by=bytes)" \
+  "events/jdk.FileRead | top(10, by=bytesRead)" \
   --format json
 
 # Pipe to jq for processing
 jbang jfr-shell@btraceio show recording.jfr \
-  "events/jdk.ExecutionSample | groupBy(thread/name)" \
+  "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)" \
   --format json | jq '.[] | select(.count > 1000)'
 ```
 
@@ -301,24 +299,6 @@ Or use the full GitHub URL directly:
 ```bash
 jbang https://github.com/btraceio/jbang-catalog/blob/main/jfr-shell.java recording.jfr
 ```
-
----
-
-### JitPack Build Failed
-
-**Problem**: `Could not resolve io.github.btraceio:jfr-shell:0.1.0`
-
-**Solution**: Check JitPack build status:
-
-```bash
-# Visit in browser:
-https://jitpack.io/com/github/btraceio/jfr-shell/0.1.0/build.log
-
-# Or trigger build via curl:
-curl https://jitpack.io/com/github/btraceio/jfr-shell/0.1.0/build.log
-```
-
-Wait a few minutes for JitPack to build the artifact, then retry.
 
 ---
 

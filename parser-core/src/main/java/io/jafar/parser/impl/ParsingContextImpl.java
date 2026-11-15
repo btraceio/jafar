@@ -6,8 +6,10 @@ import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.DeserializerFactory;
 import io.jafar.parser.internal_api.ParserContextFactory;
+import io.jafar.parser.internal_api.UntypedEventStreamFactory;
 import java.nio.file.Path;
 import java.util.Iterator;
+import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 
 /**
@@ -24,7 +26,10 @@ public final class ParsingContextImpl implements ParsingContext {
   private final TypedParserContextFactory typedFactory;
 
   /** The start timestamp for tracking uptime. */
-  private final long startTs = System.nanoTime();
+  private final long startTs;
+
+  /** Requested chunk parsing threads; 0 selects the default. */
+  private final int parallelism;
 
   // DeserializerFactory is classpath-static: discovered once and reused across all contexts.
   private static final DeserializerFactory DESERIALIZER_FACTORY = discoverDeserializerFactory();
@@ -34,9 +39,59 @@ public final class ParsingContextImpl implements ParsingContext {
     return it.hasNext() ? it.next() : null;
   }
 
+  // Like DeserializerFactory: classpath-static. Absent when parser-codegen is not on the classpath.
+  private static final UntypedEventStreamFactory UNTYPED_STREAM_FACTORY =
+      discoverUntypedStreamFactory();
+
+  private static UntypedEventStreamFactory discoverUntypedStreamFactory() {
+    try {
+      Iterator<UntypedEventStreamFactory> it =
+          ServiceLoader.load(UntypedEventStreamFactory.class).iterator();
+      return it.hasNext() ? it.next() : null;
+    } catch (ServiceConfigurationError e) {
+      // A provider that is on the classpath but cannot be loaded (a broken or mismatched
+      // parser-codegen jar) must not take every parser down with an ExceptionInInitializerError,
+      // and must not silently degrade either: say so, then read with the generic reader.
+      org.slf4j.LoggerFactory.getLogger(ParsingContextImpl.class)
+          .warn("Generated untyped reader unavailable, using the generic reader: {}", e.toString());
+      return null;
+    }
+  }
+
+  /**
+   * The generated untyped reader's factory.
+   *
+   * @return the factory, or {@code null} when {@code parser-codegen} is not on the classpath
+   */
+  static UntypedEventStreamFactory untypedStreamFactory() {
+    return UNTYPED_STREAM_FACTORY;
+  }
+
   /** Constructs a new ParsingContextImpl. */
   public ParsingContextImpl() {
     this.typedFactory = new TypedParserContextFactory(DESERIALIZER_FACTORY);
+    this.startTs = System.nanoTime();
+    this.parallelism = 0;
+  }
+
+  /** A view of {@code other} that shares its caches and clock, with its own parallelism. */
+  private ParsingContextImpl(ParsingContextImpl other, int parallelism) {
+    this.typedFactory = other.typedFactory;
+    this.startTs = other.startTs;
+    this.parallelism = parallelism;
+  }
+
+  @Override
+  public ParsingContext withParallelism(int parallelism) {
+    if (parallelism < 1) {
+      throw new IllegalArgumentException("parallelism must be at least 1: " + parallelism);
+    }
+    return new ParsingContextImpl(this, parallelism);
+  }
+
+  @Override
+  public int parallelism() {
+    return parallelism;
   }
 
   /**

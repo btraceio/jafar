@@ -18,7 +18,9 @@
 //	java.lang.String    string, or nil for a null string
 //	inline complex      map[string]any
 //	constant pool ref   *Ref (resolve with Ref.Value)
-//	array               *Array
+//	array               *Array; Array.Elems is []int64 for int and long,
+//	                    []float32, []float64, []int16 or []uint16 for float,
+//	                    double, short or char, and []any otherwise
 //
 // Fields annotated with jdk.jfr.Timestamp(TICKS) and jdk.jfr.Timespan(TICKS)
 // are normalised: timestamps become nanoseconds since the epoch and timespans
@@ -264,6 +266,11 @@ type chunkParser struct {
 	// most numerous object the parser creates, and allocating them one at a
 	// time dominates its allocation count.
 	refSlab []Ref
+	// arraySlab hands out Array structs in blocks for arrays inside constant
+	// pool entries, which share their pool's lifetime. inPool is set while one
+	// is being decoded.
+	arraySlab []Array
+	inPool    bool
 	// arenas recycle the objects of one event, per event type; only populated
 	// when Options.ReuseValues is set. arena is the one in use while an event
 	// is being decoded, and nil at every other time, so that values cached in a
@@ -294,6 +301,14 @@ func (c *chunkParser) readChunkMetadata() error {
 	return nil
 }
 
+// checkpointFailure reports a problem that may leave some constant pool entries
+// of the chunk unindexed. It is remembered so that a reference to a missing
+// entry fails its event with it as the cause, rather than resolving to nil.
+func (c *chunkParser) checkpointFailure(err error) error {
+	c.pools.recordIndexingFailure(err)
+	return c.recoverable(err)
+}
+
 // readCheckpoints walks the checkpoint chain of the chunk. The chunk header
 // points at one end of the chain and every checkpoint carries a signed offset
 // delta to the next one, so the chain may run forwards or backwards.
@@ -303,53 +318,62 @@ func (c *chunkParser) readChunkMetadata() error {
 // place, rather than failing the chunk.
 func (c *chunkParser) readCheckpoints() error {
 	if c.header.ConstantPoolOffset <= 0 || c.header.ConstantPoolOffset >= int64(len(c.data)) {
-		return c.recoverable(fmt.Errorf("constant pool offset %d is outside the chunk", c.header.ConstantPoolOffset))
+		return c.checkpointFailure(fmt.Errorf("constant pool offset %d is outside the chunk", c.header.ConstantPoolOffset))
 	}
 	r := newReader(c.data)
 	pos := int(c.header.ConstantPoolOffset)
 	visited := make(map[int]bool)
 	for {
 		if visited[pos] {
-			return c.recoverable(fmt.Errorf("checkpoint at %d: cyclic checkpoint chain", pos))
+			return c.checkpointFailure(fmt.Errorf("checkpoint at %d: cyclic checkpoint chain", pos))
 		}
 		visited[pos] = true
 		r.err = nil
 		r.seek(pos)
 		if r.err != nil {
-			return c.recoverable(r.err)
+			return c.checkpointFailure(r.err)
 		}
+		// readCheckpoint has already passed any problem through checkpointFailure;
+		// reporting it again would call OnError twice for one problem.
 		next, err := c.readCheckpoint(r)
 		if err != nil {
-			return c.recoverable(err)
+			return err
 		}
 		if next == 0 {
 			return nil
 		}
 		newPos := pos + next
 		if newPos < 0 || newPos >= len(c.data) {
-			return c.recoverable(fmt.Errorf("checkpoint at %d: next checkpoint offset %d is outside the chunk", pos, newPos))
+			return c.checkpointFailure(fmt.Errorf("checkpoint at %d: next checkpoint offset %d is outside the chunk", pos, newPos))
 		}
 		pos = newPos
 	}
 }
 
 // readCheckpoint reads one checkpoint event and returns the offset delta to the
-// next one, or 0 when this is the last checkpoint of the chunk.
+// next one, or 0 when this is the last checkpoint of the chunk or the chain
+// cannot be followed past it.
+//
+// Every problem found here is reported through recoverable exactly once, and a
+// non-nil error is the one OnError returned: the caller must not report it again.
 func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
+	// Every problem here leaves this checkpoint's pools, and those of the
+	// checkpoints after it, unindexed, so it is recorded as an indexing failure.
+	fail := func(err error) (int, error) { return 0, c.checkpointFailure(err) }
 	start := r.position()
 	size := r.readVarint()
 	if r.err != nil {
-		return 0, r.err
+		return fail(r.err)
 	}
 	if size <= 0 {
-		return 0, fmt.Errorf("checkpoint at %d: unexpected event size %d", start, size)
+		return fail(fmt.Errorf("checkpoint at %d: unexpected event size %d", start, size))
 	}
 	end := start + int(size)
 	if end > len(c.data) {
-		return 0, fmt.Errorf("checkpoint at %d: event size %d runs past the chunk", start, size)
+		return fail(fmt.Errorf("checkpoint at %d: event size %d runs past the chunk", start, size))
 	}
 	if typeID := r.readVarint(); typeID != 1 {
-		return 0, fmt.Errorf("checkpoint at %d: unexpected event type %d (should be 1)", start, typeID)
+		return fail(fmt.Errorf("checkpoint at %d: unexpected event type %d (should be 1)", start, typeID))
 	}
 	r.readVarint() // start time
 	r.readVarint() // duration
@@ -357,22 +381,41 @@ func (c *chunkParser) readCheckpoint(r *reader) (int, error) {
 	r.readByte() // flush flag
 	poolCount := r.readVarint()
 	if r.err != nil {
-		return 0, r.err
+		return fail(r.err)
 	}
 	if poolCount < 0 || poolCount > int64(end-r.position()) {
-		return 0, fmt.Errorf("checkpoint at %d: implausible constant pool count %d", start, poolCount)
+		return fail(fmt.Errorf("checkpoint at %d: implausible constant pool count %d", start, poolCount))
 	}
+	var indexed []indexedEntry
 	for i := int64(0); i < poolCount; i++ {
-		if err := c.readConstantPool(r, start, end); err != nil {
+		if err := c.readConstantPool(r, end, &indexed); err != nil {
 			// The remaining pools of this checkpoint cannot be located once one
 			// of them cannot be read, but the chain itself is still intact.
-			if err := c.recoverable(fmt.Errorf("checkpoint at %d: %w", start, err)); err != nil {
+			if err := c.checkpointFailure(fmt.Errorf("checkpoint at %d: %w", start, err)); err != nil {
 				return 0, err
 			}
 			return int(nextOffsetDelta), nil
 		}
 	}
-	return int(nextOffsetDelta), r.err
+	if r.err != nil {
+		return fail(r.err)
+	}
+	// Entries are not length-prefixed, so a wrong length inside one (a corrupted
+	// string length varint, say) still skips without error and puts every later
+	// entry at the wrong offset; the checkpoint's size is the only check that
+	// catches it. Which entry went wrong cannot be known, so none of the entries
+	// this checkpoint indexed is kept: references to them fail with this as the
+	// cause instead of decoding other bytes. The Java parser and the JDK's own
+	// reader fail on the same condition; the chain itself is still intact.
+	if r.position() != end {
+		for _, e := range indexed {
+			delete(e.pool.offsets, e.id)
+		}
+		if err := c.checkpointFailure(fmt.Errorf("checkpoint at %d: constant pools end at %d, but the event size %d says it ends at %d", start, r.position(), size, end)); err != nil {
+			return 0, err
+		}
+	}
+	return int(nextOffsetDelta), nil
 }
 
 // maxZeroTypeIDs bounds the workaround for a JMC writer bug that emits zero
@@ -381,8 +424,9 @@ const maxZeroTypeIDs = 1024
 
 // readConstantPool reads the entries of one constant pool of a checkpoint,
 // recording where each entry starts. end is the exclusive end offset of the
-// enclosing checkpoint event; every entry has to lie within it.
-func (c *chunkParser) readConstantPool(r *reader, checkpointStart, end int) error {
+// enclosing checkpoint event; every entry has to lie within it. The entries it
+// newly indexes are appended to indexed.
+func (c *chunkParser) readConstantPool(r *reader, end int, indexed *[]indexedEntry) error {
 	var typeID int64
 	for i := 0; ; i++ {
 		typeID = r.readVarint()
@@ -421,7 +465,9 @@ func (c *chunkParser) readConstantPool(r *reader, checkpointStart, end int) erro
 		if r.position() > end {
 			return fmt.Errorf("constant pool %s, index %d: entry runs past the checkpoint event", class.Name, id)
 		}
-		pool.addOffset(id, offset)
+		if pool.addOffset(id, offset) {
+			*indexed = append(*indexed, indexedEntry{pool, id})
+		}
 	}
 	return nil
 }

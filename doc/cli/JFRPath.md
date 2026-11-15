@@ -35,7 +35,8 @@ Access type metadata (structure, fields, annotations).
 Access chunk-level information from the recording.
 - **Returns**: Chunk metadata (offset, size, duration, compression status)
 - **Example**: `chunks`
-- **Specific chunk**: `chunks/0` (by index)
+- **Specific chunk**: `chunks/1` (by the `index` that `chunks` lists: 1-based, in file order)
+- **Field of a chunk**: `chunks/1/size`
 
 ### `constants`
 Access constant pool entries.
@@ -57,7 +58,7 @@ constants/jdk.types.Symbol/string
 
 ### Nested Fields
 ```
-events/jdk.ExecutionSample/thread/name
+events/jdk.ExecutionSample/sampledThread/javaName
 events/jdk.FileRead/stackTrace/frames
 metadata/jdk.types.StackTrace/fields/name
 ```
@@ -68,6 +69,23 @@ events/jdk.ExecutionSample/stackTrace/frames/0          # First element
 events/jdk.ExecutionSample/stackTrace/frames/0:3        # Slice [0,3)
 ```
 
+### Array Indexing and Slices
+
+A bracket whose content is an index or a `start:end` slice traverses array elements, attached to a
+field or standing alone — the same traversal the pipeline operators' path arguments accept:
+
+```
+events/jdk.ExecutionSample/stackTrace/frames[0]              # First frame
+events/jdk.ExecutionSample/stackTrace/frames[0:3]            # Slice [0,3), fanned out flat
+events/jdk.ExecutionSample/stackTrace/frames[0]/lineNumber   # A field of that element
+```
+
+A bracket holding anything else is a filter, so `frames[0]` traverses and `frames[n>0]` filters.
+Out-of-range or negative indexes resolve to nothing: a bare path projection yields no value, in
+groupBy the event contributes no group, and in select() the row is kept with a null value for that
+field. Slices are honoured on the last bracket group of the last segment only; a slice elsewhere
+is rejected with an error.
+
 ### Metadata Aliases
 Convenient shortcuts for metadata navigation:
 ```
@@ -75,10 +93,27 @@ metadata/jdk.types.Method/fields.name           # Same as /fields/name
 metadata/jdk.types.Method/fieldsByName.name     # Access field by name
 ```
 
+### Metadata across chunks
+Each chunk of a recording carries its own metadata, and chunks can disagree, for example when
+a recording joins chunks written by different JVMs or profilers. The Jafar backend returns one
+class per name:
+
+- `fields` / `fieldsByName` contain every field declared by any chunk, in declaration order.
+- `chunks` lists the chunks that define the class. Each field has its own `chunks` list, and in
+  `fields` a field that some chunks lack is marked, e.g. `group:jdk.types.ThreadGroup [chunks: 1]`.
+  Events from the other chunks have no value for that field.
+- When chunks give a field different types, the first chunk's type is shown and the field gets
+  `typesByChunk`. When chunks disagree on the super type, the class gets `superTypesByChunk`.
+- `id` is the first chunk's class id. Class ids are local to a chunk.
+
+```
+metadata/java.lang.Thread/fieldsByName.group/chunks
+```
+
 ## Filters
 
 Filters use square brackets `[...]` to constrain results. Filters can be placed:
-- After the root/type: `events/jdk.FileRead[bytes>1000]`
+- After the root/type: `events/jdk.FileRead[bytesRead>1000]`
 - After any segment (interleaved): `events/jdk.GCHeapSummary/heapSpace[committedSize>1000000]`
 
 ### Simple Filters
@@ -100,8 +135,8 @@ Simple field comparisons:
 
 **Examples**:
 ```
-events/jdk.FileRead[bytes>1000]
-events/jdk.ExecutionSample[thread/name="main"]
+events/jdk.FileRead[bytesRead>1000]
+events/jdk.ExecutionSample[sampledThread/javaName="main"]
 events/jdk.FileRead[path~"/tmp/.*"]
 metadata/jdk.types.Method[name="toString"]
 ```
@@ -136,10 +171,10 @@ unit is worse than a parse error.
 
 **Examples**:
 ```
-events/jdk.FileRead[bytes>1MB]
+events/jdk.FileRead[bytesRead>1MB]
 events/jdk.GCPhasePause[duration>10ms]
 events/jdk.JavaMonitorEnter[duration>1ms] | count()
-events/jdk.SocketRead[duration>500us and bytes>4KB]
+events/jdk.SocketRead[duration>500us and bytesRead>4KB]
 ```
 
 ### Boolean Expression Filters
@@ -155,9 +190,9 @@ Complex conditions with functions and logic:
 
 **Examples**:
 ```
-events/jdk.FileRead[bytes>1000 and path~"/tmp/.*"]
-events/jdk.ExecutionSample[thread/name="main" or thread/name="worker"]
-events/jdk.FileRead[not (bytes<100)]
+events/jdk.FileRead[bytesRead>1000 and path~"/tmp/.*"]
+events/jdk.ExecutionSample[sampledThread/javaName="main" or sampledThread/javaName="worker"]
+events/jdk.FileRead[not (bytesRead<100)]
 ```
 
 ### Filter Functions
@@ -172,9 +207,9 @@ events/jdk.FileRead[not (bytes<100)]
 **Examples**:
 ```
 events/jdk.FileRead[contains(path, "tmp")]
-events/jdk.ExecutionSample[startsWith(thread/name, "pool-")]
+events/jdk.ExecutionSample[startsWith(sampledThread/javaName, "pool-")]
 events/jdk.FileRead[endsWith(path, ".log")]
-events/jdk.ExecutionSample[matches(thread/name, "worker-[0-9]+")]
+events/jdk.ExecutionSample[matches(sampledThread/javaName, "worker-[0-9]+")]
 ```
 
 #### Existence and Emptiness
@@ -193,7 +228,7 @@ events/jdk.ExecutionSample[not empty(stackTrace/frames)]
 
 **Examples**:
 ```
-events/jdk.FileRead[between(bytes, 1000, 10000)]
+events/jdk.FileRead[between(bytesRead, 1000, 10000)]
 events/jdk.ExecutionSample[len(stackTrace/frames)>10]
 events/jdk.FileRead[len(path)>50]
 ```
@@ -275,7 +310,7 @@ Pipeline operators transform or aggregate results. Append with `|`:
 
 ```
 events/jdk.FileRead | count()
-events/jdk.FileRead/bytes | stats()
+events/jdk.FileRead/bytesRead | stats()
 ```
 
 ### Count
@@ -305,8 +340,8 @@ Sum numeric values. If `path` is omitted, uses the projection path.
 
 **Examples**:
 ```
-events/jdk.FileRead/bytes | sum()
-events/jdk.FileRead | sum(bytes)
+events/jdk.FileRead/bytesRead | sum()
+events/jdk.FileRead | sum(bytesRead)
 ```
 
 ### Stats
@@ -320,8 +355,8 @@ Compute statistics for numeric values: min, max, avg, stddev.
 
 **Examples**:
 ```
-events/jdk.FileRead/bytes | stats()
-events/jdk.FileRead | stats(bytes)
+events/jdk.FileRead/bytesRead | stats()
+events/jdk.FileRead | stats(bytesRead)
 ```
 
 ### Quantiles
@@ -335,8 +370,8 @@ Compute percentiles at specified quantiles (0.0 to 1.0).
 
 **Examples**:
 ```
-events/jdk.FileRead/bytes | quantiles(0.5, 0.9, 0.99)
-events/jdk.FileRead | quantiles(0.5, 0.9, path=bytes)
+events/jdk.FileRead/bytesRead | quantiles(0.5, 0.9, 0.99)
+events/jdk.FileRead | quantiles(0.5, 0.9, path=bytesRead)
 ```
 
 ### Sketch
@@ -350,8 +385,8 @@ Shortcut for stats + common percentiles (p50, p90, p99).
 
 **Examples**:
 ```
-events/jdk.FileRead/bytes | sketch()
-events/jdk.FileRead | sketch(bytes)
+events/jdk.FileRead/bytesRead | sketch()
+events/jdk.FileRead | sketch(bytesRead)
 ```
 
 ### Head
@@ -364,7 +399,7 @@ Return only the first N rows from the result set.
 **Examples**:
 ```
 events/jdk.FileRead | head(10)
-events/jdk.ExecutionSample | groupBy(thread/name) | head(5)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | head(5)
 ```
 
 ### Tail
@@ -377,20 +412,20 @@ Return only the last N rows from the result set.
 **Examples**:
 ```
 events/jdk.FileRead | tail(10)
-events/jdk.FileRead | sortBy(bytes) | tail(5)
+events/jdk.FileRead | sortBy(bytesRead) | tail(5)
 ```
 
 ### Filter
 ```
-| filter([predicate])
+| filter(predicate)
 ```
 
-Filter rows in the pipeline using the same predicate syntax as path filters.
+Filter rows in the pipeline using the same predicate syntax as path filters, without the square brackets.
 
 **Examples**:
 ```
-events/jdk.FileRead | groupBy(path, agg=sum, value=bytes) | filter([sum>1048576])
-events/jdk.ExecutionSample | groupBy(thread/name) | filter([count>100])
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | filter(sum>1048576)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(count>100)
 ```
 
 ### Distinct
@@ -444,15 +479,19 @@ events/jdk.ExecutionSample[sampledThread/javaName="main"] | flamegraph()
 
 ### Group By
 ```
-| groupBy(keyPath[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
+| groupBy(key[, agg=count|sum|avg|min|max, value=path, sortBy=key|value, asc=false])
 ```
 
 Group results by key and apply aggregation function with optional sorting.
 
 **Parameters**:
-- `keyPath` - Field path to group by
+- `key` - What to group by: a field path (with array indexing, e.g. `frames[0]`), a string template
+  (`"${a}-${b}"`), or a computed expression (`n * 10`). A plain path fans out over arrays it
+  crosses — one group per element; an indexed path (`frames[0]`) selects a single element per
+  event; a slice (`frames[0:2]`) fans out over the selected range. A template or expression
+  evaluates to one key per event; an event where it evaluates to nothing contributes no group.
 - `agg` - Aggregation function (default: `count`)
-- `value` - Value path for sum/avg/min/max
+- `value` - Value path for sum/avg/min/max (accepts array indexing too)
 - `sortBy` - Sort results by `key` (grouping key) or `value` (aggregated value)
 - `asc` - Sort ascending (default: `false`, descending)
 
@@ -473,18 +512,20 @@ A group-by over a type with no events at all is still an empty result, not an er
 
 **Examples**:
 ```
-events/jdk.ExecutionSample/thread/name | groupBy(value)                    # Count by thread name
 events/jdk.FileRead | groupBy(path, agg=count)                              # Count by file path
-events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)                   # Total bytes by path
-events/jdk.ExecutionSample | groupBy(thread/name, agg=count)                # Count by thread name
-events/jdk.FileRead | groupBy(path, agg=avg, value=bytes)                   # Avg bytes by path
-events/jdk.FileRead | groupBy(path, agg=min, value=bytes)                   # Min bytes by path
-events/jdk.FileRead | groupBy(path, agg=max, value=bytes)                   # Max bytes by path
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)                   # Total bytes by path
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName, agg=count)                # Count by thread name
+events/jdk.ExecutionSample | groupBy(stackTrace/frames[0]/lineNumber, agg=count)   # Count by top frame line
+events/jdk.FileRead | groupBy("${path}:${bytesRead}", agg=count)                # Composed template key
+events/jdk.FileRead | groupBy(bytesRead / 1024, agg=count)                      # Bucketing by expression
+events/jdk.FileRead | groupBy(path, agg=avg, value=bytesRead)                   # Avg bytes by path
+events/jdk.FileRead | groupBy(path, agg=min, value=bytesRead)                   # Min bytes by path
+events/jdk.FileRead | groupBy(path, agg=max, value=bytesRead)                   # Max bytes by path
 
 # Sorted results
-events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)             # Sort by count descending
-events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)     # Sort alphabetically
-events/jdk.FileRead | groupBy(path, agg=sum, value=bytes, sortBy=value)     # Sort by total bytes
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value)             # Sort by count descending
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=key, asc=true)     # Sort alphabetically
+events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead, sortBy=value)     # Sort by total bytes
 ```
 
 ### Sort By
@@ -501,15 +542,15 @@ Sort rows by any field in the current result set. Works after any operator that 
 **Key constraint**: Can only sort by fields available after previous operators:
 - After `select(a, b)` → only `a`, `b` available
 - After `groupBy(x)` → only `key`, `<aggFunc>` available — plus `value` as an alias for the
-  aggregate column, so `groupBy(path, agg=sum, value=bytes) | sortBy(value)` and `| sortBy(sum)`
+  aggregate column, so `groupBy(path, agg=sum, value=bytesRead) | sortBy(value)` and `| sortBy(sum)`
   are the same sort. `top(n, by=value)` reads it the same way.
 - After `len(path)` → all original fields + `len`
 
 **Examples**:
 ```
-events/jdk.FileRead | select(path, bytes) | sortBy(bytes)              # Sort by bytes descending
-events/jdk.FileRead | select(path, bytes) | sortBy(path, asc=true)     # Sort by path ascending
-events/jdk.ExecutionSample | groupBy(thread/name) | sortBy(count)      # Sort grouped results by count
+events/jdk.FileRead | select(path, bytesRead) | sortBy(bytesRead)              # Sort by bytes descending
+events/jdk.FileRead | select(path, bytesRead) | sortBy(path, asc=true)     # Sort by path ascending
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | sortBy(count)      # Sort grouped results by count
 events/jdk.FileRead | len(path) | sortBy(len)                          # Sort by computed length
 ```
 
@@ -527,9 +568,9 @@ Sort and return top N rows.
 
 **Examples**:
 ```
-events/jdk.FileRead | top(10, by=bytes)                   # Top 10 by bytes (descending)
-events/jdk.FileRead/bytes | top(5)                         # Top 5 values
-events/jdk.FileRead | top(10, by=bytes, asc=true)         # Bottom 10 by bytes (ascending)
+events/jdk.FileRead | top(10, by=bytesRead)                   # Top 10 by bytes (descending)
+events/jdk.FileRead | top(5, by=bytesRead)                     # Top 5 by bytes
+events/jdk.FileRead | top(10, by=bytesRead, asc=true)         # Bottom 10 by bytes (ascending)
 ```
 
 ### Decorate By Time
@@ -638,7 +679,8 @@ Project specific fields from events, filtering out all other fields. Supports bo
 **Use Cases**: Reduce output to only relevant fields, compute derived values, transform data, control JSON output structure, focus analysis on specific attributes.
 
 **Parameters**:
-- `field` - Simple field path to include in output
+- `field` - Simple field path to include in output (array indexing and tail slices work:
+  `frames[0]`, `frames[0:2]`)
 - `field as alias` - Field path with custom output name
 - `expression as alias` - Computed expression (requires alias)
 - Supports nested fields using `/` syntax (e.g., `eventThread/javaThreadId`)
@@ -649,6 +691,8 @@ Project specific fields from events, filtering out all other fields. Supports bo
 - Expressions require `as alias` clause
 - Works with filters and other query operations
 - Expressions are evaluated per row
+- Array traversal keeps one value per row: `frames[0]` reaches the element, an unindexed array
+  field stays whole, a tail slice yields a List — select never fans out rows
 
 **Simple Field Selection**:
 ```
@@ -656,16 +700,21 @@ Project specific fields from events, filtering out all other fields. Supports bo
 events/jdk.ExecutionSample | select(startTime)
 
 # Select multiple top-level fields
-events/jdk.FileRead | select(path, bytes)
+events/jdk.FileRead | select(path, bytesRead)
 
 # Select nested fields
-events/jdk.ExecutionSample | select(eventThread/javaThreadId, eventThread/name)
+events/jdk.ExecutionSample | select(sampledThread/javaThreadId, sampledThread/javaName)
+
+# Array element traversal
+events/jdk.ExecutionSample | select(stackTrace/frames[0]/lineNumber as topLine)
+events/jdk.ExecutionSample | select("top=${stackTrace/frames[0]/method/name}" as topFrame)
+events/jdk.ExecutionSample | select(frames[0:2] as firstTwoFrames)
 
 # Field with alias
-events/jdk.ExecutionSample | select(eventThread/javaThreadId as threadId)
+events/jdk.ExecutionSample | select(sampledThread/javaThreadId as threadId)
 
 # Combine with filters
-events/jdk.FileRead[bytes>1000] | select(path, bytes)
+events/jdk.FileRead[bytesRead>1000] | select(path, bytesRead)
 
 # Select decorator fields
 events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass)
@@ -684,25 +733,25 @@ Expressions support arithmetic operations, string concatenation, and built-in fu
 
 ```
 # Convert bytes to kilobytes
-events/jdk.FileRead | select(bytes / 1024 as kilobytes)
-
-# Calculate throughput
-events/jdk.FileRead | select(bytes / duration as bytesPerNs)
+events/jdk.FileRead | select(bytesRead / 1024 as kilobytes)
 
 # Multiply duration by 1000
 events/jdk.FileRead | select(duration * 1000 as micros)
 
 # Complex arithmetic
-events/jdk.FileRead | select((bytes * count) / 1024 as totalKb)
+events/jdk.FileRead | select((bytesRead * 2) / 1024 as doubledKb)
 ```
+
+The divisor must be a number. `/` followed by a name is read as a path separator, so
+`select(bytesRead / duration as x)` is a parse error.
 
 **String Concatenation**:
 ```
 # Build descriptive string
-events/jdk.FileRead | select(path + ' (' + bytes + ' bytes)' as description)
+events/jdk.FileRead | select(path + ' (' + bytesRead + ' bytes)' as description)
 
 # Combine fields
-events/jdk.ExecutionSample | select(thread/name + ' [' + thread/javaThreadId + ']' as threadInfo)
+events/jdk.ExecutionSample | select(sampledThread/javaName + ' [' + sampledThread/javaThreadId + ']' as threadInfo)
 
 # Format output
 events/jdk.FileRead | select('File: ' + path as label)
@@ -717,23 +766,23 @@ String templates provide a cleaner syntax for string interpolation using `${...}
 events/jdk.FileRead | select("File: ${path}" as description)
 
 # Multiple expressions in one template
-events/jdk.FileRead | select("${path} (${bytes} bytes)" as info)
+events/jdk.FileRead | select("${path} (${bytesRead} bytes)" as info)
 
 # Arithmetic in templates
-events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+events/jdk.FileRead | select("${path}: ${bytesRead / 1024} KB" as summary)
 
 # Functions in templates
-events/jdk.FileRead | select("File: ${upper(path)} - ${bytes} bytes" as info)
+events/jdk.FileRead | select("File: ${upper(path)} - ${bytesRead} bytes" as info)
 
 # Nested fields in templates
-events/jdk.ExecutionSample | select("Thread ${eventThread/name} (ID: ${eventThread/javaThreadId})" as threadInfo)
+events/jdk.ExecutionSample | select("Thread ${sampledThread/javaName} (ID: ${sampledThread/javaThreadId})" as threadInfo)
 
 # Mix templates with regular fields
-events/jdk.FileRead | select(path, "${bytes / 1024} KB" as sizeKb)
+events/jdk.FileRead | select(path, "${bytesRead / 1024} KB" as sizeKb)
 ```
 
 Templates are equivalent to string concatenation but more readable:
-- `"${path} (${bytes} bytes)"` is the same as `path + ' (' + bytes + ' bytes)'`
+- `"${path} (${bytesRead} bytes)"` is the same as `path + ' (' + bytesRead + ' bytes)'`
 - Use double quotes for templates: `"${expr}"`
 - Any expression can be embedded in `${...}`
 - Null values render as empty strings
@@ -741,15 +790,18 @@ Templates are equivalent to string concatenation but more readable:
 **Built-in Functions**:
 
 **if(condition, trueValue, falseValue)** - Conditional expression
+
+The condition is a field or expression, true when non-zero. Comparisons such as
+`if(bytesRead > 1000, ...)` are a parse error; use a filter such as
+`events/jdk.FileRead[bytesRead>1000]` to select by threshold.
 ```
-events/jdk.FileRead | select(if(bytes, 'large', 'small') as size)
-events/jdk.FileRead | select(if(duration, 'slow', 'fast') as speed)
+events/jdk.FileRead | select(if(bytesRead, 'has data', 'empty') as status)
 ```
 
 **upper(string)** - Convert to uppercase
 ```
 events/jdk.FileRead | select(upper(path) as upperPath)
-events/jdk.ExecutionSample | select(upper(thread/name) as threadName)
+events/jdk.ExecutionSample | select(upper(sampledThread/javaName) as threadName)
 ```
 
 **lower(string)** - Convert to lowercase
@@ -767,13 +819,13 @@ events/jdk.FileRead | select(substring(path, 0, 10) as prefix)
 **length(string)** - Get string length
 ```
 events/jdk.FileRead | select(length(path) as pathLength)
-events/jdk.ExecutionSample | select(length(thread/name) as nameLen)
+events/jdk.ExecutionSample | select(length(sampledThread/javaName) as nameLen)
 ```
 
 **coalesce(value1, value2, ...)** - Return first non-null value
 ```
 events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
-events/jdk.ExecutionSample | select(coalesce(thread/name, thread/osName, 'unnamed') as name)
+events/jdk.ExecutionSample | select(coalesce(sampledThread/javaName, sampledThread/osName, 'unnamed') as name)
 ```
 
 **asDateTime(epochNanos[, format])** - Format epoch-nanoseconds as datetime string
@@ -801,21 +853,21 @@ events/jdk.JavaMonitorEnter/duration | formatDuration()
 **Mixed Fields and Expressions**:
 ```
 # Simple fields with computed expressions
-events/jdk.FileRead | select(path, bytes / 1024 as kb, duration)
+events/jdk.FileRead | select(path, bytesRead / 1024 as kb, duration)
 
 # Multiple expressions and fields
 events/jdk.FileRead | select(
     path as file,
-    bytes / 1024 as kilobytes,
-    if(bytes, 'large', 'small') as sizeCategory,
+    bytesRead / 1024 as kilobytes,
+    if(bytesRead, 'has data', 'empty') as status,
     duration * 1000 as microseconds
 )
 
 # Transform and compute
 events/jdk.ExecutionSample | select(
     startTime,
-    upper(thread/name) as threadName,
-    thread/javaThreadId as tid,
+    upper(sampledThread/javaName) as threadName,
+    sampledThread/javaThreadId as tid,
     length(stackTrace/frames) as stackDepth
 )
 ```
@@ -854,9 +906,9 @@ Transform individual values (can also be used in filters where applicable):
 **Examples**:
 ```
 constants/jdk.types.Symbol/string | len()
-events/jdk.ExecutionSample/thread/name | uppercase()
+events/jdk.ExecutionSample/sampledThread/javaName | uppercase()
 events/jdk.FileRead/path | replace("/tmp/", "/data/")
-events/jdk.FileRead/bytes | abs()
+events/jdk.FileRead/bytesRead | abs()
 events/jdk.JavaMonitorEnter/duration | formatDuration()
 ```
 
@@ -905,7 +957,7 @@ Converts epoch-nanosecond fields to human-readable datetime strings. Can be used
 events/jdk.ExecutionSample | asDateTime(startTime)
 
 # Format as select expression
-events/jdk.ExecutionSample | select(asDateTime(startTime) as time, eventThread/name as thread)
+events/jdk.ExecutionSample | select(asDateTime(startTime) as time, sampledThread/javaName as thread)
 
 # Custom format
 events/jdk.ExecutionSample | select(asDateTime(startTime, "HH:mm:ss.SSS") as time)
@@ -960,27 +1012,27 @@ events/jdk.ExecutionSample
 Project to specific field:
 ```
 events/jdk.FileRead/path
-events/jdk.ExecutionSample/thread/name
+events/jdk.ExecutionSample/sampledThread/javaName
 ```
 
 Filter and project:
 ```
-events/jdk.FileRead[bytes>1000]/path
-events/jdk.ExecutionSample[thread/name="main"]/stackTrace
+events/jdk.FileRead[bytesRead>1000]/path
+events/jdk.ExecutionSample[sampledThread/javaName="main"]/stackTrace
 ```
 
 Count matching events:
 ```
-events/jdk.FileRead[bytes>1000] | count()
-events/jdk.ExecutionSample[thread/name~"worker-.*"] | count()
+events/jdk.FileRead[bytesRead>1000] | count()
+events/jdk.ExecutionSample[sampledThread/javaName~"worker-.*"] | count()
 ```
 
 Aggregate values:
 ```
-events/jdk.FileRead/bytes | stats()
-events/jdk.FileRead[path~"/tmp/.*"]/bytes | sum()
-events/jdk.ExecutionSample | groupBy(thread/name)
-events/jdk.FileRead | top(10, by=bytes)
+events/jdk.FileRead/bytesRead | stats()
+events/jdk.FileRead[path~"/tmp/.*"]/bytesRead | sum()
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
+events/jdk.FileRead | top(10, by=bytesRead)
 ```
 
 ### Metadata Queries
@@ -1018,8 +1070,13 @@ chunks
 
 Specific chunk by index:
 ```
-chunks/0
+chunks/1
 chunks/5
+```
+
+One field of a chunk:
+```
+chunks/1/size
 ```
 
 Filter chunks:
@@ -1071,13 +1128,37 @@ constants/jdk.types.StackTrace | crossref()
 constants/jdk.types.Method | crossref()
 ```
 
+`crossref()` yields one row:
+
+| column | meaning |
+|---|---|
+| `type` | the constant pool type |
+| `total` | its entries (an entry is one id in one chunk) |
+| `referenced` / `unreferenced` | entries some event reaches, directly or through other pool entries, and the rest |
+| `referencedPercent` / `unreferencedPercent` | the same as percentages of `total` |
+| `referencingEventTypes` | per event type that reaches the type, most events first: `eventType`, `events` (events that reach it), `uniqueRefs` (distinct entries they reach), `directRefs` (direct references) |
+
+Tables show `referencingEventTypes` as `<N items>`; `--format json` and variables (`set x =
+constants/<type> | crossref()`) carry the whole list, and the row chains like any other (`| select(type,
+referenced)`). It must directly follow a bare `constants/<type>`: after a filter, a projection or
+another operator, or on another root, it is an error. `cp <type> | crossref()` runs the same query.
+
+`crossref()` decodes every event and every constant pool entry in the recording. If any of them
+cannot be decoded, the command fails with an error naming the event type or pool entry, the chunk
+and the position, and prints no counts: figures from a partial read would be wrong.
+
+Constant pool ids are local to a chunk, so every constants query counts per chunk: an entry is one
+id in one chunk. `constants --summary` and `crossref()` report the sum of the chunks' figures, and
+`constants/<type>` lists each chunk's entries in chunk order, so a recording made of several chunks
+can list the same id more than once; those rows are different entries.
+
 ## Operator Chaining
 
 Many operators are chainable in a pipeline. For example:
 
 ```
-events/jdk.FileRead | select(path, bytes) | sortBy(bytes) | top(10)
-events/jdk.ExecutionSample | groupBy(thread/name) | sortBy(count) | head(5)
+events/jdk.FileRead | select(path, bytesRead) | sortBy(bytesRead) | top(10)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | sortBy(count) | head(5)
 events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass) | select(startTime, $decorator.monitorClass) | top(10)
 ```
 
@@ -1101,13 +1182,13 @@ events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorC
 events/jdk.ExecutionSample | count()
 
 # Top 10 files by bytes read
-events/jdk.FileRead | top(10, by=bytes)
+events/jdk.FileRead | top(10, by=bytesRead)
 
 # Execution samples by thread
-events/jdk.ExecutionSample | groupBy(thread/name)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 
 # File reads to /tmp, sum bytes
-events/jdk.FileRead[path~"/tmp/.*"] | sum(bytes)
+events/jdk.FileRead[path~"/tmp/.*"] | sum(bytesRead)
 
 # Execution samples with deep stacks
 events/jdk.ExecutionSample[len(stackTrace/frames)>20] --limit 5
@@ -1188,7 +1269,7 @@ show chunks[size>10000000]
 show chunks[compressed=true]
 
 # Specific chunk
-show chunks/0
+show chunks/1
 ```
 
 ### Constant Pool Examples
@@ -1242,7 +1323,7 @@ Execute queries without entering the shell:
 ```bash
 # Show command
 jfr-shell show recording.jfr "events/jdk.FileRead | count()"
-jfr-shell show recording.jfr "events/jdk.FileRead/bytes | stats()" --format json
+jfr-shell show recording.jfr "events/jdk.FileRead/bytesRead | stats()" --format json
 
 # Metadata command
 jfr-shell metadata recording.jfr --events-only

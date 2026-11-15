@@ -15,7 +15,8 @@ allocation, and lock profiles in the gzip-compressed protobuf format used by
 7. [Aggregation and Statistics](#aggregation-and-statistics)
 8. [Flame Graph Data](#flame-graph-data)
 9. [Common Analysis Patterns](#common-analysis-patterns)
-10. [Tips and Best Practices](#tips-and-best-practices)
+10. [Variables and Scripts](#variables-and-scripts)
+11. [Tips and Best Practices](#tips-and-best-practices)
 
 ## Prerequisites
 
@@ -407,6 +408,22 @@ pprof> show samples | groupBy(stackTrace/0/name, sum(cpu)) | head(10)
 
 pprof> use 2
 pprof> show samples | groupBy(stackTrace/0/name, sum(cpu)) | head(10)
+```
+
+## Variables and Scripts
+
+In `jafar-shell`, a variable can hold a samples query; it runs on first use and is cached. The
+rest of the [Scripting Guide](Scripting.md#in-jafar-shell) — maps, `merge()`, `if`, `script` —
+applies unchanged:
+
+```bash
+pprof> set total = samples | count()
+pprof> set hot = samples | groupBy(stackTrace/0/name) | head(3)
+pprof> echo ${total} samples, ${hot.size} groups, first ${hot[0]}
+pprof> show ${hot}
+pprof> if ${total} > 1000
+...(1)> echo enough samples to trust the ranking
+...(1)> endif
 ```
 
 ## Tips and Best Practices

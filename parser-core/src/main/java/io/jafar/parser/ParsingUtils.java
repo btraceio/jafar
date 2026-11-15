@@ -2,7 +2,10 @@ package io.jafar.parser;
 
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ConstantPools;
+import io.jafar.parser.api.MetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
+import io.jafar.parser.internal_api.metadata.MetadataClass;
+import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
@@ -70,22 +73,27 @@ public final class ParsingUtils {
       ConstantPools constantPools = stream.getContext().getConstantPools();
       if (stringTypeId == -1) {
         // lookup from metadata string constants
-        return stream.getContext().getMetadataLookup().getString(ptr);
+        return metadataString(stream.getContext().getMetadataLookup(), ptr);
       }
-      if (constantPools != null) {
-        // use the type constant pool
-        ConstantPool stringPool = constantPools.getConstantPool(stringTypeId);
-        if (stringPool != null) {
-          Object value = stringPool.get(ptr);
-          if (value instanceof String) {
-            return (String) value;
-          }
-        }
+      ConstantPool stringPool =
+          constantPools != null ? constantPools.getConstantPool(stringTypeId) : null;
+      if (stringPool == null) {
+        throw new IOException(
+            "String constant " + ptr + " referenced, but the chunk has no java.lang.String pool");
       }
-      return null;
+      Object value = stringPool.get(ptr);
+      if (value instanceof String) {
+        return (String) value;
+      }
+      // A dangling reference used to read as null, indistinguishable from a null string; it means
+      // a corrupted recording (or a pool that could not be indexed), so say so.
+      throw new IOException(
+          value == null
+              ? "String constant " + ptr + " not found in the java.lang.String pool"
+              : "String constant " + ptr + " is not a string: " + value.getClass().getName());
     } else if (id == 3) {
       // UTF8
-      int size = (int) stream.readVarint();
+      int size = byteLength(stream);
       if (size == 0) {
         return "";
       }
@@ -96,7 +104,7 @@ public final class ParsingUtils {
       stream.read(content, 0, size);
       return stream.getContext().utf8Parser.parse(content, size, StandardCharsets.UTF_8);
     } else if (id == 4) {
-      int size = (int) stream.readVarint();
+      int size = charCount(stream);
       if (size == 0) {
         return "";
       }
@@ -110,7 +118,7 @@ public final class ParsingUtils {
       return stream.getContext().charParser.parse(chars, size);
     } else if (id == 5) {
       // LATIN1
-      int size = (int) stream.readVarint();
+      int size = byteLength(stream);
       if (size == 0) {
         return "";
       }
@@ -126,13 +134,89 @@ public final class ParsingUtils {
   }
 
   /**
+   * Reads the byte length of a UTF-8 or Latin-1 string payload and checks it against the data that
+   * is left.
+   *
+   * <p>The length is a varint from untrusted input. Unchecked, a corrupted one allocates a buffer
+   * of that size before the read finds there is nothing behind it, and one past {@code
+   * Integer.MAX_VALUE} narrows to a negative array size.
+   */
+  private static int byteLength(RecordingStream stream) throws IOException {
+    long size = stream.readVarint();
+    long left = stream.available();
+    if (size < 0 || size > left) {
+      throw new IOException(
+          "String of " + size + " byte(s) exceeds the remaining " + left + " byte(s)");
+    }
+    return (int) size;
+  }
+
+  /**
+   * Reads the entry count of a char-array string and checks it against the data that is left: each
+   * char is a varint of at least one byte.
+   */
+  private static int charCount(RecordingStream stream) throws IOException {
+    long size = stream.readVarint();
+    long left = stream.available();
+    if (size < 0 || size > left) {
+      throw new IOException(
+          "Char array of " + size + " entries exceeds the remaining " + left + " byte(s)");
+    }
+    return (int) size;
+  }
+
+  /**
+   * Reads the length of an array field and checks it against the data that is left.
+   *
+   * <p>The length is a varint from untrusted input, and consumers size their storage from it. No
+   * honest array is longer than the bytes remaining in its chunk; the Go parser applies the same
+   * bound ("implausible array length").
+   *
+   * @param stream the recording stream, positioned at the array length
+   * @param owner the type declaring the field
+   * @param field the array field
+   * @return the array length
+   * @throws IOException if the length is negative or exceeds the remaining data
+   */
+  public static int arrayLength(RecordingStream stream, MetadataClass owner, MetadataField field)
+      throws IOException {
+    long length = stream.readVarint();
+    if (length < 0 || length > stream.available()) {
+      throw new IOException(
+          owner.getName() + "." + field.getName() + ": implausible array length " + length);
+    }
+    return (int) length;
+  }
+
+  /**
+   * Looks up a metadata string table entry on behalf of recording data.
+   *
+   * <p>{@link MetadataLookup#getString(int)} rejects an index outside the table with an {@code
+   * IllegalArgumentException}, which is right for a caller passing a bad argument. Here the index
+   * was read from the recording, so it is the recording that is wrong.
+   *
+   * @param lookup the chunk's metadata lookup
+   * @param index the string table index read from the recording
+   * @return the string
+   * @throws IOException if the index is outside the string table
+   */
+  public static String metadataString(MetadataLookup lookup, int index) throws IOException {
+    try {
+      return lookup.getString(index);
+    } catch (IllegalArgumentException e) {
+      throw new IOException(e.getMessage());
+    }
+  }
+
+  /**
    * Skips over a UTF-8 encoded string in the recording stream without decoding it.
    *
    * <p>This method is useful when the string content is not needed and only the position in the
    * stream needs to be advanced.
    *
    * @param stream the recording stream to skip over
-   * @throws IOException if an I/O error occurs during skipping
+   * @throws IOException if an I/O error occurs during skipping, or the encoding id is not one JFR
+   *     defines (0 to 5)
    */
   public static void skipUTF8(RecordingStream stream) throws IOException {
     byte id = stream.read();
@@ -140,13 +224,12 @@ public final class ParsingUtils {
       case 3:
       case 5:
         {
-          int size = (int) stream.readVarint();
-          stream.skip(size);
+          stream.skip(byteLength(stream));
           break;
         }
       case 4:
         {
-          int size = (int) stream.readVarint();
+          int size = charCount(stream);
           for (int i = 0; i < size; i++) {
             stream.readVarint();
           }
@@ -157,9 +240,14 @@ public final class ParsingUtils {
           stream.readVarint();
           break;
         }
-      default:
-        // nothing to skip for null/empty or unknown here
+      case 0: // null
+      case 1: // empty
         break;
+      default:
+        // Not "no payload": an unknown encoding has a payload of unknown length, and skipping just
+        // the id byte would misalign everything after it - every later constant pool entry when
+        // indexing a pool, the rest of the value when skipping a field (Verification.md R3).
+        throw new IOException("Unexpected string constant id: " + id);
     }
   }
 

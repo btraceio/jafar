@@ -272,7 +272,7 @@ class JdkMetadataEndToEndTest {
     server.start();
     try {
       ParsingContext context = ParsingContext.create();
-      SessionManager<JFRSession> sessions =
+      SessionManager<io.jafar.shell.core.Session> sessions =
           new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), context);
       List<String> output = new ArrayList<>();
       List<String> errors = new ArrayList<>();

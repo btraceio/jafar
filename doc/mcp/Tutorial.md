@@ -154,11 +154,17 @@ Opens a JFR recording file for analysis.
   "path": "/path/to/recording.jfr",
   "openedAt": "2026-02-10T17:13:48.249772Z",
   "availableTypes": 224,
-  "totalEvents": 0,
+  "totalEvents": null,
+  "totalEventsNote": "Not counted at open. jfr_summary reports the count.",
   "chunkCount": 2,
   "message": "Recording opened successfully"
 }
 ```
+
+`chunkCount` is read from the chunk headers after the metadata. If that read fails, `chunkCount`
+is `null` and `chunkCountError` says why, naming the file, e.g.
+`"Failed to list chunks of /path/to/recording.jfr: Error occurred while parsing JFR recording: Invalid JFR Magic Number: 3c21444f"`
+for a file that was replaced by an HTML page after it was opened.
 
 ### jfr_list_types
 
@@ -277,7 +283,7 @@ events/<eventType>[filters] | pipeline_operator
 
 ## Quick Examples
 events/jdk.ExecutionSample | count()
-events/jdk.FileRead[bytes>1000] | top(10)
+events/jdk.FileRead[bytesRead>1000] | top(10)
 events/jdk.GCPhasePause | stats(duration)
 ...
 ```

@@ -7,11 +7,16 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 class MetadataProviderTest {
@@ -23,6 +28,22 @@ class MetadataProviderTest {
             .toAbsolutePath();
     assertTrue(Files.exists(p), "Missing test resource: " + p);
     return p;
+  }
+
+  private static boolean isJfrRecording(Path path) {
+    if (!Files.isRegularFile(path)) {
+      return false;
+    }
+    try (InputStream in = Files.newInputStream(path)) {
+      byte[] magic = in.readNBytes(4);
+      return magic.length == 4
+          && magic[0] == 'F'
+          && magic[1] == 'L'
+          && magic[2] == 'R'
+          && magic[3] == 0;
+    } catch (IOException e) {
+      return false;
+    }
   }
 
   @Test
@@ -58,12 +79,38 @@ class MetadataProviderTest {
   }
 
   @Test
+  void multiChunkRecording_chunkLocalTypesResolveThroughProvider() throws Exception {
+    // Multi-chunk fixture with per-chunk type ids (Datadog profiler output). Git-ignored;
+    // downloaded by ./get_resources.sh. Both built-in backends resolve chunk-local types
+    // (jafar per-chunk; jdk via the recovery path), so the assertion holds regardless of
+    // which backend the registry picks.
+    Path dd =
+        Paths.get("..", "demo", "src", "test", "resources", "test-dd.jfr")
+            .normalize()
+            .toAbsolutePath();
+    Assumptions.assumeTrue(
+        isJfrRecording(dd), "multi-chunk fixture not available, run ./get_resources.sh: " + dd);
+
+    List<Map<String, Object>> all = MetadataProvider.loadAllClasses(dd);
+    java.util.Set<String> names =
+        all.stream().map(m -> String.valueOf(m.get("name"))).collect(Collectors.toSet());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        names.contains("datadog.ExecutionSample"),
+        "chunk-local datadog.ExecutionSample must be visible, got: " + names);
+
+    Map<String, Object> meta = MetadataProvider.loadClass(dd, "datadog.ExecutionSample");
+    org.junit.jupiter.api.Assertions.assertNotNull(
+        meta, "chunk-local datadog.ExecutionSample must resolve through the provider");
+    org.junit.jupiter.api.Assertions.assertEquals("datadog.ExecutionSample", meta.get("name"));
+  }
+
+  @Test
   void commandDispatcher_metadata_class_json_outputs() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
-    SessionManager.SessionRef<JFRSession> ref = sessions.open(jfr, null);
+    SessionManager.SessionRef<Session> ref = sessions.open(jfr, null);
 
     StringBuilder out = new StringBuilder();
     StringBuilder err = new StringBuilder();

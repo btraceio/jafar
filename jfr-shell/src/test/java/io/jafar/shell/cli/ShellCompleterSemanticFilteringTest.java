@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.util.*;
@@ -19,7 +20,7 @@ import org.mockito.Mockito;
  */
 class ShellCompleterSemanticFilteringTest {
 
-  private SessionManager<JFRSession> sessionManager;
+  private SessionManager<Session> sessionManager;
   private ShellCompleter completer;
 
   @BeforeEach
@@ -32,7 +33,7 @@ class ShellCompleterSemanticFilteringTest {
 
   // ==================== Mock Setup ====================
 
-  private SessionManager.SessionFactory<JFRSession> createMockSessionFactory() {
+  private SessionManager.SessionFactory<Session> createMockSessionFactory() {
     return (path, context) -> {
       JFRSession session = Mockito.mock(JFRSession.class);
       when(session.getRecordingPath()).thenReturn(path);

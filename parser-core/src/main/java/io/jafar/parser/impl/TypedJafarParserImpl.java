@@ -23,16 +23,17 @@ import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
 import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
-import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Implementation of TypedJafarParser that provides type-safe JFR event parsing.
@@ -48,35 +49,32 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
    * @param <T> the type of JFR events this handler processes
    */
   private final class HandlerRegistrationImpl<T> implements HandlerRegistration<T> {
-    private final WeakReference<Class<?>> clzRef;
-    private final WeakReference<TypedJafarParser> cookieRef;
+    private final HandlerRegistry<JFRHandler.Impl<?>> registry;
     private final JFRHandler.Impl<?> handler;
+    private final long registeredIn;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
-    /**
-     * Constructs a new HandlerRegistrationImpl.
-     *
-     * @param clz the class type for the handler
-     * @param handler the JFR handler implementation
-     * @param cookie the parser instance that owns this registration
-     */
-    HandlerRegistrationImpl(Class<?> clz, JFRHandler.Impl<?> handler, TypedJafarParser cookie) {
-      this.clzRef = new WeakReference<>(clz);
+    HandlerRegistrationImpl(
+        HandlerRegistry<JFRHandler.Impl<?>> registry, JFRHandler.Impl<?> handler) {
+      this.registry = registry;
       this.handler = handler;
-      this.cookieRef = new WeakReference<>(cookie);
+      this.registeredIn = registry.add(handler);
+    }
+
+    @Override
+    public void close() {
+      if (closed.compareAndSet(false, true)) {
+        registry.remove(handler, registeredIn);
+      }
     }
 
     /** {@inheritDoc} */
     @Override
+    @Deprecated
     public void destroy(JafarParser cookie) {
-      if (cookie != null && cookie.equals(cookieRef.get())) {
-        Class<?> clz = clzRef.get();
-        if (clz != null) {
-          Set<JFRHandler.Impl<?>> handlers = handlerMap.get(clz);
-          handlers.remove(handler);
-          if (handlers.isEmpty()) {
-            handlerMap.remove(clz);
-          }
-        }
+      if (cookie instanceof TypedJafarParserImpl
+          && ((TypedJafarParserImpl) cookie).handlerMap == handlerMap) {
+        close();
       }
     }
   }
@@ -90,20 +88,36 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   /** Path to the JFR recording file. */
   private final Path recording;
 
-  /** Map of event classes to their registered handlers. */
-  private final Map<Class<?>, Set<JFRHandler.Impl<?>>> handlerMap;
+  /**
+   * Event classes to their registered handlers. An entry is created on first registration and never
+   * removed; a class whose handlers have all been deregistered keeps an empty registry.
+   *
+   * <p>This map, {@link #globalHandlerMap} and {@link #factoryMap} are shared with the copies
+   * {@link #withParserListener} makes and are concurrent maps: they are written by {@link #handle}
+   * and {@link #registerFactory} on the caller's thread while the chunk threads of a running parse
+   * read them.
+   */
+  private final ConcurrentHashMap<Class<?>, HandlerRegistry<JFRHandler.Impl<?>>> handlerMap;
+
+  /**
+   * How many parsers share the three maps and have not been closed; the maps are cleared when the
+   * last one closes.
+   */
+  private final AtomicInteger owners;
 
   /** Map of chunk indices to type ID to class mappings. */
   private final IntObjectArrayMap<LongObjectHashMap<Class<?>>> chunkTypeClassMap;
 
   /** Global map of event type names to handler classes. */
-  private final Map<String, Class<?>> globalHandlerMap;
+  private final ConcurrentHashMap<String, Class<?>> globalHandlerMap;
 
   /** Map of interface classes to their build-time generated factories. */
-  private final Map<Class<?>, HandlerFactory<?>> factoryMap;
+  private final ConcurrentHashMap<Class<?>, HandlerFactory<?>> factoryMap;
 
   /** Whether build-time factories have been bound to the current recording. */
   private volatile boolean factoriesBound = false;
+
+  private static final JFRHandler.Impl<?>[] NO_HANDLERS = new JFRHandler.Impl<?>[0];
 
   /** Whether this parser has been closed. */
   private boolean closed = false;
@@ -115,12 +129,15 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
    * @param parsingContext the parsing context to use
    */
   public TypedJafarParserImpl(Path recording, ParsingContextImpl parsingContext) {
-    this.parser = new StreamingChunkParser(parsingContext.typedContextFactory());
+    this.parser =
+        new StreamingChunkParser(
+            parsingContext.typedContextFactory(), parsingContext.parallelism());
     this.recording = recording;
-    this.handlerMap = new HashMap<>();
     this.chunkTypeClassMap = new IntObjectArrayMap<>();
-    this.globalHandlerMap = new HashMap<>();
-    this.factoryMap = new HashMap<>();
+    this.handlerMap = new ConcurrentHashMap<>();
+    this.globalHandlerMap = new ConcurrentHashMap<>();
+    this.factoryMap = new ConcurrentHashMap<>();
+    this.owners = new AtomicInteger(1);
     this.parserListener = null;
 
     // Auto-discover and register build-time generated factories via ServiceLoader
@@ -130,10 +147,12 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   private TypedJafarParserImpl(TypedJafarParserImpl other, ChunkParserListener listener) {
     this.parser = other.parser;
     this.recording = other.recording;
-    this.handlerMap = new HashMap<>(other.handlerMap);
+    this.handlerMap = other.handlerMap;
+    this.owners = other.owners;
+    this.owners.incrementAndGet();
     this.chunkTypeClassMap = new IntObjectArrayMap<>(other.chunkTypeClassMap);
-    this.globalHandlerMap = new HashMap<>(other.globalHandlerMap);
-    this.factoryMap = new HashMap<>(other.factoryMap);
+    this.globalHandlerMap = other.globalHandlerMap;
+    this.factoryMap = other.factoryMap;
     this.factoriesBound = false;
     this.closed = other.closed;
     this.parserListener = listener;
@@ -146,9 +165,9 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       ValidationUtils.requireNonNull(handler, "handler");
       addDeserializer(clz);
       JFRHandler.Impl<T> handlerImpl = new JFRHandler.Impl<>(clz, handler);
-      handlerMap.computeIfAbsent(clz, k -> new HashSet<>()).add(handlerImpl);
-
-      return new HandlerRegistrationImpl<>(clz, handlerImpl, this);
+      HandlerRegistry<JFRHandler.Impl<?>> registry =
+          handlerMap.computeIfAbsent(clz, k -> new HandlerRegistry<>(NO_HANDLERS));
+      return new HandlerRegistrationImpl<>(registry, handlerImpl);
     } catch (JafarConfigurationException e) {
       throw new RuntimeException(e);
     }
@@ -168,10 +187,9 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       typeName = typeAnnotation.value();
     }
 
-    if (globalHandlerMap.containsKey(typeName)) {
+    if (globalHandlerMap.putIfAbsent(typeName, clz) != null) {
       return;
     }
-    globalHandlerMap.put(typeName, clz);
     if (!isPrimitive) {
       for (Method m : clz.getMethods()) {
         if (m.getAnnotation(JfrIgnore.class) == null) {
@@ -192,7 +210,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     parser.parse(
         recording,
         new ChunkParserListener() {
-          private final ThreadLocal<Control> control = ThreadLocal.withInitial(ControlImpl::new);
+          // One abort state for the whole parse, shared by every chunk thread; see
+          // Control#abort(). ControlImpl itself stays per thread for the stream position.
+          private final AtomicBoolean aborted = new AtomicBoolean();
+          private final ThreadLocal<Control> control =
+              ThreadLocal.withInitial(() -> new ControlImpl(aborted));
           private Set<String> referencedTypes = null;
 
           @Override
@@ -213,8 +235,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
               }
               context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
               ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
-              return parserListener == null
-                  || parserListener.onChunkStart(context, chunkIndex, header);
+              boolean proceed =
+                  parserListener == null
+                      || parserListener.onChunkStart(context, chunkIndex, header);
+              // A chunk that starts after an abort is skipped; onChunkEnd still runs.
+              return proceed && !aborted.get();
             }
             return parserListener != null
                 && parserListener.onChunkStart(context, chunkIndex, header);
@@ -229,6 +254,12 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
           @Override
           public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
+            if (aborted.get()) {
+              // Aborted after this chunk started: skip binding factories and deserializers for the
+              // chunk's metadata, its constant pools and its events. The parser then calls
+              // onChunkEnd with skipped=true.
+              return false;
+            }
             if (!(context instanceof TypedParserContext)) {
               throw new RuntimeException("Invalid context");
             }
@@ -278,6 +309,11 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
           @Override
           public boolean onCheckpoint(ParserContext context, CheckpointEvent checkpoint) {
+            if (aborted.get()) {
+              // Aborted while this chunk's constant pools are being read: skip the rest of the
+              // chain.
+              return false;
+            }
             if (parserListener != null) {
               return parserListener.onCheckpoint(context, checkpoint);
             } else {
@@ -295,11 +331,19 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             if (!(context instanceof TypedParserContext)) {
               throw new RuntimeException("Invalid context");
             }
+            if (aborted.get()) {
+              // aborted by a handler in this or another chunk: skip the rest of this chunk
+              return false;
+            }
             TypedParserContext typedContext = (TypedParserContext) context;
             LongObjectHashMap<Class<?>> typeClassMap = typedContext.getClassTypeMap();
             Class<?> typeClz = typeClassMap.get(typeId);
             if (typeClz != null) {
-              if (handlerMap.containsKey(typeClz)) {
+              // One read per event: a handler deregistered while this event is being dispatched
+              // (from a handler or from another thread) still receives it, and no later one.
+              HandlerRegistry<JFRHandler.Impl<?>> registry = handlerMap.get(typeClz);
+              JFRHandler.Impl<?>[] handlers = registry == null ? NO_HANDLERS : registry.snapshot();
+              if (handlers.length > 0) {
                 RecordingStream stream = context.get(RecordingStream.class);
                 MetadataClass clz = context.getMetadataLookup().getClass(typeId);
 
@@ -307,9 +351,9 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
                 Object deserialized = clz.read(stream);
 
                 ControlImpl ctrl = (ControlImpl) control.get();
-                for (JFRHandler.Impl<?> handler : handlerMap.get(typeClz)) {
-                  handler.handle(deserialized, ctrl);
-                  if (ctrl.abortFlag) {
+                for (int i = 0; i < handlers.length; i++) {
+                  handlers[i].handle(deserialized, ctrl);
+                  if (ctrl.isAborted()) {
                     return false;
                   }
                 }
@@ -329,9 +373,13 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
       parser.close();
       chunkTypeClassMap.clear();
-      handlerMap.clear();
-      globalHandlerMap.clear();
-      factoryMap.clear();
+      if (owners.decrementAndGet() == 0) {
+        for (HandlerRegistry<JFRHandler.Impl<?>> registry : handlerMap.values()) {
+          registry.clear();
+        }
+        globalHandlerMap.clear();
+        factoryMap.clear();
+      }
     }
   }
 

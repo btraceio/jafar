@@ -3,16 +3,20 @@ package io.jafar.parser.benchmark;
 import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
+import java.io.FileNotFoundException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
@@ -32,6 +36,17 @@ public class StreamingChunkParserIoBenchmark {
   private byte[] fileData;
   private final AtomicInteger pathCount = new AtomicInteger();
   private final AtomicInteger streamCount = new AtomicInteger();
+
+  @Setup(Level.Trial)
+  public void setUp() throws Exception {
+    // The jmh Gradle task runs with workingDir = rootProject.projectDir, so the
+    // default @Param path resolves from the repo root.
+    path = Path.of(filePath);
+    if (!Files.exists(path)) {
+      throw new FileNotFoundException("benchmark recording not found: " + path.toAbsolutePath());
+    }
+    fileData = Files.readAllBytes(path);
+  }
 
   @Benchmark
   public void parseViaPath(Blackhole bh) throws Exception {

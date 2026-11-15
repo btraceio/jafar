@@ -27,6 +27,17 @@ dependencies {
 
     // Depends on jafar parser for actual parsing implementation
     implementation project(':parser')
+
+    // Unit tests for logic that needs no recording (e.g. merging class definitions across
+    // chunks). Behaviour against real recordings is tested from jfr-shell, which loads this backend.
+    testImplementation project(':shell-core') // the SPI the sources implement
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+test {
+    useJUnitPlatform()
 }
 
 jar {

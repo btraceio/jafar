@@ -19,6 +19,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
 import org.jline.reader.Completer;
 
 /**
@@ -34,8 +36,11 @@ public final class JfrTuiAdapter implements TuiAdapter {
   public JfrTuiAdapter(SessionManager<?> sessions, Object context) {
     this.sessions = sessions;
     CommandDispatcher dispatcher = context instanceof CommandDispatcher cd ? cd : null;
+    // Erasure-safe wildcard-to-Session view (see JfrModule.getCompleter); ShellCompleter
+    // narrows per-call where it needs JFRSession, so a live session flows through safely.
     this.completer =
-        new ShellCompleter((SessionManager<JFRSession>) (SessionManager<?>) sessions, dispatcher);
+        new ShellCompleter(
+            (SessionManager<io.jafar.shell.core.Session>) (SessionManager<?>) sessions, dispatcher);
   }
 
   @Override
@@ -157,9 +162,14 @@ public final class JfrTuiAdapter implements TuiAdapter {
   }
 
   private List<Map<String, Object>> loadEventsSummary(Path recording) throws Exception {
-    Map<String, long[]> counts = new HashMap<>();
+    // The handler runs on one parser thread per chunk (StreamingChunkParser's pool), so the map and
+    // the per-type counters must both be safe for concurrent update. Counts are commutative, so the
+    // totals do not depend on which chunk finishes first.
+    Map<String, LongAdder> counts = new ConcurrentHashMap<>();
     try (var p = ParsingContext.create().newUntypedParser(recording)) {
-      p.handle((type, value, ctl) -> counts.computeIfAbsent(type.getName(), k -> new long[1])[0]++);
+      p.handle(
+          (type, value, ctl) ->
+              counts.computeIfAbsent(type.getName(), k -> new LongAdder()).increment());
       p.run();
     }
     List<Map<String, Object>> summary = new ArrayList<>();
@@ -167,7 +177,7 @@ public final class JfrTuiAdapter implements TuiAdapter {
         (name, c) -> {
           Map<String, Object> row = new LinkedHashMap<>();
           row.put("name", name);
-          row.put("count", c[0]);
+          row.put("count", c.sum());
           summary.add(row);
         });
     summary.sort(Comparator.comparing(r -> String.valueOf(r.get("name"))));

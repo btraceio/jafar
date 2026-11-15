@@ -29,6 +29,42 @@ public class ParsingUtilsFuzzTest {
     }
   }
 
+  /**
+   * An unknown encoding id has no known payload length. {@code skipUTF8} used to treat it as an
+   * empty string while {@code readUTF8} threw for the same byte, so skipping left the stream inside
+   * the string's bytes.
+   */
+  @Test
+  void skipUTF8RejectsUnknownEncodingLikeReadUTF8() throws Exception {
+    for (byte id : new byte[] {6, 9, 0x7f, (byte) 0x80, (byte) 0xff}) {
+      byte[] data = {id, 5, 'a', 'l', 'p', 'h', 'a'};
+      IOException read;
+      try (RecordingStream s = streamOf(data)) {
+        read =
+            assertThrows(
+                IOException.class,
+                () -> io.jafar.parser.ParsingUtils.readUTF8(s, s.getContext().getStringTypeId()));
+      }
+      try (RecordingStream s = streamOf(data)) {
+        IOException skip =
+            assertThrows(
+                IOException.class, () -> io.jafar.parser.ParsingUtils.skipUTF8(s), "id " + id);
+        assertEquals(read.getMessage(), skip.getMessage());
+      }
+    }
+  }
+
+  /** Null and empty strings carry no payload: skipping them must consume only the id byte. */
+  @Test
+  void skipUTF8NullAndEmptyConsumeOnlyTheId() throws Exception {
+    for (byte id : new byte[] {0, 1}) {
+      try (RecordingStream s = streamOf(id, (byte) 0x2a)) {
+        io.jafar.parser.ParsingUtils.skipUTF8(s);
+        assertEquals(0x2a, s.readVarint());
+      }
+    }
+  }
+
   @RepeatedTest(30)
   void fuzzSkipUTF8ValidPatterns() throws Exception {
     java.util.Random rnd = new java.util.Random();

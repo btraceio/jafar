@@ -107,20 +107,47 @@ public final class Values {
    * @return a new map with all ComplexType and ArrayType values recursively unwrapped
    */
   public static Map<String, Object> resolvedDeep(Map<String, Object> root) {
+    return resolvedDeep(root, false);
+  }
+
+  /**
+   * Like {@link #resolvedDeep(Map)}, but a reference to a JFR <em>simple type</em> resolves to its
+   * scalar value instead of a one-entry wrapper map. This is the shape the typed API already
+   * produces: {@code {"state": {"name": "RUNNABLE"}}} becomes {@code {"state": "RUNNABLE"}}.
+   *
+   * <p>Which values are simple types is decided by the recording's metadata (see {@link
+   * ComplexType#isSimpleType()}), not by the size of the map, so a genuine struct that happens to
+   * have one field is left alone. Wrappers nested inside wrappers, and inside arrays, collapse too.
+   *
+   * @param root the root map to resolve
+   * @return a new map with ComplexType and ArrayType values recursively unwrapped and simple-type
+   *     references collapsed to their value
+   */
+  public static Map<String, Object> resolvedDeepCollapsed(Map<String, Object> root) {
+    return resolvedDeep(root, true);
+  }
+
+  private static Map<String, Object> resolvedDeep(Map<String, Object> root, boolean collapse) {
     Map<String, Object> out = new HashMap<>(root.size());
     for (Map.Entry<String, Object> e : root.entrySet()) {
       Object v = e.getValue();
-      v = resolveDeepValue(v);
+      v = resolveDeepValue(v, collapse);
       out.put(e.getKey(), v);
     }
     return out;
   }
 
-  private static Object resolveDeepValue(Object v) {
+  private static Object resolveDeepValue(Object v, boolean collapse) {
     if (v instanceof ComplexType) {
       ComplexType c = (ComplexType) v;
       Map<String, Object> inner = c.getValue();
-      return inner != null ? resolvedDeep(inner) : null;
+      if (inner == null) {
+        return null;
+      }
+      if (collapse && c.isSimpleType() && inner.size() == 1) {
+        return resolveDeepValue(inner.values().iterator().next(), true);
+      }
+      return resolvedDeep(inner, collapse);
     }
     Object array = unwrapArray(v);
     if (array != null && array.getClass().isArray()) {
@@ -131,7 +158,7 @@ public final class Values {
       Object[] in = (Object[]) array;
       Object[] out = new Object[in.length];
       for (int i = 0; i < in.length; i++) {
-        out[i] = resolveDeepValue(in[i]);
+        out[i] = resolveDeepValue(in[i], collapse);
       }
       return out;
     }
@@ -139,7 +166,7 @@ public final class Values {
       Map<?, ?> m = (Map<?, ?>) v;
       Map<String, Object> res = new HashMap<>(m.size());
       for (Map.Entry<?, ?> me : m.entrySet()) {
-        res.put(String.valueOf(me.getKey()), resolveDeepValue(me.getValue()));
+        res.put(String.valueOf(me.getKey()), resolveDeepValue(me.getValue(), collapse));
       }
       return res;
     }

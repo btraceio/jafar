@@ -1,9 +1,15 @@
 package io.jafar.parser.api;
 
 /**
- * Interface for handling errors that occur during JFR parsing. Allows for configurable error
- * handling strategies.
+ * Interface for handling errors that occur during JFR parsing.
+ *
+ * @deprecated Nothing in Jafar ever calls an {@code ErrorHandler}: no parser accepts one, so
+ *     neither {@link #DEFAULT} nor {@link #lenient()} has any effect. To decide what happens to an
+ *     event the untyped parser cannot decode, use {@link
+ *     UntypedJafarParser#onDecodeError(UntypedJafarParser.DecodeErrorHandler)}. Kept only for
+ *     source and binary compatibility; it will be removed.
  */
+@Deprecated
 public interface ErrorHandler {
 
   /** Default error handler that logs errors and propagates them as RuntimeExceptions. */

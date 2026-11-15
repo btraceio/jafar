@@ -10,7 +10,7 @@ package io.jafar.shell.core.llm;
  * them.
  *
  * <p>The three rules at the top of the JfrPath section are there because each one produced a wrong
- * query during development: descending-by-default sorting, the bracketed argument to {@code
+ * query during development: descending-by-default sorting, the unbracketed argument to {@code
  * filter()}, and duration literals being nanoseconds unless suffixed.
  *
  * <p>These strings must stay byte-stable between calls: they are the cached prompt prefix.
@@ -51,9 +51,9 @@ public final class LanguageReference {
       Roots: events/<type>, metadata/<type>, chunks, constants (alias cp)
 
       Filters go in square brackets, directly after a segment:
-        events/jdk.FileRead[bytes>1000]
+        events/jdk.FileRead[bytesRead>1000]
         events/jdk.FileRead[path~"/tmp/.*"]
-        events/jdk.FileRead[bytes>1000 and path~"/tmp/.*"]
+        events/jdk.FileRead[bytesRead>1000 and path~"/tmp/.*"]
       Operators: = != > >= < <= ~ (regex). Combine with and / or / not and parentheses.
       Filter functions: contains, startsWith, endsWith, matches(path,"re"[,"i"]), exists, empty,
       between(path,a,b), len(path), before, after, on.
@@ -63,7 +63,7 @@ public final class LanguageReference {
         events/jdk.GCHeapSummary[when/when="After GC"]/heapSpace[committedSize>1000000]
 
       Numeric literals take unit suffixes:
-        size (binary): K KB = 1024, M MB = 1024^2, G GB = 1024^3   ->  [bytes>1MB]
+        size (binary): K KB = 1024, M MB = 1024^2, G GB = 1024^3   ->  [bytesRead>1MB]
         duration (to nanoseconds): ns us ms s                      ->  [duration>10ms]
       A bare number in a duration field is nanoseconds: [duration>10000000] == [duration>10ms].
       There is no minute suffix; m already means mebibytes.
@@ -76,7 +76,7 @@ public final class LanguageReference {
         grouping and ordering:
           groupBy(key[, agg=count|sum|avg|min|max][, value=path][, sortBy=key|value][, asc=]),
           sortBy(field[, asc=]), top(n[, by=path][, asc=]), head(n), tail(n), distinct()
-        shaping: select(...), filter([predicate])
+        shaping: select(...), filter(predicate)
 
       Group and filter only on fields the type actually has — ask with FIELDS: rather than
       guessing from the event name. A key that matches no field is rejected, not empty.
@@ -95,12 +95,12 @@ public final class LanguageReference {
       Four rules that cause most invalid queries:
         1. sortBy and top are DESCENDING by default. Pass asc=true for ascending — this matters
            for time series, where sortBy(startTime) gives the recording backwards.
-        2. filter() takes a BRACKETED predicate, unlike a root filter:
-             groupBy(path, agg=sum, value=bytes) | filter([sum>1048576])
+        2. filter() takes a bare predicate, without the [] of a root filter:
+             groupBy(path, agg=sum, value=bytesRead) | filter(sum>1048576)
         3. Terminal aggregations consume the stream; you cannot chain two of them.
         4. groupBy emits two columns: 'key', and the aggregate named after the function —
            agg=sum gives 'sum', agg=count gives 'count'. Later stages take either that name or
-           'value', so both filter([sum>1048576]) and sortBy(value) work on the same rows.
+           'value', so both filter(sum>1048576) and sortBy(value) work on the same rows.
 
       Examples:
         events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(10, by=count)

@@ -10,6 +10,7 @@ import io.jafar.shell.cli.completion.CompletionContextAnalyzer;
 import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.property.mutation.MutationGenerator.MutatedQuery;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -41,7 +42,7 @@ import org.jline.reader.ParsedLine;
 @PropertyDefaults(tries = 500, shrinking = ShrinkingMode.FULL)
 public class MutationBasedCompletionTests {
 
-  private static SessionManager<JFRSession> sessionManager;
+  private static SessionManager<Session> sessionManager;
   private static ShellCompleter completer;
   private static MetadataService metadataService;
   private static CompletionContextAnalyzer analyzer;

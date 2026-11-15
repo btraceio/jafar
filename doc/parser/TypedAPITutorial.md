@@ -52,7 +52,8 @@ Event interfaces are plain Java interfaces that represent JFR event types. They:
 
 Handlers are lambda functions or method references that:
 - Receive event instances and a control object
-- Execute synchronously on the parser thread
+- Execute on the chunk parsing threads, concurrently for different chunks, so they must be
+  thread-safe (or use `ParsingContext.create().withParallelism(1)` for sequential, file-ordered calls)
 - Should be fast (offload heavy work to background threads)
 - Can abort parsing early using `ctl.abort()`
 
@@ -60,7 +61,9 @@ Handlers are lambda functions or method references that:
 
 The `Control` parameter provides:
 - `stream().position()` - current byte offset in the JFR file
-- `abort()` - stop parsing immediately without throwing exception
+- `abort()` - stop the whole parse (every chunk) without throwing an exception. Chunks are parsed
+  in parallel: the calling thread gets no further event, and each other chunk thread finishes at
+  most the one event it was already dispatching. See the `Control.abort()` Javadoc.
 - `chunkInfo()` - chunk metadata (start time, duration, tick conversion)
 
 ## Defining Event Interfaces
@@ -160,7 +163,7 @@ try (TypedJafarParser parser = JafarParser.newTypedParser(Paths.get("recording.j
 
     parser.run();  // Blocks until parsing completes
 
-    reg.destroy(parser);  // Cleanup (optional if parser is closed)
+    reg.close();  // Deregister (optional: closing the parser deregisters every handler)
 }
 ```
 
@@ -207,6 +210,10 @@ try (TypedJafarParser parser = JafarParser.newTypedParser(Paths.get("recording.j
 
 System.out.println("Processed " + count.get() + " samples");
 ```
+
+`abort()` stops every chunk, not just the one the handler is in. Because chunks are parsed in
+parallel, `count` can end slightly above 1000 - at most one extra event per other parsing thread -
+so cap on your own count if you need an exact number.
 
 ### Error Handling
 
@@ -352,7 +359,7 @@ Convert JFR tick values to time units:
 
 ```java
 parser.handle(FileRead.class, (event, ctl) -> {
-    long durationNanos = ctl.chunkInfo().convertTicks(event.duration(), TimeUnit.NANOSECONDS);
+    long durationNanos = ctl.chunkInfo().asDurationNanos(event.duration());
     double durationMs = durationNanos / 1_000_000.0;
     System.out.printf("Duration: %.2f ms%n", durationMs);
 });
@@ -603,7 +610,7 @@ public class ThreadAnalyzer {
 
 ## Next Steps
 
-- Learn about the [Untyped API](unTypedAPITutorial.md) for dynamic event handling
+- Learn about the [Untyped API](UntypedAPITutorial.md) for dynamic event handling
 - Explore [JFR Shell](../cli/Tutorial.md) for interactive analysis
 - Check [Performance Report](../performance/PerformanceReport.md) for optimization tips
 

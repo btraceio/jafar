@@ -1,0 +1,1 @@
+Method <io.jafar.otlp.api.OtlpParser.parse(java.nio.file.Path)> calls method <io.jafar.otlp.internal.OtlpReader.read(java.nio.file.Path)> in (OtlpParser.java:32)

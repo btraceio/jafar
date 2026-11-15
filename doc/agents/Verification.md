@@ -13,10 +13,66 @@ A user-facing command is not done until it has been typed into a built shell or 
 the output read. Not the unit test. Not the completer. The actual binary.
 
 ```bash
-./gradlew :jfr-shell:shadowJar
+./gradlew :jfr-shell:shadowJar :jfr-shell-jafar:jar
+mkdir -p /tmp/no-plugins
 printf 'open rec.jfr\nas-query --dry-run which threads used the most CPU?\nexit\n' \
-  | java -jar jfr-shell/build/libs/jfr-shell-*-all.jar
+  | java -Djfr.shell.plugin.dir=/tmp/no-plugins -Djfr.shell.registry.remote=false \
+      -Djfr.shell.backend.jars=jfr-shell-jafar/build/libs/jfr-shell-jafar-0.0.0-SNAPSHOT.jar \
+      -jar jfr-shell/build/libs/jfr-shell-*-all.jar
 ```
+
+**The shadow jar does not contain the jafar backend.** Without those three flags the shell installs
+the *released* `jfr-shell-jafar` from Maven Central into `~/.jfr-shell/plugins` and runs that, so a
+change to anything under `jfr-shell-jafar/` is not what you are typing into. With them, the log
+says `Local backend override: …/jfr-shell-jafar-0.0.0-SNAPSHOT.jar`; check for that line. (When no
+override is given, `PluginManager` also picks a SNAPSHOT under `~/.m2/repository/io/btrace` that is
+newer than the installed version: a `./gradlew publishToMavenLocal` you forgot about is a third
+backend you may be running.)
+
+A development (`-SNAPSHOT`) jfr-shell now says when this has happened. If the `jafar` or `jdk`
+backend it selected reports a different version, it prints to stderr, before the prompt:
+
+```
+Warning: this jfr-shell is a development build (0.0.0-SNAPSHOT) but its 'jafar' backend is version 0.29.0, not the one built with it. …
+```
+
+That line means everything typed into that shell ran the release. The warning is a backstop, not
+a replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from
+a fresh one. `jafar-shell` bundles the backend built with it and uses that one even when a released
+plugin is installed (its `backend` command reports `Version: dev`), so its shadow jar needs no
+flags.
+
+> **Case file — verifying 0.29.0.** Fixing `crossref` in `JafarSources`, every
+> built-jar check — "works on a real recording", "a corrupted real recording still prints the clean
+> numbers", "the race reproduces on my commit and on its parent" — ran the released 0.29.0 backend
+> the shell had fetched on its first start. One conclusion was false and went into this file as a
+> case file and into a suggested follow-up task; the other two were right only because the code
+> they were about had not changed in the way the claims assumed — the code under test was never
+> run. It surfaced only because a
+> redesign that had to change the numbers (1047 → 196) printed exactly the old ones. Unit tests
+> were never affected: Gradle puts `project(':jfr-shell-jafar')` on the test classpath.
+
+> **Case file — "identical to the unmodified build".** A parser change was checked by running
+> `constants/jdk.types.StackTrace | crossref()` in a jar built from the change and in one built
+> from its parent, and diffing the output: identical, so nothing had moved. Both jars loaded
+> `io.jafar.parser.*` from the build, which the plugin loader takes from the shell jar first, but
+> `JafarSources` from the released 0.29.0 plugin, so the diff compared one release's counting with
+> itself. Its "16538 entries" were the released backend counting an entry once per checkpoint; the
+> code under test said 622. A before/after comparison proves nothing about the parts both sides
+> took from the same place.
+
+`--tui` (both shells) is a full-screen app on the system terminal and ignores piped input. Drive
+it through a pseudo-terminal with [`tools/tui_drive.py`](tools/tui_drive.py). The script types each
+line and Enter, and writes the rendered screen after each command to `<out>/<n>.txt`:
+
+```bash
+mkdir -p /tmp/tui && python3 -I doc/agents/tools/tui_drive.py /tmp/tui \
+  java -jar jafar-shell/build/libs/jafar-shell-*-all.jar --tui rec.jfr -- \
+  'constants --limit 2' 'help constants'
+```
+
+The tip line keeps redrawing, so the screen never goes quiet. Each command therefore waits out the
+script's 90-second cap; run it in the background for more than a few commands.
 
 > **Case file — `set llm.backend = ollama`.** This command appeared in five documents, in the help
 > text, in `llm status`'s own advice, and in tab completion. It had never been run. The shell
@@ -41,7 +97,8 @@ printf 'open rec.jfr\nas-query --dry-run which threads used the most CPU?\nexit\
 **Corollary:** offering something in completion, documenting it, or printing a confirmation are not
 evidence that it works. Confirmation messages lie — see R3.
 
-## R2. Enumerate every path before you call it wired
+| Variable stores | the global `VariableStore` and every open session's store: `set` can copy a lazy variable into any of them, so session close, `invalidate` and `unset` must reach all of them, in both shells (`Shell.closeSession`, `CommandDispatcher.forgetSession`) |
+| `show` of a variable | the whole-variable path and the substituted-query path: flags (`--limit`, `--format`) are substituted on both, and a jar test runs each with a variable-valued flag |
 
 When adding a capability, list every implementation of the interface and every dispatcher that could
 reach it, then check each one. Write the list down; do not do it from memory.
@@ -50,11 +107,13 @@ In this repository the recurring multiplicities are:
 
 | Axis | Instances |
 |---|---|
-| Shells | `jfr-shell` (`CommandDispatcher`) and `jafar-shell` (`unified/Shell`) |
+| Shells | `jfr-shell` (`CommandDispatcher`) and `jafar-shell` (`unified/Shell`); `jafar-shell --tui` runs `CommandDispatcher` again, with a module evaluator for heap dump, pprof and OTLP sessions |
 | JfrPath execution | via `JfrSelector` when supplied; via `JfrPathEvaluator` directly when not |
 | LLM backends | `llm-anthropic`, and `llm-openai`'s `openai` + `ollama` profiles |
 | Untyped parsers | Java (`parser-core`) and Go (`go-parser`) — see the [parity rule](../../AGENTS.md#rules) |
+| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses) and generated `EventStreamGenerated` (`parser-codegen`, not reachable from the public API) — held equal by `GeneratedUntypedParityTest` |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
+| Chunks | one parsing task per chunk on a pool of `max(availableProcessors - 2, 1)` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
 
 > **Case file — two query paths.** `CommandDispatcher` runs JfrPath two ways. The LLM host adapter
 > knew only the `JfrSelector` one; the interactive shell builds the dispatcher the other way. Fixed
@@ -74,7 +133,30 @@ In this repository the recurring multiplicities are:
 > analysis holding its own real one ignored the double and read the recording. Injection points do
 > not appear in a diff as changes — they appear as code that looks the same.
 
-## R3. A fallback that hides a misconfiguration is a bug
+> **Case file — one chunk.** `Control.abort()` kept its flag in a `ThreadLocal`, and
+> `StreamingChunkParser` parses each chunk on a pool thread, so an abort stopped only its own chunk.
+> Five abort tests asserted an exact count and stayed green because `test-ap.jfr` was one chunk. On
+> the two-chunk `tck-test.jfr` a handler aborting at its 5th event received 40,063 events with a
+> 14-thread pool and 6 with a one-thread pool (the next chunk ran on the aborting thread and
+> delivered one event before the flag was checked). The pool size comes from
+> `availableProcessors`, so the same bug looks different on each machine: run both ends with
+> `-XX:ActiveProcessorCount=1` and `=16`. A multi-chunk fixture costs nothing — a JFR chunk is
+> self-contained, so a recording concatenated with itself is a valid N-chunk recording
+> (`AbortProbe.fixtures`, Go's `TestMultipleChunks`). Constant-pool ids are chunk-local as well: key
+> anything per id on (chunk, id).
+
+> **Case file — two modes of one shell.** `unified/Shell` gained a terminal-free script mode with
+> a private constructor taking `out` and `err` — the same names as its fields. The anonymous
+> `CommandDispatcher.IO` built inside that constructor captured the *parameters*, which are `null`
+> at the prompt (the terminal's writer is used there), so `metadata --summary` typed at the
+> jafar-shell prompt failed with `Cannot invoke "java.io.PrintWriter.println(String)" because
+> "this.val$out" is null` for the whole life of the PR. Every check of the JFR commands, by hand
+> and in `ShellArtifactTest`, ran them through `jafar-shell script`, where the parameters are set.
+> A merge brought in tests that type them at the prompt, and those caught it. Script mode and the
+> prompt are two paths; a constructor parameter must not share a name with a field that code in
+> the constructor reaches.
+
+A failure path that loses the failure is a fallback too. A command handler that prints an error and returns normally must record it through the shell's error channel ([Shells.md](Shells.md#scripting-is-shared-one-implementation-four-front-ends)); a `finally` must not run completion callbacks (`onArrayEnd`, `onComplexValueEnd`) on the failure path, where they can throw and replace the original exception. Check: the test that makes the operation fail asserts the original exception type, or the script's stop-on-error summary, not only that something failed.
 
 A `catch` that substitutes a default, a literal that stands in for a real value, a lookup that
 returns `null` and is quietly tolerated — each turns a loud failure into a wrong answer. Either
@@ -95,11 +177,85 @@ looks identical to the file not being read at all.
 > explained it printed on the next line. A field you capture and never read is a fallback in
 > disguise.
 
+> **Case file — crossref, and the layer under it.** `JafarSources.crossref` decoded every event
+> and pool entry inside `catch (Throwable ignore) {}`: a corrupted recording printed reference
+> counts as if complete. It now fails naming type, chunk and position (`CrossrefDecodeFailureTest`,
+> a JMC-written fixture with one string encoding byte set to `0x7f` in an event, and a pooled
+> entry whose string reference points at an id the string pool lacks). Until btraceio/jafar#135 the
+> layer under it hid the same byte flipped in a pooled string: `ParsingUtils.skipUTF8` skipped the
+> unknown id as an empty string while `CheckpointEvent` indexed the pool, the next entry misread
+> as `Unknown type ID 3`, and `CheckpointEvent` logged a WARN and abandoned the rest of the
+> checkpoint, so on a real JDK 25 recording `constants/jdk.types.StackTrace | count()` printed the
+> WARN and a number. Since #135 indexing fails instead, and since #150 the top-level message carries
+> the cause, so both commands now print `Error occurred while parsing JFR recording: Constant pool
+> jdk.types.Bytecode, index 227: Unexpected string constant id: 127` — the entry that was
+> corrupted. (An earlier version of this case file said crossref printed the clean numbers; that
+> was the released backend — see R1.)
+
 > **Case file — sixteen releases of a lie.** `McpServerFactory.SERVER_VERSION` was the literal
 > `"0.10.0"`. Every release from 0.10.0 through 0.26.2 told MCP clients it was 0.10.0. Now read from
 > the jar manifest's `Implementation-Version`, which the shadow-jar build stamps, so it cannot drift.
 
-## R4. Documentation is code — run it
+> **Case file — a whole decode path behind one `catch`.** `EventStreamGenerated.onEvent` caught
+> every `Exception` and returned the delegate's answer, which with no delegate is `false`, and
+> `StreamingChunkParser` treats `false` as "skip the rest of the chunk". Behind it, the generated
+> untyped path was broken four ways at once: generation recursed to `StackOverflowError` on any
+> array field, threw `Unsupported field type` on simple types, emitted `Character.valueOf(short)`
+> (`NoSuchMethodError`) for `char`, and the deserializer cache was keyed by chunk-scoped type id, so
+> a later chunk decoded with an earlier chunk's deserializer. None of it was visible: on
+> `tck-test.jfr` the path delivered 16,095 of 67,657 events, with whole types (`jdk.GCHeapSummary`,
+> 1,892 → 0) silently gone. Each fix only exposed the next failure once the `catch` stopped hiding
+> it. The net that found them: decode the same recording through the generic reader and the
+> generated path and compare **counts per event type** and values (`GeneratedUntypedArrayParityTest`,
+> `GeneratedDeserializerCacheTest`); after the fixes both strategies deliver 67,657 events in all 78
+> types. The `catch` is gone too: every failure, I/O included, now fails the parse naming type,
+> chunk and position - a read failure as `EventDecodingException` (as on the generic path, with the
+> same opt-in `onDecodeError` skip), a generation failure as `GeneratedDeserializationException` -
+> pinned by `GeneratedUntypedParityTest.deserializerFailureFailsTheParseNamingTheEventType`. When a listener
+> method returns `boolean`, a `catch` that returns is a control-flow decision, not error handling.
+
+> **Case file — half an event, then silence; or half an event, then a crash.** `EventStream.onEvent`
+> (what `UntypedJafarParser` always uses), and its benchmark-only twins `EventStreamLazy` and
+> `EventStreamBaseline`, handed the half-built map to the handler from a `finally`, then, for an
+> `IOException`, returned `!abort && delegate != null && ...`: `false` with no delegate, which
+> `StreamingChunkParser` reads as "skip the rest of the chunk". Twenty events in one chunk, event 7's
+> string encoding byte set to `0x7f`: the handler got events 0–6, event 7 without `label`, and
+> nothing else, and `run()` returned normally. With a `withParserListener` delegate the same failure
+> was ignored and all 20 arrived, event 7 still half-built. The first attempt to reproduce it hit a
+> different path: the JMC writer pools event strings, so the marker bytes were in the
+> `java.lang.String` constant pool; that error surfaces as a `RuntimeException` from
+> `MutableConstantPool.get`, which was not caught, so the parse *failed* (after delivering the
+> partial map). Same bug, opposite symptom, decided by which byte was corrupted. Now
+> `EventDecodingException` names type, chunk and position, and nothing is delivered half-built;
+> pinned by `EventDecodeFailureTest` (7 of 8 fail on the old code). **When you corrupt a fixture to
+> reach a code path, read the stack to confirm which path it took before reasoning from the
+> outcome.**
+
+> **Case file — a skip that guesses.** Both untyped parsers skip constant pool entries to index
+> them, and both skipped a string whose encoding id they did not know as if it had no payload
+> (Java `ParsingUtils.skipUTF8`, Go `skipString`: `default: // unknown ids carry no payload`). One
+> bad tag byte therefore moved every later entry of the checkpoint: in a Go test pool of "one",
+> "two", "three" with entry 2's tag corrupted, entry 3 was decoded from inside "two" and failed
+> with `unexpected string constant id: 116` (`'t'`). And a reference that then found no entry
+> read as `null`, so in skip mode later events quietly lost strings. Found only because a
+> skip-mode test asserted the *next* event's value, not just that the bad one was reported. Both
+> now refuse unknown ids and report dangling string references (`EventDecodeFailureTest`
+> `CONSTANT_POOL`/`DANGLING_STRING_REF`, Go `TestCorruptedPoolStringIsReportedNotMisaligned`).
+> **A skip routine's default branch is a fallback too: if it cannot know the length, it must fail.**
+
+> **Case file — the cause three wrappers down.** Once a corrupted pool failed the parse, both shells
+> said so in the same words for every cause: a real `settings=profile` recording with one pooled
+> string's `0x03` set to `0x7f` gave `Error: Error occurred while parsing JFR recording` in
+> `jfr-shell` and `Query error: Error occurred while parsing JFR recording` in `jafar-shell`. The
+> reason was in hand: chunks are parsed on worker threads, so it reached `run()` as chunk task →
+> future → `RuntimeException("Failed to process chunk")` → `IOException`, and both shells print
+> only `getMessage()` of the outermost one. `StreamingChunkParser` now appends the most specific
+> message in the chain that still contains the root cause's, so both shells print `… JFR
+> recording: Constant pool jdk.types.Symbol, index 16778023: Unexpected string constant id: 127`.
+> Pinned by `ParseErrorMessageTest` on `NodePoolFixture`. **A failure is only reported once its
+> reason reaches the reader; check what the prompt prints, not what the stack trace holds.**
+
+R4 covers every command a change commits, not only prose: a `package.json` or Gradle script, a gate script and a CI step must each have been run on the final tree, with the result stated (R8). A gate script that nothing invokes (no npm script, no CI job, no row in [Gates.md](Gates.md)) is not a gate; wire it or delete it. Check: run each script the diff adds or edits (`npm run <name>`, `scripts/<gate>.sh`), and grep `.github/workflows/` for every new gate script.
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before
 committing them.
@@ -112,6 +268,16 @@ committing them.
 > **Case file — the snippet that could not run.** A README block wrote a key to
 > `~/.config/jafar/llm.properties` without `mkdir -p`. Testing it in a scratch `HOME` caught it —
 > and testing the *advice* it gave uncovered R2's Anthropic key bug.
+
+> **Case file — the shebang that was only ever read.** `Scripting.md` and four shipped example
+> scripts start with `#!/usr/bin/env -S jbang jfr-shell@btraceio script -`. Executed, the kernel
+> runs `jbang jfr-shell@btraceio script - ./analyze.jfrs app.jfr`: `-` read the caller's stdin
+> (nothing ran, exit 0) and `$1` was the script's own path, so with the script piped in, `open $1`
+> failed with `Invalid JFR Magic Number: 23212f75` (`#!/u`) — followed by "Script executed
+> successfully: 2 commands", because reported errors were not counted. Every example had only
+> been run as `jfr-shell script <file>`. Found by putting a stand-in `jbang` on `PATH` and running
+> the file through a real `#!` line; `ShellArtifactTest.shebangInvocationRunsTheScript` now passes
+> the kernel's argv.
 
 When you verify a doc command, verify the claim too: asset names were checked with `curl -o /dev/null
 -w "%{http_code}"` rather than assumed, which is how "there is no macOS release tarball" became a
@@ -132,28 +298,57 @@ Record the result in the commit message. `SetLlmSettingTest`: **6 of 7 fail** ag
 dispatcher; the seventh is the guard that ordinary variables still behave, and passes both ways,
 which is exactly what it is for.
 
+> **Case file — an assertion that the wrong answer satisfies.** `MapVariablesTest` checked
+> `output.contains("Port: 5432")` for `set config = {"db": {"port": 5432}}`. The shell printed
+> `Port: 5432.0`, which contains the expected string, so the test was green for the whole life of
+> map literals. The cause was one line in the map parser, `return isDouble ? Double.parseDouble(s)
+> : Long.parseLong(s);` — a conditional with a `double` and a `long` operand promotes both to
+> `double` ([JLS 15.25.2](https://docs.oracle.com/javase/specs/jls/se21/html/jls-15.html#jls-15.25.2)),
+> so every integer in a map was a `Double`. Found only when a new test compared the parsed value
+> itself (`assertEquals(1L, ...)`). When the expected text is a prefix of a plausible wrong one,
+> assert the value, or assert the wrong one is absent; `doc/parser/MapVariables.md` had been
+> promising `5432` all along.
+
+> **Case file — when "fails without the fix" means "never returns".** `MalformedRecordingTest` pins
+> inputs on which the unfixed parser does not throw but spins: a chunk header declaring size 0 left
+> the chunk loop re-reading the same header forever, in a thread no interrupt reaches. Stashing the
+> fix and running the test task the usual way did not produce a red test, it produced nothing — two
+> runs, 15 and 7 minutes, both killed by `timeout` (exit 124) with no JUnit XML written, because the
+> test JVM could not finish. What worked: build the unfixed classes once, keep a copy, and replay
+> the inputs against both copies from a throwaway `main` that gives each input a few seconds on a
+> daemon thread and prints the root cause or `HANG`:
+>
+> ```bash
+> git stash push -- parser-core/src/main && ./gradlew -q :parser-core:compileJava \
+>   && cp -r parser-core/build/classes/java/main /tmp/unfixed; git stash pop
+> java -cp /tmp/unfixed:<slf4j jars>:<dir of the replay class> Replay <inputs>   # before
+> java -cp parser-core/build/classes/java/main:...           Replay <inputs>   # after
+> ```
+>
+> The table that printed (`chunk size 0 -> HANG` before, `IOException: Chunk 1 at offset 0 declares
+> size 0` after) is the R5 record. If the bug is a hang, do not revert-and-run the suite: the
+> suite's own timeout is the only thing that will ever report.
+
 ## R6. Compare failure sets by name, never by count
 
-Parts of this suite fail in any environment that cannot fetch the binary recordings
-(`./get_resources.sh`, Dropbox). Those failures are `NoSuchFileException`, not logic errors — and a
-count that stays at 126 can still hide a swap.
+A count that stays the same can still hide a swap. Until the test recordings were generated by the
+build (`test-recordings`), any environment that could not fetch them from Dropbox had 174 standing
+failures across the parser, shell and MCP suites (126 in jfr-shell alone), all missing files, not
+logic errors. Those are gone, but standing failures remain where nobody runs the tests: jfr-mcp's
+integration set (`-DenableIntegrationTests=true`, not run by CI) has 27, stale tests that call
+`JafarMcpServer` methods by reflection that no longer exist.
 
 ```bash
 ./gradlew :jfr-shell:test --rerun-tasks
-python3 - <<'PY' > /tmp/fail_now.txt
-import glob, xml.etree.ElementTree as ET
-names = []
-for f in glob.glob("jfr-shell/build/test-results/test/*.xml"):
-    for tc in ET.parse(f).getroot().iter('testcase'):
-        if tc.find('failure') is not None or tc.find('error') is not None:
-            names.append(f"{tc.get('classname')}.{tc.get('name')}")
-print("\n".join(sorted(names)))
-PY
+scripts/failing-set.sh > /tmp/fail_now.txt
 diff /tmp/fail_base.txt /tmp/fail_now.txt && echo "zero new failures"
 ```
 
-Record the baseline **before** you start changing code. Report both numbers — total tests and the
-named failing set — so a reader can tell growth from regression.
+`scripts/failing-set.sh` prints the named failing set from the JUnit XML reports (test, test8,
+endToEndTest, or a flat directory of downloaded reports); CI publishes the same named set as an
+artifact and in the run summary of every PR. Record the baseline **before** you start changing
+code. Report both numbers — total tests and the named failing set — so a reader can tell growth
+from regression.
 
 > **Case file — the diagnose deadline between green and failure.**
 > `McpJfrTransportTest.jfrDiagnoseReturnsReport` failed on every run while every sibling passed.
@@ -170,6 +365,24 @@ named failing set — so a reader can tell growth from regression.
 > measurements beat three hypotheses — and **when a harness advertises an override in its own
 > failure message (`-Dmcp.test.timeout.ms`, "raise if the machine is loaded"), forward it from the
 > Gradle task**: advice that the build silently ignores is R3's fallback in disguise.
+
+> **Case file — allocation counts that moved with warm-up.** Reviewing the JFR-constant
+> unwrapping, `ThreadMXBean.getThreadAllocatedBytes` around `TableFormatter.formatTable(rows, 50)`
+> over a million 8-column rows, after **3** warm-up rounds, reported the no-unwrap baseline at
+> 142,224 bytes and the harness's copy-free view at 24 MB. After **15** rounds the same harness
+> measured 32,142,248 bytes and 56 MB, identically on three runs — about 226 times the baseline
+> figure that had been quoted. The JIT's escape analysis had been removing per-row iterator and
+> wrapper allocations in the short-warmed run, and the figures went into a review before anyone
+> looked twice; the correction then misattributed a number from a *different* harness and view
+> implementation (96 MB, the production view) to "the same code". The ranking held throughout —
+> in one harness, 15 rounds: eager copy plus table 524 B/row, production view plus table 96 B/row,
+> table alone 32 B/row — the magnitudes did not. Warm up well past the point the number stops
+> moving, run at least three times, put the old and new code **in one harness** with the same
+> warm-up (a harness that measures "the old way" through a library call silently measures the new
+> way once the library changes), and label each figure with what it includes. An allocation bound
+> in a test wants a margin wide enough for that variance, measured cold, as the test runs:
+> `ShellArtifactTest.tableOfALargeJfrResultDoesNotCopyItsRows` allows +200 B/row over the plain
+> table, where the view measured +40 to +88 and a copy +322 to +348.
 
 ## R7. One source of truth for any list two places must agree on
 
@@ -198,6 +411,26 @@ Two standing gaps in this area:
 - **Flake is a diagnosis of last resort.** A CI failure that did not reproduce in 13 local runs was
   not declared flaky; instead `assertSuccess` was made to include the response in every message and
   12 unasserted setup calls were asserted, so the next occurrence names its own cause.
+
+> **Case file — `Index 292 out of bounds for length 292`.** A jar test running `metadata --summary`
+> on `tck-test.jfr` failed once in four runs; the same command passed every time by hand. The
+> numbers were the clue: index equal to length is what `HashMap.keysToArray` throws when the map
+> holds more entries than its `size` counter, and that happens when two threads `put` into a plain
+> `HashMap`/`HashSet` and one `size++` is lost. `StreamingChunkParser` parses chunks on a pool, so
+> `JFRSession`'s `onMetadata` filled its type sets from two threads for this two-chunk recording.
+> A test constructing the session 300 times caught it in three runs of three (`284` entries iterated
+> against `size() == 301`, or the overrun itself); a lock around the collection fixed it. The lock
+> left `getMetadataTypeIds()` to whichever chunk wrote last — type ids are chunk-local (`boolean`
+> is 225 in one chunk of this file and 4 in the other) — so the collection is now kept per chunk and
+> merged in chunk order, and `JFRSessionDeterminismTest` asserts the answer never varies. Two
+> lessons: an intermittent failure is a symptom with a cause, and **any parser callback can run on
+> several threads at once** — check what it writes.
+>
+> The same test then failed once more locally, output not captured, and on CI with its output in
+> the JUnit XML: stderr held `Parsing... 40%` … `Complete... 100%`. `HeapSession`'s
+> `DelayedProgressReporter` prints progress only once a parse outlasts a delay, so "stderr is
+> empty" held on a fast machine and not on a loaded one. **An assertion about output that depends
+> on timing is itself timing-dependent**; assert what may not be there (errors), not that nothing is.
 
 ## R9. Inspect the payload, not the exit status
 
@@ -245,7 +478,8 @@ in the repository; what runs.
 
 > **Case file — nineteen hundred lines with nothing watching.** `jfr_use`, `jfr_tsa` and
 > `jfr_diagnose` are exercised only by `McpJfrTransportTest`, which cannot run without the binary
-> recordings `get_resources.sh` downloads and is one of this environment's standing failures, and by
+> recordings `get_resources.sh` downloads and is one of this environment's standing failures (no
+> longer: the build generates the recordings now, so it runs everywhere), and by
 > `McpEndToEndTest`, a separate task. Moving them on a green `./gradlew :jfr-mcp:test` would have
 > been a guess dressed as a refactor. `JfrAnalysesCharacterizationTest` was written first, against a
 > synthetic recording so no download is needed, and pins the keys callers bind to rather than
@@ -310,14 +544,14 @@ the real command. A rule without one degrades into advice, and advice is ignored
 write the case file, you have not understood the bug well enough to generalise from it yet.
 
 Keep the case files even after the bug is fixed — they are the evidence for the rule, not a bug
-list. But correct them when they become untrue: if `get_resources.sh` starts working here, R6 and
-R10 change shape, and a stale case file is worse than none because it is quotable.
+list. But correct them when they become untrue — as R6 and R10 did when the build started
+generating the test recordings — because a stale case file is worse than none: it is quotable.
 
 When a rule earns its place, add the one-line summary to the table in
 [AGENTS.md](../../AGENTS.md#read-this-first) as well — that table is what gets read; this file is
 what gets read second.
 
-## Keeping the rest of it honest
+- **A doc claim that restates a manifest field changes with that field.** Runtime floors, module format and entry points (`engines`, `exports`, `type` in `package.json`; toolchain versions in Gradle) are restated in READMEs and [Build.md](Build.md). When the diff touches one, grep the docs for the old value (for example `grep -rn 'Node.js 20' --include='*.md' .`) and update every hit in the same commit.
 
 The same obligation runs through `doc/agents/`:
 
@@ -333,28 +567,19 @@ The same obligation runs through `doc/agents/`:
 Checking the links costs nothing, so there is no excuse for a dead one you introduced:
 
 ```bash
-python3 - <<'EOF'
-import re, pathlib
-for p in list(pathlib.Path("doc").rglob("*.md")) + [pathlib.Path("AGENTS.md")]:
-    body, fenced = [], False
-    for line in p.read_text().split("\n"):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced           # a regex in a code block is not a link
-        elif not fenced:
-            body.append(line)
-    for m in re.finditer(r"\]\((?!https?://)([^)#]+)(#[^)]*)?\)", "\n".join(body)):
-        if not (p.parent / m.group(1)).resolve().exists():
-            print("MISSING", p, "->", m.group(1))
-EOF
+scripts/check-doc-links.sh
 ```
 
-It currently reports 23 misses, none of them under `doc/agents/`: three are the deliberate
-`filename.md` placeholders in [doc/README.md](../README.md), four are footnote-style `[1]`–`[4]`
-references in `doc/design/jfr2pprof.md` that are not links at all, and the remaining sixteen are
-older pages pointing at files that were renamed or never existed — `jfrpath.md`,
-`../jfr-shell/README.md`, `unTypedAPITutorial.md`. They predate this page and are left alone here
-rather than swept up in an unrelated change. The bar is that **your** change adds none, which the
-same command tells you in a second.
+It runs in CI on every PR (`guardrails` job in `pr-tests.yml`) and also scans the top-level
+`README.md`, `CLAUDE.md` and `CONTRIBUTING.md`, which the hand-run recipe never did — that is how
+it caught `README.md` pointing at `parser/ARCHITECTURE.md`, a file that lives at
+`parser-core/ARCHITECTURE.md`. The legacy misses that predated the gate are frozen as an allowlist
+inside the script: an allowlisted miss is tolerated, a new miss fails, and an allowlist entry
+whose link was fixed fails too until it is deleted — the list can only shrink. Three of the
+allowed ones are the deliberate `filename.md` placeholders in
+[doc/README.md](../README.md), four are footnote-style `[1]`–`[4]` references in
+`doc/design/jfr2pprof.md` that are not links at all. The bar is that **your** change adds none,
+which the script tells you in a second.
 
 ---
 
@@ -371,16 +596,59 @@ CI artifact collection must include custom Gradle Test tasks too: collecting onl
 `test8` drops this task's XML/HTML even though its failures stop the build. The PR workflow now
 collects reports from all task directories under `build/test-results` and `build/reports/tests`.
 
-The recordings in this tree are stripped and several do not parse
-(`IllegalArgumentException: newPosition > limit`). To verify behaviour end to end, record a real one:
+The test recordings (`test-ap.jfr`, `test-jfr.jfr`, `test-dd.jfr`) are generated by the build — see
+[test-recordings/README.md](../../test-recordings/README.md) — or copied from the checked-in
+`tck-test.jfr`. The stripped fixtures in `dd-trace-java-stripped/` are deliberately broken and
+several do not parse (`IllegalArgumentException: newPosition > limit`). To verify behaviour end to
+end against a JVM's own output, record a real one:
 
 ```bash
 java -XX:StartFlightRecording=duration=10s,filename=/tmp/spin.jfr,settings=profile Spin.java
 ```
 
-`./get_resources.sh` downloads the full set from Dropbox where the network allows it.
-Allow for the download sizes and their copies (see [Build.md](Build.md)): a metadata E2E validation
-run exhausted disk space partway through the 1.7 GB `test-jfr.jfr` download, after fetching the
-170 MiB `test-ap.jfr`. Curl reported `Failure writing output to destination` and left a partial
-target that the script would skip on retry. Generated, structurally asserted fixtures avoid that
-cost when the test needs metadata shape rather than a particular workload.
+`./get_resources.sh` downloads the real recordings from Dropbox where the network allows it; they then
+take precedence over the generated ones.
+
+> **Case file — the recording that was a web page.** On 2026-11-01 Dropbox answered every link in
+> `get_resources.sh` with HTTP 200 and an HTML page titled "Dropbox - Link Temporarily Disabled".
+> The script saved it as `test-dd.jfr` and exited 0. CI caches only `test-ap.jfr` and `test-jfr.jfr`,
+> so `test-dd.jfr` was fetched fresh, and three `jfr-mcp` tests failed on assertions about MCP tool
+> results; the cause, `Invalid JFR Magic Number: 3c21444f` (`<!DO`), was only in the test's stderr.
+> The script now refuses any file without the `FLR\0` magic and says what it got instead.
+
+> **Case file — a stand-in recording found three bugs by being different.** The first generated
+> `test-ap.jfr` had two chunks; the downloaded one had evidently always had one. Eight tests failed.
+> Five abort tests (`ControlTest`, `CoreControlAbortTest`) got one event too many, because
+> `Control.abort()` stops only the chunk whose handler called it while the others parse on.
+> `TypedJafarParserTest.testConstantPoolIndexConsistency` assumed constant-pool ids are unique across
+> the file; they are chunk-local. Two jfr-shell tests failed intermittently, and 200 repetitions
+> showed why: `JafarConstantPoolSource` appends to an `ArrayList` from parallel chunk threads, so
+> constant-pool queries on any multi-chunk file returned 180–207 of 208 entries in 34 runs, and once
+> threw `ArrayIndexOutOfBoundsException`. Separately, the JMC writer's own `jdk.types.StackFrame` is
+> pooled; the JVM writes frames inline, and jfr-mcp's frame extraction tests `instanceof Map`, so
+> pooled frames produced empty flame graphs with no error. A synthetic fixture is a model of a
+> producer: match its layout, not just its names, and when it fails a test, find out which of the two
+> is wrong before changing either.
+
+> **Case file — the fixtures have too few chunks to lose a race.** A consumer handed to
+> `EventSource.streamEvents` (or a handler given to the parser) is called from one thread per chunk,
+> concurrently. Every JfrPath operator kept its state in a plain `long[]`, `ArrayList` or `HashMap`
+> anyway, and the suite was green, because the test recordings hold one or two chunks. On a
+> generated 32-chunk recording with exactly 320,000 `bench.Sampled` events,
+> `events/bench.Sampled | count()` returned 317233, 316995 and 316700 on three consecutive runs.
+> `JfrPathConcurrentAggregationTest` now generates a 16-chunk recording of known contents and
+> asserts exact results five times over; against the unfixed code 90 of its 105 runs failed: counts
+> short by a few percent (`expected: <640000> but was: <613668>`), a
+> `ConcurrentModificationException` out of `decorateByKey`, and
+> `Index 34 out of bounds for length 33` out of a plain `events/<type>` listing. This is the
+> `JafarConstantPoolSource` bug above, found a second time. When you write a consumer, treat it as
+> concurrent with itself: read the event outside any lock, then update shared state through a
+> `LongAdder`, a `ConcurrentHashMap` or a short `synchronized` block. When you test one, use a
+> recording with many chunks and repeat the assertion; one green run on `test-jfr.jfr` says nothing.
+> The order in which rows from different chunks arrive is still not defined.
+
+> **Case file — download size matters too.** Before downloads became optional and atomic, a
+> metadata E2E run exhausted disk space partway through a 1.7 GB `test-jfr.jfr`, after fetching
+> the 170 MiB `test-ap.jfr`. Curl reported `Failure writing output to destination`. The current
+> downloader uses a temporary file and removes failed downloads; generated fixtures avoid that
+> cost when the test needs metadata shape rather than a particular workload.

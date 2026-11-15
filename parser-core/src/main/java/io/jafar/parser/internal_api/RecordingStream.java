@@ -2,7 +2,10 @@ package io.jafar.parser.internal_api;
 
 import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.api.ParserContext;
+import java.io.EOFException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.BufferUnderflowException;
 import java.nio.file.Path;
 
 /**
@@ -55,7 +58,58 @@ public final class RecordingStream implements AutoCloseable {
    * @return a new RecordingStream representing the slice
    */
   public RecordingStream slice(long pos, long len, ParserContext context) {
+    long length = reader.length();
+    if (pos < 0 || len < 0 || pos > length || len > length - pos) {
+      throw outOfBounds("slice [" + pos + ", " + pos + " + " + len + ")");
+    }
     return new RecordingStream(reader.slice(pos, len), context);
+  }
+
+  /**
+   * The failure for any access outside the stream's data: an {@link EOFException} carried by an
+   * {@link UncheckedIOException}, because the read methods declare no checked exception.
+   *
+   * <p>Recording bytes are untrusted input, so running off the end of the data - a truncated file,
+   * or a corrupted size, count or offset that sends the parser there - is an I/O condition of the
+   * recording, not a programming error. Left alone it surfaces as whatever the backing buffer
+   * happens to throw ({@code BufferUnderflowException}, {@code IllegalArgumentException}, {@code
+   * IndexOutOfBoundsException}), which tells the caller nothing about the recording. The Go
+   * parser's reader reports the same condition as "unexpected end of data".
+   *
+   * @param what the access that was attempted
+   * @return the exception to throw
+   */
+  private UncheckedIOException outOfBounds(String what) {
+    long length = -1;
+    long position = -1;
+    try {
+      length = reader.length();
+      position = reader.position();
+    } catch (RuntimeException ignored) {
+      // the reader's own state is what failed; report what is known
+    }
+    return new UncheckedIOException(
+        new EOFException(
+            "Unexpected end of recording data: "
+                + what
+                + " at position "
+                + position
+                + " of "
+                + length));
+  }
+
+  /**
+   * Whether {@code e} is how a backing buffer reports an access outside its bounds. Anything else
+   * is not translated: it is not known to be a property of the recording.
+   */
+  private static boolean isBoundsFailure(RuntimeException e) {
+    return e instanceof BufferUnderflowException
+        || e instanceof IndexOutOfBoundsException
+        || e instanceof IllegalArgumentException;
+  }
+
+  private RuntimeException translate(RuntimeException e, String what) {
+    return isBoundsFailure(e) ? outOfBounds(what) : e;
   }
 
   /**
@@ -132,6 +186,9 @@ public final class RecordingStream implements AutoCloseable {
    * @param position the new position
    */
   public void position(long position) {
+    if (position < 0 || position > reader.length()) {
+      throw outOfBounds("seek to " + position);
+    }
     reader.position(position);
   }
 
@@ -152,8 +209,8 @@ public final class RecordingStream implements AutoCloseable {
    * @param length the number of bytes to read
    */
   public void read(byte[] buffer, int offset, int length) {
-    if (available() < length) {
-      throw new RuntimeException("unexpected EOF");
+    if (length < 0 || available() < length) {
+      throw outOfBounds("read of " + length + " byte(s)");
     }
     reader.read(buffer, offset, length);
   }
@@ -164,7 +221,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the byte value
    */
   public byte read() {
-    return reader.read();
+    try {
+      return reader.read();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of a byte");
+    }
   }
 
   /**
@@ -173,7 +234,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the short value
    */
   public short readShort() {
-    return reader.readShort();
+    try {
+      return reader.readShort();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of a short");
+    }
   }
 
   /**
@@ -182,7 +247,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the int value
    */
   public int readInt() {
-    return reader.readInt();
+    try {
+      return reader.readInt();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of an int");
+    }
   }
 
   /**
@@ -191,7 +260,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the long value
    */
   public long readLong() {
-    return reader.readLong();
+    try {
+      return reader.readLong();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of a long");
+    }
   }
 
   /**
@@ -200,7 +273,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the float value
    */
   public float readFloat() {
-    return reader.readFloat();
+    try {
+      return reader.readFloat();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of a float");
+    }
   }
 
   /**
@@ -209,7 +286,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the double value
    */
   public double readDouble() {
-    return reader.readDouble();
+    try {
+      return reader.readDouble();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of a double");
+    }
   }
 
   /**
@@ -218,7 +299,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the long value
    */
   public long readVarint() {
-    return reader.readVarint();
+    try {
+      return reader.readVarint();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of a varint");
+    }
   }
 
   /**
@@ -227,7 +312,11 @@ public final class RecordingStream implements AutoCloseable {
    * @return the boolean value
    */
   public boolean readBoolean() {
-    return reader.readBoolean();
+    try {
+      return reader.readBoolean();
+    } catch (RuntimeException e) {
+      throw translate(e, "read of a boolean");
+    }
   }
 
   public String readUTF8() throws IOException {
@@ -249,6 +338,9 @@ public final class RecordingStream implements AutoCloseable {
    * @param bytes the number of bytes to skip
    */
   public void skip(int bytes) {
+    if (bytes < 0 || bytes > reader.remaining()) {
+      throw outOfBounds("skip of " + bytes + " byte(s)");
+    }
     reader.skip(bytes);
   }
 

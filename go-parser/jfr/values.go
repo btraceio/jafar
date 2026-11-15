@@ -26,10 +26,10 @@ func Get(root map[string]any, path ...any) any {
 			current = m[key]
 		case int:
 			arr, ok := current.(*Array)
-			if !ok || key < 0 || key >= len(arr.Values) {
+			if !ok || key < 0 || key >= arr.Len() {
 				return nil
 			}
-			current = arr.Values[key]
+			current = arr.At(key)
 		default:
 			return nil
 		}
@@ -78,7 +78,9 @@ func Resolve(v any) any {
 }
 
 // ResolveDeep resolves every constant pool reference reachable from v,
-// returning a structure built only from maps, slices and scalars.
+// returning a structure built only from maps, slices and scalars. An *Array
+// becomes a copy of its Elems when that is a numeric slice ([]int64, []float32,
+// []float64, []int16 or []uint16), and an []any otherwise.
 //
 // Resolved constant pool entries are memoised per entry, so a stack trace
 // shared by ten thousand events is materialised once rather than once per
@@ -151,9 +153,27 @@ func resolveDeep(v any, onPath map[deepKey]int, depth int) (any, int) {
 		}
 		return out, minBack
 	case *Array:
-		out := make([]any, len(value.Values))
+		// Numeric elements hold no references: copy them, keeping their
+		// element type, since a recycled array is overwritten by the next
+		// event.
+		var items []any
+		switch e := value.Elems.(type) {
+		case []int64:
+			return append([]int64(nil), e...), noBackEdge
+		case []float32:
+			return append([]float32(nil), e...), noBackEdge
+		case []float64:
+			return append([]float64(nil), e...), noBackEdge
+		case []int16:
+			return append([]int16(nil), e...), noBackEdge
+		case []uint16:
+			return append([]uint16(nil), e...), noBackEdge
+		case []any:
+			items = e
+		}
+		out := make([]any, len(items))
 		minBack := noBackEdge
-		for i, item := range value.Values {
+		for i, item := range items {
 			resolved, back := resolveDeep(item, onPath, depth)
 			if back < minBack {
 				minBack = back

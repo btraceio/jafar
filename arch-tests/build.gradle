@@ -1,0 +1,92 @@
+plugins {
+    id 'java'
+}
+
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle). This module is test
+// tooling and is deliberately NOT published.
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // ArchUnit 1.5.1 (newest release): its bundled ASM reads class-file major 69, so the
+    // Java-25 shell modules import cleanly. Verified before choosing the version by importing
+    // a JDK-25-compiled class; bumping ArchUnit requires re-running that check.
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.5.1'
+    // JUnit copied from hdump-parser/build.gradle (api/engine 5.10.2, launcher 1.10.2)
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    // The T8 rule fixtures resolve real parser-core classes
+    testImplementation project(':parser-core')
+    // Fixture dependency targets of the fire tests (ArchRuleFireTest): rule (b) needs an
+    // io.jafar.hdump.impl class and rule (d) a consumer (tools) class as field types.
+    testImplementation project(':hdump-parser')
+    testImplementation project(':tools')
+}
+
+// ---------------------------------------------------------------------------
+// Module groups — the SINGLE source of truth (R7). Defined once here, passed to the
+// tests as system properties, never restated in a test or another build script: extend
+// these lists instead. Module membership (not package names) drives the rules because
+// packages overlap across modules.
+//
+// NOTE: demo/ is a separate Gradle build and is NOT covered; recorded under R8 in
+// doc/agents/Gates.md.
+// ---------------------------------------------------------------------------
+def parserPlane = ['parser-core', 'parser-codegen']
+def parserModules = parserPlane + ['hdump-parser', 'pprof-parser', 'otlp-parser']
+def shellCore = ['shell-core']
+def consumers = [
+    'jfr-shell', 'jfr-shell-jafar', 'jfr-shell-jdk', 'jfr-shell-tck', 'jfr-mcp',
+    'hdump-shell', 'pprof-shell', 'otlp-shell', 'jafar-shell',
+    'llm-anthropic', 'llm-openai', 'tools', 'jafar-processor', 'jfr2pprof'
+]
+def moduleGroups = [
+    'parserPlane'  : parserPlane,
+    'parserModules': parserModules,
+    'shellCore'    : shellCore,
+    'consumers'    : consumers
+]
+def coveredModules = (parserModules + shellCore + consumers).unique()
+
+test {
+    useJUnitPlatform()
+    // ModuleCoverageTest prints the per-module class counts (AC-2.4 non-vacuity evidence)
+    testLogging {
+        showStandardStreams = true
+    }
+    coveredModules.each { m ->
+        // The rules read compiled classes, so every covered module must be built first. Only
+        // ':<m>:classes' (the main source set) is imported: parser-core's multi-release overlay
+        // dirs (build/classes/java/java9|java13|java21) are deliberately left out — they hold
+        // per-JDK overrides of classes that already exist in main, so importing them would
+        // re-register the same class names; only the base classes matter for the boundary rules.
+        dependsOn ":$m:classes"
+        def dir = rootProject.file("$m/build/classes/java/main")
+        systemProperty "jafar.arch.module.$m", dir.absolutePath
+        inputs.dir dir
+    }
+    moduleGroups.each { name, members ->
+        systemProperty "jafar.arch.group.$name", members.join(',')
+    }
+    systemProperty 'jafar.arch.settings', rootProject.file('settings.gradle').absolutePath
+
+    // Freeze-store regeneration: `./gradlew :arch-tests:test -ParchFreeze` only. ArchUnit
+    // honours `archunit.`-prefixed system properties over archunit.properties (verified against
+    // 1.5.1), so the store-creation and refreeze switches travel as system properties and the
+    // committed archunit.properties stays authoritative (and shrink-only) for every normal run.
+    if (project.hasProperty('archFreeze')) {
+        systemProperty 'archunit.freeze.store.default.allowStoreCreation', 'true'
+        systemProperty 'archunit.freeze.refreeze', 'true'
+    }
+}

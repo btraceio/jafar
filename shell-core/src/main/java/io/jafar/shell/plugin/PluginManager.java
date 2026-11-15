@@ -161,7 +161,10 @@ public final class PluginManager {
       this.pluginClassLoader = new PluginClassLoader(pluginJars, parent);
 
       if (!pluginJars.isEmpty()) {
-        log.info("Loaded {} plugin(s)", pluginJars.size());
+        // Routine status, printed on every start by jfr-shell's slf4j-simple at INFO; the count is
+        // of jars, not plugins. The override lines above stay at INFO: they say where a backend
+        // came from.
+        log.debug("Loaded {} plugin jar(s)", pluginJars.size());
       }
     } catch (IOException e) {
       // Log but don't fail - create empty ClassLoader so app can use built-in backends

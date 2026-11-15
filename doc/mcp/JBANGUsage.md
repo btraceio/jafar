@@ -15,8 +15,8 @@ jbang jfr-mcp@btraceio
 # Development snapshots (latest features)
 jbang jfr-mcp-dev@btraceio
 
-# From JitPack coordinates (specific version)
-jbang io.github.btraceio:jfr-mcp:0.10.0
+# From Maven Central coordinates (specific version)
+jbang io.btrace:jfr-mcp:0.29.0
 ```
 
 ### Install as Command
@@ -161,7 +161,7 @@ jbang jfr-mcp@btraceio -Dmcp.port=8080
 
 ```bash
 # Pin to a specific version
-jbang io.github.btraceio:jfr-mcp:0.10.0
+jbang io.btrace:jfr-mcp:0.29.0
 
 # Use latest development snapshot
 jbang jfr-mcp-dev@btraceio

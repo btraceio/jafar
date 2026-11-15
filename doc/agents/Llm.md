@@ -43,8 +43,9 @@ Architecture, and the reasons it is shaped this way:
   did not produce, so they stay inside the `RECORDING_DATA` fence even though they now sit in the
   system prompt.
 - **Event counts decide which types are offered at all.** `getAvailableTypes` describes what the
-  JVM *declared* (across all chunks with the JDK backend) — including types that
-  emitted nothing. A recording from an agent with its own sampler carries an empty
+  JVM *declared* — including types that
+  emitted nothing. The JDK backend uses its merged and recovered descriptor inventory, subject to
+  the [recovery limits](../cli/Backends.md#backend-capabilities). A recording from an agent with its own sampler carries an empty
   `jdk.ExecutionSample` beside a vendor type with thousands of events, and a model given only names
   picks the familiar one. `CommandDispatcher.eventCounts` counts once via
   `JfrPathEvaluator.countAllEventTypes`, caches in-session and across sessions
@@ -109,6 +110,14 @@ Architecture, and the reasons it is shaped this way:
   parses it with the same parser that would execute it; on rejection `LlmService` sends the parser's
   own error back and asks for a correction, up to `llm.max-retries` (default 1, capped at 3). This
   is the difference between the feature working and not working on a small local model.
+- **A failure goes through `Host.error`, not `println`.** Scripts count only what a shell reports
+  on its error channel (`ScriptRunner.ErrorTally`); a failing `ask`/`as-query`/`explain` printed
+  with `println` counted as a successful line. The headline of every outcome where the command did
+  not do what was asked — usage, no session, backend unavailable, `LlmException`, no query in the
+  reply, a query that does not parse or fails, an investigation out of budget — is `host.error`;
+  the advice after it stays `println`. Both hosts route it: `CommandDispatcher` to `io.error`,
+  `unified/Shell` to its `error(...)`. `LlmCommandsTest.failuresReportTheirHeadlineAsAnError`
+  pins the split, and `statusIsNotAFailure` pins that `llm status` reports none.
 - **Unit tests must never reach a real backend.** `llm-openai` is on `jfr-shell`'s test runtime
   classpath (the Anthropic backend stopped shipping with the shell — it installs from the plugin
   catalog), so `LlmCommandsTest` pins `llm.backend` to a non-existent id; without that, a machine

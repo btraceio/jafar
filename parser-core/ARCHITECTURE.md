@@ -10,7 +10,7 @@ infrastructure. ASM-based code generation (CodeGenerator, ClassDefiners) lives i
 - Core loop: `StreamingChunkParser` reads chunks and emits `ChunkParserListener` callbacks.
 - Metadata: `MetadataEvent` populates `MutableMetadataLookup`; typed context binds deserializers.
 - Constant pools: `CheckpointEvent` records offsets in `MutableConstantPools` for lazy materialization.
-- Typed path: generated deserializers map events to interfaces; handlers run synchronously.
+- Typed path: generated deserializers map events to interfaces; handlers run on the chunk parsing threads (concurrently across chunks).
 - Untyped path: events become `Map<String,Object>` with lazy constant-pool resolution.
 
 ## Architecture Diagram
@@ -153,7 +153,10 @@ Untyped Path (maps with lazy constant-pool refs)
 - `CheckpointEvent` populates `MutableConstantPools` with offsets; values materialize lazily on
   access via `MutableConstantPool.get(...)` or `ConstantPoolAccessor` in untyped maps.
 - Typed mode: events are deserialized to generated POJOs and dispatched to user `JFRHandler`s
-  synchronously; handlers can request abort via `Control`.
+  synchronously; handlers can request abort via `Control`. The abort flag is shared by every chunk
+  of one `run()` (chunks run on parallel threads; `ControlImpl` is per thread only for the stream
+  position), checked at chunk start, at the metadata and each checkpoint callback, and before
+  each event is decoded.
 - Untyped mode: events are `Map<String,Object>`; arrays and complex values are represented with
   `ArrayHolder`/nested maps, constant pool refs remain lazy until accessed.
 

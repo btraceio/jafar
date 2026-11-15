@@ -42,7 +42,7 @@ The short version, expanded with evidence in that file:
 | **R3** | A fallback that hides a misconfiguration is a bug. Report where a value came from. |
 | **R4** | Documentation is code. Run the commands you write. |
 | **R5** | Prove the test fails without the fix, and say so in the commit message. |
-| **R6** | Compare failure sets **by name**, never by count — parts of this suite fail without the downloaded recordings. |
+| **R6** | Compare failure sets **by name**, never by count — a constant count can hide a swap, and some suites still have standing failures. |
 | **R7** | One source of truth for any list two places must agree on. |
 | **R8** | State plainly what you did not verify. |
 | **R9** | Inspect the payload, not the exit status. A green command proves nothing about what it sent. |
@@ -69,10 +69,12 @@ Key components:
 | Area | Document |
 |---|---|
 | **How to verify a change** | [doc/agents/Verification.md](doc/agents/Verification.md) |
+| **Every gate** — what it checks, how to run it, regenerate its baseline, its escape hatch | [doc/agents/Gates.md](doc/agents/Gates.md) |
 | Build commands, prerequisites, Go parser | [doc/agents/Build.md](doc/agents/Build.md) |
 | Module layout, parser APIs, coding style, composite build | [doc/agents/Architecture.md](doc/agents/Architecture.md) |
 | **Structures that lie** — the recurring wrong-shape bug class | [doc/agents/DataShapes.md](doc/agents/DataShapes.md) |
 | Shells, JfrPath, tab completion, backend plugins | [doc/agents/Shells.md](doc/agents/Shells.md) |
+| On-demand procedures (skills) | `.agents/skills/` — `babysit-pr` (steward a PR), `verify-change` (R1/R5/R6 before claiming done), `pr-writing` (commits, PR bodies, parity statement), `release-steward` (cut a release, watch the publish). `.claude/skills` is a symlink for Claude Code |
 | MCP server, tools, findings contract | [doc/agents/Mcp.md](doc/agents/Mcp.md) |
 | `ask` / `as-query` / `explain` / `llm` and the LLM SPI | [doc/agents/Llm.md](doc/agents/Llm.md) |
 | Release process | [doc/agents/Release.md](doc/agents/Release.md), [RELEASING.md](RELEASING.md) |
@@ -86,7 +88,7 @@ Key components:
 - **jafar-processor/**: Annotation processor for build-time typed handler generation (eliminates runtime bytecode generation)
 - **tools/**: Utilities including JFR file scrubbing functionality
 - **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces (separate included build)
-- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions)
+- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions) and the scripting both shells run (`core.scripting`: variables, maps, `merge()`, `if`, `script`, lazy query variables)
 - **jfr-shell/**: JFR-specific interactive CLI (standalone entry point)
 - **jfr-shell-jafar/**: Jafar-parser backend plugin for jfr-shell (high priority, full-featured)
 - **jfr-shell-jdk/**: JDK JFR API backend plugin for jfr-shell (lower priority, limited capabilities)
@@ -108,14 +110,16 @@ Key components:
 - **jafar-shell/**: Unified shell entry point that discovers modules (JFR, heap dump, pprof, otlp) via ServiceLoader
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 - **go-parser/**: Pure Go port of the untyped JFR parser (standalone Go module `github.com/btraceio/jafar/go-parser`, **not part of the Gradle build**); parser only, no query language or CLI
+- **arch-tests/**: ArchUnit freeze rules for module and package boundaries (not published)
+- **test-support/**: shared test utilities (allocation meter and budgets, golden files); not published
 
 ## Quick start
 
 ```bash
-./get_resources.sh                    # binary test recordings — required before the first build
-./gradlew build                       # everything
+./gradlew build                       # everything; generates the test recordings first
+./get_resources.sh                    # optional: real recordings instead of generated ones
 ./gradlew test                        # tests
-./gradlew spotlessApply               # formatting (a pre-commit hook also runs this)
+./gradlew spotlessApply               # formatting (every build runs spotlessCheck)
 ./gradlew :jfr-shell:run --console=plain
 ```
 
@@ -158,3 +162,8 @@ change; these cover *what a change must not leave behind*.
   just as much a signal for the Java one. Parity is about behaviour and intent, not line-by-line
   translation - where an implementation can do better idiomatically, do better and note the
   divergence in `go-parser/README.md` under "Differences from the Java parser".
+
+  **Enforced:** a one-sided change to the untyped parser's production code fails CI until the PR
+  body carries a `Parity: ported in this PR` or `Parity: not applicable — <reason>` line
+  (`scripts/parity-check.sh`, the `parity` job in `pr-tests.yml`; locally:
+  `scripts/parity-check.sh --base origin/main`).

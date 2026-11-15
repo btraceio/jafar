@@ -9,6 +9,7 @@ import io.jafar.shell.cli.completion.CompletionContext;
 import io.jafar.shell.cli.completion.CompletionContextAnalyzer;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.stateful.SessionSequenceGenerator.CompletionScenario;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.VariableStore;
 import java.nio.file.Path;
@@ -38,7 +39,7 @@ public class StatefulCompletionTests {
   private static SessionSequenceGenerator staticGenerator;
 
   // Per-test state (reset before each try)
-  private SessionManager<JFRSession> sessionManager;
+  private SessionManager<Session> sessionManager;
   private VariableStore variableStore;
   private ShellCompleter completer;
   private MetadataService metadataService;

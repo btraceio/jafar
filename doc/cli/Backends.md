@@ -47,8 +47,8 @@ Each backend declares a set of capabilities. JFR Shell adapts its features based
 | `UNTYPED_HANDLERS` | Map-based event access | ✓ | ✓ |
 | `CONTEXT_REUSE` | Share parsing context across sessions | ✓ | ✗ |
 
-The JDK backend reads event metadata across every chunk and follows nested field descriptors,
-including threads, classes, stack traces, frames, and methods. These types appear in the TUI
+The JDK backend reads merged event metadata and recovers chunk-local types from events, following
+nested field descriptors, including threads, classes, stack traces, frames, and methods. These types appear in the TUI
 metadata browser and in the fields supplied to `ask` and `as-query` in both shells. For example,
 with a recording open and the JDK backend selected:
 
@@ -64,6 +64,20 @@ exposed by this backend. A type's presence in metadata does not mean it emitted 
 
 In the TUI metadata sidebar, `/` filters type names. Clearing or dismissing a filter keeps the
 selected type visible; canceling a search with no matches restores a selection in the full list.
+
+> **Multi-chunk recordings (Datadog profiler and similar):** the JDK backend builds its type
+> table with `RecordingFile.readEventTypes()`, which merges every chunk's type table into one
+> id-to-name mapping. If chunks redefine the same type id (e.g. `jdk.VirtualizationInformation` and
+> `datadog.ExecutionSample` both as 101), the merged view misattributes or hides the chunk-local
+> types. The backend detects this and recovers the chunk-local types from event payloads, logging a
+> warning; ids in the recovered view are chunk-local and not unique across chunks, and listings
+> keep one representative per type name. Detection happens on metadata access (types with no events
+> and types unreachable from recovered field descriptors cannot be recovered or warned about);
+> the recovery scan is capped at 2,000,000 events per call; the warning is emitted at most
+> once per recording change (switching between recordings may re-warn for a previously warned
+> recording). A type whose events all occur beyond the recovery-scan cap is reported as missing
+> for the rest of the session (the miss is cached). For exact per-chunk metadata, prefer the
+> Jafar backend.
 
 ## Writing a Custom Backend
 
@@ -307,7 +321,7 @@ java -jar jfr-shell-tck-all.jar path/to/my-backend.jar path/to/test.jfr
 
 ### TCK Test Categories
 
-The TCK runs 23 tests across these categories:
+The TCK runs 27 tests across these categories:
 
 | Category | Tests | Description |
 |----------|-------|-------------|
@@ -316,7 +330,7 @@ The TCK runs 23 tests across these categories:
 | Event Streaming | 4 | Events are properly streamed |
 | Metadata | 5 | Classes and fields load correctly |
 | Chunks | 4 | Chunk info is accurate (if supported) |
-| Constant Pools | 4 | CP access works (if supported) |
+| Constant Pools | 8 | CP access works, and the available types, summary, entry listing and `crossref` agree on every run (if supported) |
 
 ### Understanding TCK Output
 
@@ -329,13 +343,13 @@ Loaded backend: My Custom Backend (id=mybackend)
 Capabilities: [EVENT_STREAMING, METADATA_CLASSES, UNTYPED_HANDLERS]
 
 === TCK Results ===
-Tests run: 23
-Passed: 23
+Tests run: 27
+Passed: 27
 Failed: 0
 Skipped: 0
 ```
 
-Tests for unsupported capabilities are automatically skipped (e.g., if your backend doesn't support `CHUNK_INFO`, chunk tests are skipped).
+Tests for unsupported capabilities return without checking anything, and the summary counts them as **passed**, not skipped (e.g., if your backend doesn't support `CHUNK_INFO`, the chunk tests pass trivially). Read `Capabilities:` in the output to know which tests actually ran.
 
 ### Common TCK Failures
 

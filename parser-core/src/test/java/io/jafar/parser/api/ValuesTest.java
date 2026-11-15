@@ -122,4 +122,56 @@ public class ValuesTest {
     assertInstanceOf(Map.class, frames[1]);
     assertEquals("m1", ((Map<?, ?>) frames[1]).get("method"));
   }
+
+  private static ComplexType simple(Map<String, Object> value) {
+    return new ComplexType() {
+      @Override
+      public Map<String, Object> getValue() {
+        return value;
+      }
+
+      @Override
+      public boolean isSimpleType() {
+        return true;
+      }
+    };
+  }
+
+  @Test
+  void collapsedResolvesSimpleTypeReferencesToTheirValue() {
+    Map<String, Object> event = new HashMap<>();
+    event.put("state", simple(Map.of("name", "RUNNABLE")));
+    // A wrapper around a wrapper, and wrappers inside an array.
+    event.put("nested", simple(Map.of("value", simple(Map.of("string", "deep")))));
+    event.put(
+        "many", objArray(new Object[] {simple(Map.of("name", "A")), simple(Map.of("name", "B"))}));
+    // A genuine struct with one field is not a simple type and must keep its shape,
+    // which is what a size()==1 heuristic would get wrong.
+    event.put("struct", complex(Map.of("only", "x")));
+    event.put("plain", 7L);
+
+    Map<String, Object> out = Values.resolvedDeepCollapsed(event);
+
+    assertEquals("RUNNABLE", out.get("state"));
+    assertEquals("deep", out.get("nested"));
+    assertArrayEquals(new Object[] {"A", "B"}, (Object[]) out.get("many"));
+    assertEquals(Map.of("only", "x"), out.get("struct"));
+    assertEquals(7L, out.get("plain"));
+  }
+
+  @Test
+  void resolvedDeepStillKeepsWrappers() {
+    Map<String, Object> event = new HashMap<>();
+    event.put("state", simple(Map.of("name", "RUNNABLE")));
+
+    assertEquals(Map.of("name", "RUNNABLE"), Values.resolvedDeep(event).get("state"));
+  }
+
+  @Test
+  void collapsedKeepsNullReference() {
+    Map<String, Object> event = new HashMap<>();
+    event.put("gone", simple(null));
+
+    assertNull(Values.resolvedDeepCollapsed(event).get("gone"));
+  }
 }

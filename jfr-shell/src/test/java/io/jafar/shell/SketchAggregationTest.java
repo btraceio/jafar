@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -64,7 +65,7 @@ class SketchAggregationTest {
   }
 
   private ParsingContext ctx;
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private CommandDispatcher dispatcher;
   private BufferIO io;
 
@@ -259,7 +260,7 @@ class SketchAggregationTest {
   void sketchWithoutPriorSession() {
     // Attempt sketch without opening a session - should fail gracefully with error message
     ParsingContext emptyCtx = ParsingContext.create();
-    SessionManager<JFRSession> emptySession =
+    SessionManager<Session> emptySession =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), emptyCtx);
     BufferIO emptyIO = new BufferIO();
     CommandDispatcher emptyDispatcher = new CommandDispatcher(emptySession, emptyIO, r -> {});

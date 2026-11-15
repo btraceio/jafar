@@ -1,5 +1,6 @@
 package io.jafar.shell.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,6 +26,7 @@ class LlmCommandsTest {
 
   private static final class FakeHost implements LlmCommands.Host {
     final List<String> output = new ArrayList<>();
+    final List<String> errors = new ArrayList<>();
     final Map<String, String> settings = new HashMap<>();
     final List<String> queriesRun = new ArrayList<>();
     String moduleId = "jfr";
@@ -38,6 +40,12 @@ class LlmCommandsTest {
     @Override
     public void println(String line) {
       output.add(line);
+    }
+
+    @Override
+    public void error(String line) {
+      output.add(line);
+      errors.add(line);
     }
 
     @Override
@@ -69,6 +77,48 @@ class LlmCommandsTest {
     String text() {
       return String.join("\n", output);
     }
+  }
+
+  /**
+   * A command that did not do what it was asked reports its headline through {@code Host.error},
+   * which the shells count, so a failing {@code ask}/{@code as-query}/{@code explain} line fails a
+   * script. The advice after the headline stays ordinary output.
+   */
+  @Test
+  void failuresReportTheirHeadlineAsAnError() {
+    FakeHost usage = new FakeHost();
+    new LlmCommands(usage).asQuery("   ");
+    assertEquals(List.of("Usage: as-query [--dry-run] <question>"), usage.errors);
+
+    FakeHost noBackend = new FakeHost();
+    new LlmCommands(noBackend).asQuery("why slow?");
+    assertEquals(List.of("No LLM backend is installed."), noBackend.errors, noBackend.text());
+    assertTrue(noBackend.text().contains("plugin catalog"), noBackend.text());
+
+    FakeHost askNoBackend = new FakeHost();
+    new LlmCommands(askNoBackend).analyze("why slow?");
+    assertEquals(1, askNoBackend.errors.size(), askNoBackend.text());
+
+    FakeHost askUsage = new FakeHost();
+    new LlmCommands(askUsage).analyze("");
+    assertEquals(1, askUsage.errors.size(), askUsage.text());
+    assertTrue(askUsage.errors.get(0).startsWith("Usage: ask"), askUsage.text());
+
+    FakeHost nothingToExplain = new FakeHost();
+    new LlmCommands(nothingToExplain).explain("");
+    assertEquals(1, nothingToExplain.errors.size(), nothingToExplain.text());
+
+    FakeHost unknown = new FakeHost();
+    new LlmCommands(unknown).llm(List.of("frobnicate"));
+    assertEquals(List.of("Unknown: llm frobnicate"), unknown.errors);
+  }
+
+  @Test
+  void statusIsNotAFailure() {
+    FakeHost host = new FakeHost();
+    new LlmCommands(host).llm(List.of());
+    assertTrue(host.text().contains("Configuration"), host.text());
+    assertTrue(host.errors.isEmpty(), String.join("\n", host.errors));
   }
 
   @Test

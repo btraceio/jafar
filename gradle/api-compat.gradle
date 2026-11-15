@@ -1,0 +1,251 @@
+// ---------------------------------------------------------------------------
+// api-compat.gradle — per-surface japicmp API compatibility tasks, registered
+// in the ROOT project and driven by gradle/api-surfaces.txt (the single list
+// of gated surfaces, R7; the same list feeds scripts/api-baseline.sh).
+//
+// Per row it registers `apiCompat<CamelSurface>` comparing the materialized
+// baseline jar at build/api-baseline/<surface>/baseline.jar (never a Gradle-
+// resolved dependency: settings.gradle's composite substitution would compare
+// current code with itself, spec Risk 1 / AC-1.4) against the current archive.
+//
+// These tasks NEVER fail on an API break: failOnModification=false and
+// failOnSourceIncompatibility=false. Deciding break-vs-statement is the job of
+// scripts/api-break-check.sh, which reads the reports written here plus the
+// accepted-breaks ratchet and the PR body. A failing japicmp task could not be
+// turned green by an `API-Break:` statement, so the gate would be unreviewable.
+//
+// They fail only on MISCONFIGURATION, checked in doFirst, in this order:
+//   (1) no BASELINE stamp under build/api-baseline/<surface>/ — the baseline
+//       script has not been run;
+//   (2) plane drift: the surface's project releases on a different plane than
+//       the surfaces file states (gradle/version-from-tag.gradle's
+//       project.ext.jafarPlane vs the table's plane column) — two lists that
+//       must agree, and this is where they are forced to (R7);
+//   (3) baseline integrity: the jar under build/api-baseline/<surface>/ must
+//       hash to the sha256 recorded in its BASELINE stamp — a substituted or
+//       stale baseline (what "comparing current with current" looks like, R9 /
+//       AC-1.4) fails here. A stamped sha that equals the current archive's
+//       sha is a legitimately unchanged module and only logs a loud note
+//       (supervisor-approved deviation; see the doFirst comment);
+//   (4) the provenance log line: baseline kind, coordinates or tag@commit and
+//       both sha256s, so the log itself proves the baseline is the released
+//       artifact and not the working tree.
+//
+// No task carries an `onlyIf` (AC-1.3): the previous module-local task was
+// `onlyIf { !SNAPSHOT }` and therefore SKIPPED on every PR build, where the
+// version is always X.Y.Z-SNAPSHOT. `apiCompat` is deliberately NOT part of
+// `check`, because it needs scripts/api-baseline.sh output and the network
+// (baseline download or a tag-checkout build).
+//
+// Evaluation order: this script runs in the ROOT project, whose configuration
+// happens before every subproject's. `project(path).jafarPlane` and the
+// subproject tasks are therefore touched only inside task configuration
+// closures (lazy — a tasks.register closure runs at realization, after all
+// projects have evaluated) and in doFirst, never at apply time.
+//
+// This script carries its own buildscript block: a script plugin applied with
+// `apply from:` cannot rely on seeing the classpath of a `plugins {}` block in
+// any build script that applies it, so it declares its own.
+buildscript {
+    repositories {
+        gradlePluginPortal()
+    }
+    dependencies {
+        // 0.4.3 verified executing under Gradle 9.4.1 (spike, task T3):
+        // :shell-core:japicmp ran with no onlyIf and completed in 3s. Newer
+        // releases exist (0.4.6); only bump past 0.4.3 if one stops working.
+        classpath 'me.champeau.gradle:japicmp-gradle-plugin:0.4.3'
+    }
+}
+
+import me.champeau.gradle.japicmp.JapicmpTask
+
+// The single list of gated surfaces (R7). Rows: surface project plane baseline
+// includes — same file, same rules as scripts/api-baseline.sh's parse_surfaces:
+// '#' comments and blank lines skipped, anything malformed fails loudly.
+def parseSurfaces = { File f ->
+    def rows = []
+    if (!f.isFile()) {
+        throw new GradleException("api-compat: surfaces file not found: $f")
+    }
+    f.eachLine { raw ->
+        def line = raw.trim()
+        if (!line || line.startsWith('#')) {
+            return
+        }
+        def cols = line.split(/\s+/)
+        if (cols.size() != 5) {
+            throw new GradleException("api-compat: malformed surfaces row in $f (want: surface project plane baseline includes): $raw")
+        }
+        rows << [surface: cols[0], path: cols[1], plane: cols[2], baseline: cols[3], includes: cols[4]]
+    }
+    if (rows.isEmpty()) {
+        throw new GradleException("api-compat: no surfaces found in $f")
+    }
+    rows
+}
+
+def surfaces = parseSurfaces(rootProject.file('gradle/api-surfaces.txt'))
+
+def sha256 = { File f ->
+    def md = java.security.MessageDigest.getInstance('SHA-256')
+    f.eachByte(64 * 1024) { byte[] buf, int len ->
+        if (len > 0) {
+            md.update(buf, 0, len)
+        }
+    }
+    md.digest().collect { String.format('%02x', it) }.join()
+}
+
+def camel = { String s -> s.split('-').collect { it.capitalize() }.join('') }
+
+def surfaceTaskNames = []
+surfaces.each { row ->
+    def s = row.surface
+    def taskName = 'apiCompat' + camel(s)
+    surfaceTaskNames << taskName
+
+    tasks.register(taskName, JapicmpTask) {
+        group = 'verification'
+        description = "API compatibility of surface '$s' (${row.path}) against its ${row.plane}-plane baseline"
+
+        def baselineJar = rootProject.layout.buildDirectory.file("api-baseline/$s/baseline.jar")
+        def stampFile = rootProject.layout.buildDirectory.file("api-baseline/$s/BASELINE")
+        oldArchives.from(baselineJar)
+        oldClasspath.from(baselineJar)
+        // Never up-to-date: these tasks are gates, and a cached task result can skip doFirst
+        // entirely — observed locally: BUILD SUCCESSFUL with the BASELINE stamp renamed away,
+        // every guard invisible. They are cheap (~1s each), not part of `check`, and only run
+        // when explicitly requested, so always executing is both affordable and the only
+        // outcome in which the guards cannot lie. AC-1.3 also demands EXECUTED, never SKIPPED.
+        outputs.upToDateWhen { false }
+
+        // The current archive to compare. Everything below reads the target
+        // subproject (which evaluates after the root project) inside this
+        // configuration closure, so it runs at task realization — after all
+        // projects are configured — never at apply time.
+        def target = project.findProject(row.path)
+        if (target == null) {
+            throw new GradleException("api-compat: surface '$s' names unknown project ${row.path} (from gradle/api-surfaces.txt)")
+        }
+        // :parser's published artifact is the shadow jar (parser/build.gradle
+        // republishes it as the main, classifier-less artifact); every other
+        // surface publishes its plain jar.
+        def currentTask = row.path == ':parser'
+            ? target.tasks.named('shadowJar')
+            : target.tasks.named('jar')
+        newArchives.from(currentTask)
+        // Supertype resolution for the new side; the baseline side cannot get
+        // the baseline's dependencies (they are not materialized anywhere), so
+        // ignoreMissingClasses=true below — see the limit note there.
+        newClasspath.from(currentTask)
+        newClasspath.from(target.configurations.runtimeClasspath)
+
+        // pkg:/class: entries from the `includes` column scope the comparison;
+        // japicmp's JavadocLikePackageFilter matches the package AND its
+        // subpackages, so an exact package name covers nested classes.
+        def pkgs = []
+        def classes = []
+        row.includes.split(',').each { rawEntry ->
+            def entry = rawEntry.trim()
+            if (entry.startsWith('pkg:')) {
+                pkgs << entry.substring('pkg:'.length())
+            } else if (entry.startsWith('class:')) {
+                classes << entry.substring('class:'.length())
+            } else {
+                throw new GradleException("api-compat: surface '$s': bad includes entry '$entry' in gradle/api-surfaces.txt (want pkg:<name> or class:<fqcn>)")
+            }
+        }
+        if (pkgs.isEmpty() && classes.isEmpty()) {
+            throw new GradleException("api-compat: surface '$s' has empty includes in gradle/api-surfaces.txt")
+        }
+        packageIncludes.addAll(pkgs)
+        classIncludes.addAll(classes)
+
+        // Reports: scripts/api-break-check.sh reads the txt report; the html
+        // report is for humans (and the uploaded CI artifact).
+        txtOutputFile.set(rootProject.layout.buildDirectory.file("reports/api-compat/${s}.txt"))
+        htmlOutputFile.set(rootProject.layout.buildDirectory.file("reports/api-compat/${s}.html"))
+        outputs.file(rootProject.layout.buildDirectory.file("reports/api-compat/${s}.baseline"))
+
+        onlyModified.set(true)
+        // A break must FAIL THE BUILD ONLY THROUGH api-break-check.sh, after a
+        // human has had the chance to state `API-Break:` in the PR body — see
+        // the header. These two are the switch that keeps that possible.
+        failOnModification.set(false)
+        failOnSourceIncompatibility.set(false)
+        // Limit: the baseline's dependencies are not materialized (only its
+        // own jar is), so japicmp cannot see supertype changes that live in a
+        // dependency of the baseline — e.g. a method added to a base interface
+        // in :shell-core would look like a harmless addition to the shell
+        // surface here. That is accepted: the per-surface classpath covers the
+        // CURRENT side, and the SPI packages gated here own their supertypes.
+        ignoreMissingClasses.set(true)
+
+        doFirst {
+            def stampAsFile = stampFile.get().asFile
+            // (1) the baseline must exist, and be the script's, not hand-made
+            if (!stampAsFile.isFile()) {
+                throw new GradleException("api-compat $s: no BASELINE stamp at $stampAsFile — run scripts/api-baseline.sh first")
+            }
+            def stamp = [:]
+            stampAsFile.eachLine { raw ->
+                def eq = raw.indexOf('=')
+                if (eq > 0) {
+                    stamp[raw.substring(0, eq)] = raw.substring(eq + 1)
+                }
+            }
+            // (2) plane drift: the surfaces table and version-from-tag must
+            // agree on which plane a project releases on (R7)
+            def currentPlane = target.ext.has('jafarPlane') ? target.ext.jafarPlane : null
+            if (currentPlane != row.plane) {
+                throw new GradleException("api-compat $s: plane drift: ${row.path} releases on plane '$currentPlane' (gradle/version-from-tag.gradle) but gradle/api-surfaces.txt says plane '${row.plane}'")
+            }
+            // (3) baseline integrity (R9 / AC-1.4): the jar on disk must be the
+            // one the baseline script stamped. A baseline resolved or
+            // substituted into being the current build's output would disagree
+            // with its own stamp — that is the "comparing current with
+            // current" hazard, and it fails here.
+            //
+            // A stamped sha that EQUALS the current archive's sha is instead the
+            // legitimate unchanged-module case (e.g. otlp-parser has no source
+            // change since its plane tag, so the current jar is byte-identical
+            // to the tag-checkout baseline): the comparison is still against
+            // released bytes, japicmp just finds no modification. Supervisor-
+            // approved deviation from the plan text, which failed on equality
+            // unconditionally; that made a task fail on an unchanged module
+            // and starved its surface of a report.
+            def currentArchiveFile = currentTask.get().archiveFile.get().asFile
+            def baselineFile = baselineJar.get().asFile
+            def baselineSha = sha256(baselineFile)
+            def currentSha = sha256(currentArchiveFile)
+            if (baselineSha != stamp.sha256) {
+                throw new GradleException("api-compat $s: baseline jar at $baselineFile is not the artifact the BASELINE stamp describes (stamp sha256=${stamp.sha256}, file sha256=${baselineSha}) — substituted or stale baseline; re-run scripts/api-baseline.sh")
+            }
+            if (baselineSha == currentSha) {
+                logger.lifecycle("api-compat $s: module unchanged since baseline tag — comparison is trivially no-change (both sha256=$baselineSha)")
+            }
+            // (4) provenance: the log itself proves the baseline is the
+            // released artifact, not the working tree (AC-1.4)
+            def provenance = stamp.kind == 'maven'
+                ? "${stamp.coordinates}"
+                : "${stamp.tag}@${stamp.commit}"
+            logger.lifecycle("api-compat $s: baseline ${stamp.kind} ${provenance} sha256=${baselineSha} vs current ${currentArchiveFile} sha256=${currentSha}")
+        }
+
+        doLast {
+            // keep the provenance next to the report: a report without its
+            // baseline stamp cannot say what it was compared against
+            def copy = rootProject.layout.buildDirectory.file("reports/api-compat/${s}.baseline").get().asFile
+            copy.text = stampFile.get().asFile.text
+        }
+    }
+}
+
+// Aggregate: one task to run every per-surface check. Deliberately NOT wired
+// into `check` — it needs scripts/api-baseline.sh output and the network.
+tasks.register('apiCompat') {
+    group = 'verification'
+    description = "Runs every per-surface API compatibility check (${surfaces.size()} surfaces from gradle/api-surfaces.txt); baselines come from scripts/api-baseline.sh"
+    dependsOn surfaceTaskNames
+}

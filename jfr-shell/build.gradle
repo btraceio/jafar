@@ -85,6 +85,12 @@ dependencies {
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
     testImplementation 'org.mockito:mockito-core:5.12.0'
+    // Writes synthetic (and deliberately corrupted) recordings for tests that need no download
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
+
+    // ProcessorCount.assertExpected() (safety harness step 5): the determinism nets call it from
+    // @BeforeAll so a matrix run proves -Pjafar.activeProcessorCount=N reached the forked JVM.
+    testImplementation project(':test-support')
 
     // jqwik for property-based testing
     testImplementation 'net.jqwik:jqwik:1.8.2'
@@ -101,6 +107,16 @@ test {
     // jqwik configuration
     systemProperty 'jqwik.tries.default', '1000'
     systemProperty 'jqwik.shrinking.mode', 'FULL'
+
+    // JarLaunchTest runs the jar users get ('java -jar'), not the classes: its manifest matters
+    // (resolved when the task runs: the shadowJar block below sets its name and classifier)
+    // It gets the jafar backend as a local override jar, so starting the shell installs nothing.
+    dependsOn shadowJar, ':jfr-shell-jafar:jar'
+    doFirst {
+        systemProperty 'jfr.shell.jar', shadowJar.archiveFile.get().asFile.absolutePath
+        systemProperty 'jfr.shell.jafar.backend.jar',
+            project(':jfr-shell-jafar').tasks.named('jar').get().archiveFile.get().asFile.absolutePath
+    }
 }
 
 // Separate JVM/classpath: a selected JDK backend must never be rescued by the Jafar plugin.
@@ -174,9 +190,15 @@ shadowJar {
     relocate 'picocli', 'io.jafar.shaded.picocli'
     relocate 'org.jline', 'io.jafar.shaded.jline'
 
-    // Ensure main class is set
+    // Ensure main class is set.
+    // Enable-Native-Access: jline-terminal-jna loads JNA, whose System.load is a restricted method
+    // (JEP 472). Without this attribute, JDK 24+ prints four "WARNING: A restricted method ..."
+    // lines on every start of 'java -jar' (the jlinkDist launchers run 'java -jar' too). The
+    // attribute applies only to the jar given to 'java -jar'; a classpath launch needs
+    // --enable-native-access=ALL-UNNAMED on the command line instead.
     manifest {
-        attributes 'Main-Class': 'io.jafar.shell.Main'
+        attributes 'Main-Class': 'io.jafar.shell.Main',
+                   'Enable-Native-Access': 'ALL-UNNAMED'
     }
 }
 
@@ -332,7 +354,12 @@ mavenPublishing {
     coordinates('io.btrace', 'jafar-shell', version.toString())
 }
 
-// Override publication to use shadow JAR instead of regular JAR
+// io.btrace:jafar-shell is the unified jar built by the jafar-shell module: this module's own fat
+// jar knows JFR only, and shipping it made every heap dump, pprof and OTLP example fail. The
+// publication stays here, so the release and CI task paths keep working.
+evaluationDependsOn(':jafar-shell')
+
+// Override publication to use the unified shadow JAR instead of regular JAR
 afterEvaluate {
     publishing {
         publications {
@@ -342,33 +369,18 @@ afterEvaluate {
                 // below as the main (classifier '') artifact, and publishing both sent every
                 // fat jar to Maven Central twice per release.
                 artifacts.removeIf { it.extension == 'jar' && (it.classifier == null || it.classifier == 'all') && !it.file.name.endsWith('-sources.jar') && !it.file.name.endsWith('-javadoc.jar') }
-                // Add shadow JAR as main artifact
-                artifact(shadowJar) {
+                // Add the unified shadow JAR as main artifact
+                artifact(project(':jafar-shell').tasks.named('shadowJar')) {
                     classifier = ''  // Publish without classifier
                 }
-                // Remove all internal and shaded dependencies from POM
-                // The shadow JAR is self-contained; only picocli, jline, and slf4j are kept
-                // as they are not relocated and consumers may need version visibility.
+                pom {
+                    name = 'jafar-shell'
+                    description = 'Interactive CLI for JFR recordings, heap dumps, pprof profiles and OTLP profiles'
+                }
+                // The shadow JAR is self-contained: nothing for a consumer to resolve
                 pom.withXml {
                     def deps = asNode().get('dependencies')
-                    if (deps) {
-                        def removable = [
-                            'io.btrace',        // internal project modules (shell-core, parser, tools)
-                            'dev.tamboui',       // relocated into shadow JAR
-                            'com.google.code.gson', // relocated into shadow JAR
-                            'org.apache.maven',  // relocated into shadow JAR
-                            'org.apache.maven.resolver', // relocated into shadow JAR
-                            'org.apache.httpcomponents', // relocated into shadow JAR
-                            'info.picocli',      // relocated into shadow JAR
-                            'org.jline',         // relocated into shadow JAR
-                            'net.java.dev.jna',  // bundled into shadow JAR
-                        ] as Set
-                        deps.each { depsNode ->
-                            depsNode.children().removeAll { dep ->
-                                removable.contains(dep.groupId.text())
-                            }
-                        }
-                    }
+                    deps.each { asNode().remove(it) }
                 }
             }
         }

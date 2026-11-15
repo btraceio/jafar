@@ -10,7 +10,7 @@ parser-only change re-ships ~1 MiB and does not re-publish the shell or the LLM 
 
 | Plane | Tag | Publishes | Cost |
 |---|---|---|---|
-| shell | `vX.Y.Z` | `jafar-shell` (fat jar; the `jfr-shell` module builds it), `jfr-shell-jdk`, `jfr-shell-jafar` | ~10 MiB |
+| shell | `vX.Y.Z` | `jafar-shell` (fat jar; the `jafar-shell` module builds it, the `jfr-shell` module publishes it), `jfr-shell-jdk`, `jfr-shell-jafar` | ~18 MiB |
 | core | `core/vX.Y.Z` | `jafar-parser` (+parser-core/codegen), `jafar-tools`, `jafar-gradle-plugin`; tags `go-parser/vX.Y.Z` | ~1 MiB |
 | mcp | `mcp/vX.Y.Z` | `jfr-mcp` (fat jar) | ~14 MiB |
 | llm-anthropic | `llm-anthropic/vX.Y.Z` | `llm-anthropic` | ~29 MiB |
@@ -51,9 +51,11 @@ RELEASING.md). The tag pushes trigger the release workflow, which:
   so — the app release is the only way that fix reaches the app's users.
 - **Backend and LLM plugins resolve the shell's interfaces at run time** (classloader
   delegation), so a *non-breaking* shell-core change ships nothing outside the shell and mcp
-  planes. An **API-breaking change** (japicmp = a major version bump per the plugin API policy)
-  requires tagging every SPI-consuming plane — shell, mcp, llm-anthropic, llm-openai — the same
-  day, each with its own number. Never publish a breaking SPI change without those tags.
+  planes. An **API-breaking change** (flagged by the PR's japicmp gate — see [Gates.md](Gates.md) —
+  and a major version bump per the plugin API policy) requires tagging every SPI-consuming plane
+  — shell, mcp, llm-anthropic, llm-openai — the same day, each with its own number. The API
+  baselines follow the newest plane tag (`scripts/api-baseline.sh`), never a hardcoded version.
+  Never publish a breaking SPI change without those tags.
 - **The Go module versions with the core plane** (parser parity — see AGENTS.md): a core release
   tags it; other planes must not.
 - **jbang-catalog**: `jafar-shell` aliases = the shell plane, `jfr-mcp` = the mcp plane,
@@ -70,6 +72,12 @@ sync workflow retries the jbang-catalog aliases (currently keyed to the latest s
 per-plane catalog updates already happen in `release.yml`).
 
 ## Verification an agent owes a release
+
+The version gates are regression-tested: `scripts/tests/test_derive_version.sh` pins the
+tag derivation (on-tag release, past-tag snapshot, plane isolation, the untagged-plane
+fallback, newest-anywhere) and `scripts/tests/test_release_plan.sh` pins the release
+preflight (dry-run derivation, the branch policy, and the refusal of a repository with
+no release tags — the "untagged-*" incident class).
 
 ```bash
 scripts/release.sh --dry-run [plane] <type>     # branch policy + tag/version derivation

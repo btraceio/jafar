@@ -33,6 +33,20 @@ public final class LlmCommands {
   public interface Host {
     void println(String line);
 
+    /**
+     * Prints the line that says a command failed: it did not do what it was asked (no session, no
+     * backend, a usage error, a reply with no query, a query that failed). Advice that follows the
+     * failure goes to {@link #println}.
+     *
+     * <p>A shell must route this to the channel its scripts count, so that a failing {@code ask},
+     * {@code as-query} or {@code explain} line fails the script instead of counting as a success
+     * (see {@code ScriptRunner.failingOnReportedErrors}). Defaults to {@link #println} for a host
+     * with no such channel.
+     */
+    default void error(String line) {
+      println(line);
+    }
+
     /** Module id of the current session ({@code jfr}, {@code hdump}, ...), or empty if none. */
     Optional<String> currentModuleId();
 
@@ -263,7 +277,7 @@ public final class LlmCommands {
     String question = stripDryRunFlag(argument);
 
     if (question == null || question.isBlank()) {
-      host.println("Usage: as-query [--dry-run] <question>");
+      host.error("Usage: as-query [--dry-run] <question>");
       host.println("  e.g. as-query which threads used the most CPU?");
       host.println("       as-query --dry-run which threads used the most CPU?");
       host.println("  For a question one query cannot answer, use 'ask <question>'.");
@@ -281,7 +295,7 @@ public final class LlmCommands {
       return;
     }
     if (host.currentModuleId().isEmpty()) {
-      host.println("No session open. Use 'open <file>' first.");
+      host.error("No session open. Use 'open <file>' first.");
       return;
     }
 
@@ -303,7 +317,7 @@ public final class LlmCommands {
       proposal.rationaleText().ifPresent(why -> host.println("# " + why));
 
       if (proposal.unanswerable()) {
-        host.println(
+        host.error(
             "The model reports this recording cannot answer that question. Nothing was run.");
         printUsage(service.value());
         return;
@@ -323,7 +337,7 @@ public final class LlmCommands {
       if (stillInvalid.isPresent()) {
         // The retry did not rescue it. Show the query and the parser's complaint rather than
         // running something known to be broken.
-        host.println("That query does not parse: " + stillInvalid.get());
+        host.error("That query does not parse: " + stillInvalid.get());
         host.println("Nothing was run. Try rephrasing, or write the query yourself.");
         printUsage(service.value());
         return;
@@ -341,7 +355,7 @@ public final class LlmCommands {
     } catch (LlmException e) {
       reportLlmFailure(e);
     } catch (Exception e) {
-      host.println("Query failed: " + e.getMessage());
+      host.error("Query failed: " + e.getMessage());
       host.println("The query above came from the model; it may be invalid. Try rephrasing.");
       // The request was paid for whether or not the query ran, so report it either way.
       printUsage(service.value());
@@ -369,7 +383,7 @@ public final class LlmCommands {
   /** Explains the most recent result. */
   public void explain() {
     if (lastQuery == null || lastRows == null) {
-      host.println("Nothing to explain yet — run a query, or 'ask' a question, first.");
+      host.error("Nothing to explain yet — run a query, or 'ask' a question, first.");
       return;
     }
 
@@ -444,7 +458,7 @@ public final class LlmCommands {
       case "dry-run", "dryrun" -> dryRun(String.join(" ", args.subList(1, args.size())));
       case "cost" -> cost();
       default -> {
-        host.println("Unknown: llm " + sub);
+        host.error("Unknown: llm " + sub);
         host.println("Usage: llm [status | cost]   (dry-run moved to 'as-query --dry-run')");
       }
     }
@@ -501,7 +515,7 @@ public final class LlmCommands {
   public void dryRun(String question) {
     // Retained for `llm dry-run`, which is an undocumented alias for `as-query --dry-run`.
     if (question == null || question.isBlank()) {
-      host.println("Usage: as-query --dry-run <question>");
+      host.error("Usage: as-query --dry-run <question>");
       return;
     }
     dryRunAsQuery(question);
@@ -532,7 +546,7 @@ public final class LlmCommands {
    */
   private void dryRunExplain() {
     if (lastQuery == null || lastRows == null) {
-      host.println("Nothing to explain yet — run a query, or 'ask' a question, first.");
+      host.error("Nothing to explain yet — run a query, or 'ask' a question, first.");
       return;
     }
     LlmConfig config = config();
@@ -610,7 +624,7 @@ public final class LlmCommands {
 
     if ("length".equalsIgnoreCase(stop) || "max_tokens".equalsIgnoreCase(stop)) {
       int ceiling = service.effectiveMaxTokens();
-      host.println(
+      host.error(
           "The reply stopped at the llm.max-tokens ceiling ("
               + ceiling
               + ") before it produced a query, even after raising it. Nothing was run.");
@@ -620,14 +634,14 @@ public final class LlmCommands {
     }
 
     if (text.isBlank()) {
-      host.println("The endpoint returned an empty reply. Nothing was run.");
+      host.error("The endpoint returned an empty reply. Nothing was run.");
       host.println(
           "Some models put their output in a separate reasoning field, which is not read here. "
               + "Try a different model, or 'as-query --dry-run' to check what is being sent.");
       return;
     }
 
-    host.println("No query could be extracted from the model's reply. Nothing was run.");
+    host.error("No query could be extracted from the model's reply. Nothing was run.");
     host.println("The model answered, but with no QUERY: line and no code block. It said:");
     host.println("    " + snippet(text));
   }
@@ -649,7 +663,7 @@ public final class LlmCommands {
   public void analyze(String argument) {
     String question = stripDryRunFlag(argument);
     if (question.isBlank()) {
-      host.println("Usage: ask [--dry-run] <question>   ('?' is short for it)");
+      host.error("Usage: ask [--dry-run] <question>   ('?' is short for it)");
       host.println("Runs several queries, reads each result, and concludes. 'as-query' is the");
       host.println("one-shot form; this one is for questions a single query cannot answer.");
       return;
@@ -660,7 +674,7 @@ public final class LlmCommands {
       // llm.confirm says: show me a query before it runs. An investigation picks its next query
       // from the last result, so there is no honest way to honour that and still investigate.
       // Checked before the backend is resolved, so this costs nothing and sends nothing.
-      host.println("llm.confirm is on, and 'ask' cannot show each of several queries first.");
+      host.error("llm.confirm is on, and 'ask' cannot show each of several queries first.");
       host.println("Use 'as-query' for one query you approve, or 'ask --dry-run' to see the first");
       host.println("request. Nothing was sent.");
       return;
@@ -671,7 +685,7 @@ public final class LlmCommands {
       return;
     }
     if (host.currentModuleId().isEmpty()) {
-      host.println("No session open. Use 'open <file>' first.");
+      host.error("No session open. Use 'open <file>' first.");
       return;
     }
     String moduleId = host.currentModuleId().get();
@@ -752,7 +766,7 @@ public final class LlmCommands {
       if (result.answer() != null) {
         host.println(result.answer());
       } else {
-        host.println(
+        host.error(
             "The investigation ran out of budget before reaching a conclusion. "
                 + "Raise llm.max-steps, or ask a narrower question.");
       }
@@ -767,7 +781,7 @@ public final class LlmCommands {
       printUsage(service.value());
 
     } catch (LlmException e) {
-      host.println(e.getMessage());
+      host.error(e.getMessage());
       if (e.remedy() != null) {
         host.println("-> " + e.remedy());
       }
@@ -802,14 +816,14 @@ public final class LlmCommands {
   }
 
   private void reportUnavailable(LlmService.Result<LlmService> result) {
-    host.println(result.detail());
+    host.error(result.detail());
     if (result.remedy() != null) {
       host.println("  -> " + result.remedy());
     }
   }
 
   private void reportLlmFailure(LlmException e) {
-    host.println(e.getMessage());
+    host.error(e.getMessage());
     if (e.remedy() != null) {
       host.println("  -> " + e.remedy());
     }

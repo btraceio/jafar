@@ -11,18 +11,21 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
- * Cache for storing untyped event deserializers by their metadata class IDs.
+ * Cache for storing untyped event deserializers by the structure they were generated for.
  *
  * <p>This interface extends ConcurrentMap to provide thread-safe storage and retrieval of generated
  * {@link UntypedEventDeserializer} instances. It is used to cache generated deserializers to avoid
  * repeated bytecode generation for the same event types.
  *
- * <p>Unlike {@link DeserializerCache}, this cache uses simple Long keys (metadata class IDs) rather
- * than composite {@code DeserializerKey} objects, as untyped deserializers don't need to account
- * for target handler classes.
+ * <p>Keys are structural keys computed by {@code UntypedCodeGenerator.cacheKey} in {@code
+ * parser-codegen}: the event type's name and id plus the layout of every type reachable from it.
+ * They are <b>not</b> metadata class ids. One cache is shared by all chunks of a recording, and
+ * chunks written by different producers assign the same id to different types (in {@code
+ * tck-test.jfr}, id 125 is {@code jdk.CompilerConfiguration} in chunk 1 and {@code
+ * datadog.ProfilerCounter} in chunk 2); keying by id handed one type's deserializer to the other.
  */
 @Internal
-public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEventDeserializer> {
+public interface UntypedDeserializerCache extends ConcurrentMap<String, UntypedEventDeserializer> {
 
   /**
    * Implementation of UntypedDeserializerCache using ConcurrentHashMap.
@@ -34,7 +37,7 @@ public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEve
     /** Public constructor for Impl. */
     public Impl() {}
 
-    private final ConcurrentMap<Long, UntypedEventDeserializer> delegate =
+    private final ConcurrentMap<String, UntypedEventDeserializer> delegate =
         new ConcurrentHashMap<>();
 
     @Override
@@ -44,12 +47,12 @@ public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEve
     }
 
     @Override
-    public void forEach(BiConsumer<? super Long, ? super UntypedEventDeserializer> action) {
+    public void forEach(BiConsumer<? super String, ? super UntypedEventDeserializer> action) {
       delegate.forEach(action);
     }
 
     @Override
-    public UntypedEventDeserializer putIfAbsent(Long key, UntypedEventDeserializer value) {
+    public UntypedEventDeserializer putIfAbsent(String key, UntypedEventDeserializer value) {
       return delegate.putIfAbsent(key, value);
     }
 
@@ -60,50 +63,56 @@ public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEve
 
     @Override
     public boolean replace(
-        Long key, UntypedEventDeserializer oldValue, UntypedEventDeserializer newValue) {
+        String key, UntypedEventDeserializer oldValue, UntypedEventDeserializer newValue) {
       return delegate.replace(key, oldValue, newValue);
     }
 
     @Override
-    public UntypedEventDeserializer replace(Long key, UntypedEventDeserializer value) {
+    public UntypedEventDeserializer replace(String key, UntypedEventDeserializer value) {
       return delegate.replace(key, value);
     }
 
     @Override
     public void replaceAll(
         BiFunction<
-                ? super Long, ? super UntypedEventDeserializer, ? extends UntypedEventDeserializer>
+                ? super String,
+                ? super UntypedEventDeserializer,
+                ? extends UntypedEventDeserializer>
             function) {
       delegate.replaceAll(function);
     }
 
     @Override
     public UntypedEventDeserializer computeIfAbsent(
-        Long key, Function<? super Long, ? extends UntypedEventDeserializer> mappingFunction) {
+        String key, Function<? super String, ? extends UntypedEventDeserializer> mappingFunction) {
       return delegate.computeIfAbsent(key, mappingFunction);
     }
 
     @Override
     public UntypedEventDeserializer computeIfPresent(
-        Long key,
+        String key,
         BiFunction<
-                ? super Long, ? super UntypedEventDeserializer, ? extends UntypedEventDeserializer>
+                ? super String,
+                ? super UntypedEventDeserializer,
+                ? extends UntypedEventDeserializer>
             remappingFunction) {
       return delegate.computeIfPresent(key, remappingFunction);
     }
 
     @Override
     public UntypedEventDeserializer compute(
-        Long key,
+        String key,
         BiFunction<
-                ? super Long, ? super UntypedEventDeserializer, ? extends UntypedEventDeserializer>
+                ? super String,
+                ? super UntypedEventDeserializer,
+                ? extends UntypedEventDeserializer>
             remappingFunction) {
       return delegate.compute(key, remappingFunction);
     }
 
     @Override
     public UntypedEventDeserializer merge(
-        Long key,
+        String key,
         UntypedEventDeserializer value,
         BiFunction<
                 ? super UntypedEventDeserializer,
@@ -139,7 +148,7 @@ public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEve
     }
 
     @Override
-    public UntypedEventDeserializer put(Long key, UntypedEventDeserializer value) {
+    public UntypedEventDeserializer put(String key, UntypedEventDeserializer value) {
       return delegate.put(key, value);
     }
 
@@ -149,7 +158,7 @@ public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEve
     }
 
     @Override
-    public void putAll(Map<? extends Long, ? extends UntypedEventDeserializer> m) {
+    public void putAll(Map<? extends String, ? extends UntypedEventDeserializer> m) {
       delegate.putAll(m);
     }
 
@@ -159,7 +168,7 @@ public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEve
     }
 
     @Override
-    public Set<Long> keySet() {
+    public Set<String> keySet() {
       return delegate.keySet();
     }
 
@@ -169,7 +178,7 @@ public interface UntypedDeserializerCache extends ConcurrentMap<Long, UntypedEve
     }
 
     @Override
-    public Set<Entry<Long, UntypedEventDeserializer>> entrySet() {
+    public Set<Entry<String, UntypedEventDeserializer>> entrySet() {
       return delegate.entrySet();
     }
 

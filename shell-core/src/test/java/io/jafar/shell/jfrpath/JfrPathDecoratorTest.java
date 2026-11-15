@@ -479,6 +479,85 @@ class JfrPathDecoratorTest {
   }
 
   @Test
+  void decorateByKeyWithCollectionValuedCorrelationKey() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+
+    // The JDK backend's array shape is a java.util.Collection: indexing into the key path
+    // (ids[0]) must resolve the element instead of throwing
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "RequestStart", Map.of("ids", List.of(42L), "requestId", "req-1")));
+
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "jdk.ExecutionSample", Map.of("ids", List.of(42L), "method", "m")));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q =
+        JfrPathParser.parse(
+            "events/jdk.ExecutionSample | decorateByKey(RequestStart, key=ids[0],"
+                + " decoratorKey=ids[0], fields=requestId)");
+
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+
+    assertEquals(1, out.size());
+    assertEquals("m", out.get(0).get("method"));
+    assertEquals("req-1", out.get(0).get("$decorator.requestId"));
+  }
+
+  @Test
+  void zeroDurationEventTimeBoundaries() {
+    // Pins the CURRENT strict half-open overlap policy for zero-duration (point) events:
+    // primaryStart < decoratorEnd && primaryEnd > decoratorStart
+    var decorators = new Decorators(new JfrPathEvaluator());
+    List<String> threadPath = List.of("eventThread", "javaThreadId");
+
+    java.util.function.BiFunction<Long, Long, Map<String, Object>> primary =
+        (start, duration) ->
+            Map.of(
+                "eventThread", Map.of("javaThreadId", 1L),
+                "startTime", start,
+                "duration", duration);
+
+    List<Decorators.DecoratorTimeRange> rangeDecorator =
+        List.of(
+            new Decorators.DecoratorTimeRange(1L, 1000L, 2000L, Map.of("monitorClass", "Range")));
+    List<Decorators.DecoratorTimeRange> pointDecorator =
+        List.of(
+            new Decorators.DecoratorTimeRange(1L, 1200L, 1200L, Map.of("monitorClass", "Point")));
+
+    // (a) point primary exactly at a range decorator's start: no decoration (flips if > -> >=)
+    assertTrue(
+        decorators
+            .findTimeRangeMatches(primary.apply(1000L, 0L), rangeDecorator, threadPath)
+            .isEmpty());
+
+    // (b) spanning primary strictly containing a point decorator: decoration
+    assertFalse(
+        decorators
+            .findTimeRangeMatches(primary.apply(500L, 2000L), pointDecorator, threadPath)
+            .isEmpty());
+
+    // (c) point primary exactly at a range decorator's end: no decoration (flips if < -> <=)
+    assertTrue(
+        decorators
+            .findTimeRangeMatches(primary.apply(2000L, 0L), rangeDecorator, threadPath)
+            .isEmpty());
+
+    // A point primary strictly inside a range decorator DOES decorate under the strict
+    // half-open policy (s < t < e) — pinned as the actual behaviour of findTimeRangeMatches
+    assertFalse(
+        decorators
+            .findTimeRangeMatches(primary.apply(1500L, 0L), rangeDecorator, threadPath)
+            .isEmpty());
+  }
+
+  @Test
   void parseDecorationSyntax() {
     // Test decorateByTime parsing
     var q1 =

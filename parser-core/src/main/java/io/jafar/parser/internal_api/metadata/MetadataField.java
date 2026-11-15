@@ -2,6 +2,7 @@ package io.jafar.parser.internal_api.metadata;
 
 import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.RecordingStream;
+import io.jafar.parser.internal_api.TypeSkipper;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +48,9 @@ public final class MetadataField extends AbstractMetadataElement {
   /** Cached metadata class type. */
   private MetadataClass type = null;
 
+  /** Lazily built by {@link #skipper()}; racy but idempotent, as the result is always equal. */
+  private volatile TypeSkipper skipper;
+
   /**
    * Constructs a new MetadataField from the recording stream and event.
    *
@@ -59,6 +63,16 @@ public final class MetadataField extends AbstractMetadataElement {
       throws IOException {
     super(stream, MetadataElementKind.FIELD);
     readSubelements(event);
+    // Parsed lazily and unchecked by getDimension(); a dimension that is not a number is a
+    // property of the recording, so reject it here where it can be reported as one.
+    if (dimensionVal != null) {
+      try {
+        dimension = Integer.parseInt(dimensionVal);
+      } catch (NumberFormatException e) {
+        throw new IOException(
+            "Metadata field " + getName() + ": invalid dimension \"" + dimensionVal + "\"");
+      }
+    }
   }
 
   /**
@@ -108,6 +122,12 @@ public final class MetadataField extends AbstractMetadataElement {
    */
   public long getTypeId() {
     if (classId == null) {
+      if (classIdVal == null) {
+        // No "class" attribute at all: the type stays unresolved, and decoding or skipping a
+        // value of it reports that.
+        classId = -1L;
+        return classId;
+      }
       try {
         classId = ParsingUtils.parseLongSWAR(classIdVal);
       } catch (NumberFormatException e) {
@@ -150,14 +170,14 @@ public final class MetadataField extends AbstractMetadataElement {
    * @param element the subelement that was read
    */
   @Override
-  protected void onSubelement(int count, AbstractMetadataElement element) {
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {
     if (element.getKind() == MetadataElementKind.ANNOTATION) {
       if (annotations == null) {
         annotations = new ArrayList<>(count);
       }
       annotations.add((MetadataAnnotation) element);
     } else {
-      throw new IllegalStateException("Unexpected subelement: " + element.getKind());
+      throw unexpectedSubelement(element);
     }
   }
 
@@ -228,5 +248,20 @@ public final class MetadataField extends AbstractMetadataElement {
       hasHashCode = true;
     }
     return hashCode;
+  }
+
+  /**
+   * Returns the skipper for this field's value as it appears inside its owning type, built on first
+   * use. Requires the field's type to be resolved.
+   *
+   * @return the skipper
+   */
+  public TypeSkipper skipper() {
+    TypeSkipper s = skipper;
+    if (s == null) {
+      s = TypeSkipper.createFieldSkipper(this);
+      skipper = s;
+    }
+    return s;
   }
 }

@@ -74,23 +74,32 @@ import java.util.Map;
  *     Object id = thread.get("javaThreadId");
  *   }
  *
- *   Object framesVal = Values.get(value, "stackTrace", "frames");
- *   if (framesVal instanceof ArrayType at) {
- *     Object arr = at.getArray();
- *     if (arr instanceof Object[] objs) {
- *       for (Object el : objs) {
- *         if (el instanceof ComplexType cpx) {
- *           Map<String, Object> m = cpx.getValue();
- *         } else if (el instanceof Map) {
- *           Map<String, Object> m = (Map<String, Object>) el; // inline complex element
- *         }
+ *   // Values.get returns the backing Java array, never the ArrayType wrapper
+ *   Object frames = Values.get(value, "stackTrace", "frames");
+ *   if (frames instanceof Object[] objs) {
+ *     for (Object el : objs) {
+ *       if (el instanceof ComplexType cpx) {
+ *         Map<String, Object> m = cpx.getValue(); // constant-pool reference; may be null
+ *       } else if (el instanceof Map) {
+ *         Map<String, Object> m = (Map<String, Object>) el; // inline complex element
  *       }
  *     }
  *   }
  * });
  * }</pre>
  *
- * <p>Handlers are invoked synchronously on the parser thread.
+ * <p>{@link Values#resolvedDeep(Map)} returns a copy of an event with every {@link ComplexType} and
+ * {@link ArrayType} replaced by its map or array, at any depth, for consumers that prefer one
+ * representation over branching.
+ *
+ * <p><b>Threading.</b> A recording's chunks are parsed in parallel, one task per chunk on a pool of
+ * {@code max(availableProcessors - 2, 1)} threads, so handlers are called concurrently from several
+ * parser-owned threads and must be thread-safe. Events are delivered in file order within one
+ * chunk; there is no order between chunks. {@link Control.ChunkInfo#chunkId()} is unique per parsed
+ * chunk within the JVM, so it can key per-chunk state; it is not the chunk's position in the file.
+ * Every handler call has completed when {@code run()} returns. For strictly sequential,
+ * file-ordered delivery create the parser from {@link ParsingContext#withParallelism(int)
+ * ParsingContext.withParallelism(1)}.
  *
  * @see UntypedStrategy
  * @see ParsingContext#newUntypedParser(Path, UntypedStrategy)
@@ -112,6 +121,22 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
      * @param ctl parser control object for flow control and metadata access
      */
     void handle(MetadataClass type, Map<String, Object> value, Control ctl);
+  }
+
+  /**
+   * Decides what happens to an event whose payload cannot be decoded. See {@link
+   * #onDecodeError(DecodeErrorHandler)}.
+   */
+  @FunctionalInterface
+  interface DecodeErrorHandler {
+    /**
+     * Called once per undecodable event.
+     *
+     * @param failure names the event type, chunk and position; its cause is the decoder's reason
+     * @return {@code true} to skip the event and continue with the next one; {@code false} to fail
+     *     the parse with {@code failure}
+     */
+    boolean onDecodeError(EventDecodingException failure);
   }
 
   /**
@@ -185,8 +210,47 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    *
    * <p>Exceptions thrown from the handler stop parsing and propagate to {@link #run()}.
    *
+   * <p>A handler is called once per event however often it is registered. Registering the same
+   * handler again (one that {@code equals} a registered one) returns a further registration of it,
+   * and the handler stays registered until every registration has been closed.
+   *
+   * <p>Safe to call while {@code run()} is in progress, from any thread; the handler receives the
+   * events dispatched after it was registered.
+   *
    * @param handler consumer of event maps
-   * @return a registration that can be destroyed to stop receiving events
+   * @return a registration that can be closed to stop receiving events
    */
   HandlerRegistration<?> handle(EventHandler handler);
+
+  /**
+   * Sets what happens to an event whose payload cannot be decoded (a corrupted or non-conforming
+   * recording).
+   *
+   * <p>Without a decode error handler, or when it returns {@code false}, the parse fails: {@link
+   * #run()} throws an {@code IOException} whose cause chain contains the {@link
+   * EventDecodingException}. When it returns {@code true} the event is skipped and parsing resumes
+   * at the next event, located by the event size the chunk already declares. If it throws, the
+   * parse fails with that exception. In no case does an event handler receive the bad event, not
+   * even partially.
+   *
+   * <p>Chunks are parsed in parallel, so the handler can be called concurrently from several
+   * threads and must be thread-safe. A corrupted constant pool entry makes every event that
+   * references it undecodable, so one defect can produce many calls; count them, and return {@code
+   * false} to stop.
+   *
+   * <p>A skipped event is still reported to a {@link #withParserListener parser listener}'s {@code
+   * onEvent}, which works at the chunk level and receives the event's valid position and size; only
+   * event handlers never see it.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; parsers created by {@link #open} support it.
+   *
+   * @param handler the decode error handler, or {@code null} to restore the default (fail)
+   * @return this parser
+   * @throws UnsupportedOperationException if this implementation does not support it
+   */
+  default UntypedJafarParser onDecodeError(DecodeErrorHandler handler) {
+    throw new UnsupportedOperationException(
+        getClass().getName() + " does not support onDecodeError");
+  }
 }

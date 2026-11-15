@@ -1,6 +1,5 @@
 plugins {
     id 'java-library'
-    id 'me.champeau.gradle.japicmp' version '0.4.3'
 }
 
 // Per-plane tag-derived version (see gradle/version-from-tag.gradle)
@@ -18,11 +17,6 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
     }
-}
-
-// Create baseline configuration for japicmp
-configurations {
-    japicmpBaseline
 }
 
 dependencies {
@@ -55,45 +49,17 @@ dependencies {
     testRuntimeOnly project(':jfr-shell-jafar')
     testRuntimeOnly project(':jfr-shell-jdk')
 
-    // Baseline for API compatibility checking
-    japicmpBaseline "io.btrace:jafar-shell:0.9.0@jar"
+    // ProcessorCount.assertExpected() (safety harness step 5): JFRSessionDeterminismTest calls it
+    // from @BeforeAll so a matrix run proves -Pjafar.activeProcessorCount=N reached the forked JVM.
+    testImplementation project(':test-support')
 }
 
-// API compatibility checking for backend plugin API
-task japicmp(type: me.champeau.gradle.japicmp.JapicmpTask) {
-    group = 'Verification'
-    description = 'Check binary compatibility of backend plugin API'
-
-    // Only check if not a SNAPSHOT and not first release with plugin API
-    onlyIf { !version.toString().contains('SNAPSHOT') && version != '0.10.0' }
-
-    oldClasspath.from(configurations.japicmpBaseline)
-    newClasspath.from(sourceSets.main.output)
-    newArchives.from(jar)
-
-    // Package to check (backend plugin API)
-    packageIncludes = ['io.jafar.shell.backend.*']
-
-    // Fail build on breaking changes (unless major version bump)
-    failOnModification = true
-    failOnSourceIncompatibility = true
-
-    // Allow additions (new methods with defaults, new capabilities)
-    compatibilityChangeExcludes = ['METHOD_NEW_DEFAULT']
-
-    onlyBinaryIncompatibleModified = false
-    onlyModified = true
-
-    // HTML report
-    htmlOutputFile = file("$buildDir/reports/japicmp.html")
-
-    // Text report for CI
-    txtOutputFile = file("$buildDir/reports/japicmp.txt")
-}
-
-// Run japicmp as part of check
+// Run the plugin-system tests as part of check. japicmp no longer runs here: the per-surface
+// API gate lives in gradle/api-compat.gradle (root project) as the `shell` surface, and it is not
+// part of check, because it needs the baseline script and the network. The old module-local task
+// pinned io.btrace:jafar-shell:0.9.0 and skipped itself on every SNAPSHOT, so it never ran on
+// PR builds.
 tasks.named('check') {
-    dependsOn japicmp
     dependsOn 'pluginSystemTest'
 }
 

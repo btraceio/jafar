@@ -13,18 +13,21 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import jdk.jfr.AnnotationElement;
 import jdk.jfr.EventType;
 import jdk.jfr.ValueDescriptor;
 import jdk.jfr.consumer.RecordedEvent;
-import jdk.jfr.consumer.RecordedObject;
 import jdk.jfr.consumer.RecordingFile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * JDK JFR API-based backend implementation. Uses the standard jdk.jfr.consumer API for parsing JFR
@@ -138,46 +141,77 @@ public final class JdkJfrBackend implements JfrBackend {
     }
 
     private static Map<String, Object> convertEvent(RecordedEvent event) {
-      Map<String, Object> map = new LinkedHashMap<>();
-      for (ValueDescriptor field : event.getFields()) {
-        String name = field.getName();
-        Object value = event.getValue(name);
-        map.put(name, convertValue(value));
-      }
-      return map;
-    }
-
-    private static Object convertValue(Object value) {
-      if (value == null) {
-        return null;
-      }
-      if (value instanceof RecordedObject ro) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        for (ValueDescriptor field : ro.getFields()) {
-          String name = field.getName();
-          map.put(name, convertValue(ro.getValue(name)));
-        }
-        return map;
-      }
-      if (value instanceof List<?> list) {
-        List<Object> result = new ArrayList<>(list.size());
-        for (Object item : list) {
-          result.add(convertValue(item));
-        }
-        return result;
-      }
-      // Primitives and strings pass through
-      return value;
+      // Shared with the live tail path; must stay byte-identical to the previous inline
+      // implementation (no decorations here — file-backend output shape is a contract).
+      return io.jafar.shell.live.LiveEventDecoder.decodeFields(event);
     }
   }
 
-  /** JDK metadata source using event types and their recursive field descriptors. */
-  private static final class JdkMetadataSource implements MetadataSource {
+  /**
+   * JDK metadata source.
+   *
+   * <p><b>Multi-chunk caveat:</b> {@link RecordingFile#readEventTypes()} collapses every chunk's
+   * type table into a single id-to-name mapping. Recordings whose chunks redefine the same type id
+   * (e.g. Datadog profiler output, where chunk A's {@code jdk.VirtualizationInformation} and chunk
+   * B's {@code datadog.ExecutionSample} both carry id 101) lose the chunk-local types entirely.
+   * Event payloads, by contrast, are resolved against their own chunk's metadata, so a recovery
+   * scan of the event stream can rebuild the missing descriptors. Lookups that miss the merged view
+   * fall back to that scan, and {@link #loadAllClasses(Path)} enriches its result with the
+   * recovered types. Ids in the enriched view are chunk-local and not unique across chunks.
+   *
+   * <p>Detection and recovery happen only when metadata is actually requested through this class,
+   * and only for types that have at least one event in the file — chunk-local types with zero
+   * events and types unreachable from recovered event field descriptors are unrecoverable. {@link
+   * #loadClass(Path, String)} prefers the merged descriptor, falling back to the first recovered
+   * descriptor in file order. Listings contain one representative per name, including reachable
+   * nested types. The recovery scan is capped at {@link #MAX_RECOVERY_SCAN_EVENTS} events.
+   */
+  static final class JdkMetadataSource implements MetadataSource {
+    private static final Logger log = LoggerFactory.getLogger(JdkMetadataSource.class);
+
+    /** Upper bound for the chunk-local recovery scan in this class. */
+    private static final long MAX_RECOVERY_SCAN_EVENTS = 2_000_000;
+
+    /**
+     * Normalized absolute path of the recording the chunk-local-types warning was last emitted for.
+     */
+    private static final AtomicReference<String> chunkLocalTypesWarnedFor = new AtomicReference<>();
+
     @Override
     public Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
-      for (Map<String, Object> type : loadAllClasses(recording)) {
-        if (typeName.equals(type.get("name"))) {
-          return type;
+      Map<String, Map<String, Object>> byName = new LinkedHashMap<>();
+      Set<String> seen = new HashSet<>();
+      try (RecordingFile rf = new RecordingFile(recording)) {
+        for (EventType eventType : rf.readEventTypes()) {
+          seen.add(typeKey(eventType));
+          indexEventType(eventType, byName);
+        }
+      }
+      if (byName.containsKey(typeName)) return byName.get(typeName);
+      // The merged view drops chunk-local types on id collision; recover from events,
+      // whose types resolve against their own chunk's metadata.
+      try (RecordingFile rf = new RecordingFile(recording)) {
+        long scanned = 0;
+        while (rf.hasMoreEvents()) {
+          RecordedEvent event = rf.readEvent();
+          if (event == null) {
+            break;
+          }
+          if (++scanned > MAX_RECOVERY_SCAN_EVENTS) {
+            log.warn(
+                "Stopped the chunk-local type recovery scan of '{}' after {} events while "
+                    + "looking up '{}'; treating the type as not found",
+                recording,
+                MAX_RECOVERY_SCAN_EVENTS,
+                typeName);
+            return null;
+          }
+          EventType eventType = event.getEventType();
+          if (seen.add(typeKey(eventType))) indexEventType(eventType, byName);
+          if (byName.containsKey(typeName)) {
+            warnChunkLocalTypes(recording);
+            return byName.get(typeName);
+          }
         }
       }
       return null;
@@ -205,15 +239,56 @@ public final class JdkJfrBackend implements JfrBackend {
     @Override
     public List<Map<String, Object>> loadAllClasses(Path recording) throws Exception {
       Map<String, Map<String, Object>> byName = new LinkedHashMap<>();
+      Set<String> seen = new HashSet<>();
+      Map<Long, String> mergedIdToName = new HashMap<>();
       try (RecordingFile rf = new RecordingFile(recording)) {
         for (EventType eventType : rf.readEventTypes()) {
-          // readEventTypes covers every chunk and can return repeated names. Preserve one
-          // deterministic view, and index nested types before following their cyclic references.
-          byName.putIfAbsent(eventType.getName(), convertEventType(eventType));
-          collectFieldTypes(eventType.getFields(), byName);
+          seen.add(typeKey(eventType));
+          mergedIdToName.put(eventType.getId(), eventType.getName());
+          indexEventType(eventType, byName);
         }
       }
+      // Recover chunk-local types that the merged view dropped. Types with zero events in the
+      // recording cannot be recovered this way and remain absent by design.
+      boolean divergent = false;
+      long scanned = 0;
+      boolean capped = false;
+      try (RecordingFile rf = new RecordingFile(recording)) {
+        while (rf.hasMoreEvents()) {
+          RecordedEvent event = rf.readEvent();
+          if (event == null) {
+            break;
+          }
+          EventType eventType = event.getEventType();
+          String mergedName = mergedIdToName.get(eventType.getId());
+          if (mergedName != null && !mergedName.equals(eventType.getName())) {
+            divergent = true;
+          }
+          if (++scanned > MAX_RECOVERY_SCAN_EVENTS) {
+            capped = true;
+            break;
+          }
+          if (seen.add(typeKey(eventType))) {
+            indexEventType(eventType, byName);
+          }
+        }
+      }
+      if (divergent) {
+        warnChunkLocalTypes(recording);
+      }
+      if (capped) {
+        log.warn(
+            "Stopped the chunk-local type recovery scan of '{}' after {} events; types that only "
+                + "occur later in the recording may be missing from the metadata view",
+            recording,
+            MAX_RECOVERY_SCAN_EVENTS);
+      }
       return new ArrayList<>(byName.values());
+    }
+
+    private static void indexEventType(EventType type, Map<String, Map<String, Object>> byName) {
+      byName.putIfAbsent(type.getName(), convertEventType(type));
+      collectFieldTypes(type.getFields(), byName);
     }
 
     private static void collectFieldTypes(
@@ -232,6 +307,26 @@ public final class JdkJfrBackend implements JfrBackend {
         addFields(meta, field.getFields());
         byName.put(name, meta);
         collectFieldTypes(field.getFields(), byName);
+      }
+    }
+
+    private static String typeKey(EventType type) {
+      return type.getId() + ":" + type.getName();
+    }
+
+    private static void warnChunkLocalTypes(Path recording) {
+      String key = recording.toAbsolutePath().normalize().toString();
+      String previous = chunkLocalTypesWarnedFor.get();
+      if (key.equals(previous)) {
+        return;
+      }
+      if (chunkLocalTypesWarnedFor.compareAndSet(previous, key)) {
+        log.warn(
+            "Recording '{}' redefines type ids across chunks (per-chunk metadata); the JDK "
+                + "backend's merged metadata view misattributes or hides chunk-local types. "
+                + "Chunk-local types were recovered from event payloads. Prefer the 'jafar' "
+                + "backend for faithful per-chunk metadata.",
+            recording);
       }
     }
 

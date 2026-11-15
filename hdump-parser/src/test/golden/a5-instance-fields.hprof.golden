@@ -1,0 +1,10 @@
+# golden v1 — regenerate: ./gradlew :hdump-parser:test --tests '*HdumpGoldenDumpTest' -Pjafar.golden.update --rerun
+fixture=a5-instance-fields.hprof
+fixture-sha256=
+lines=9
+digest=71d8373a94359a945aed45ffea37cd96fe948061aa6bda3463ef0c46f796fdf8
+count.class=2
+count.field=2
+count.gc-root=1
+count.heap=1
+count.instance=3
