@@ -27,12 +27,6 @@ import java.util.ServiceLoader;
  */
 public final class ParsingContextImpl implements ParsingContext {
   /**
-   * The context of parsers opened without one ({@code UntypedJafarParser.open(path)}). It lives as
-   * long as the JVM, so it keeps no untyped deserializers: each of its parses has its own cache.
-   */
-  public static final ParsingContext EMPTY = new ParsingContextImpl(null);
-
-  /**
    * Most entries {@link #untypedDeserializers} may hold when a parse starts; over it, the cache is
    * emptied first. Keys embed chunk-scoped type ids, so a context that keeps reading recordings of
    * different producers keeps meeting new keys, and each entry pins a generated class. A recording
@@ -82,6 +76,16 @@ public final class ParsingContextImpl implements ParsingContext {
       return null;
     }
   }
+
+  /**
+   * The context of parsers opened without one ({@code UntypedJafarParser.open(path)}). It lives as
+   * long as the JVM, so it keeps no untyped deserializers: each of its parses has its own cache.
+   *
+   * <p>Declared after {@link #DESERIALIZER_FACTORY} on purpose: static initializers run in textual
+   * order, and declared above it this context's typed factory was built with {@code null} and a
+   * typed parse through it handed every handler a {@code null} event.
+   */
+  public static final ParsingContext EMPTY = new ParsingContextImpl(null);
 
   /**
    * The generated untyped reader's factory.

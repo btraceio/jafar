@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1,892 `jdk.GCHeapSummary.when` values of an affected parse). The set is now computed per
   chunk. A side effect: chunks after the first are filtered too, where they used to
   index every pool
+- **A typed parser made from `ParsingContextImpl.EMPTY` handed every handler a `null` event.** The
+  constant was initialized before its class had looked up the deserializer factory, so its typed
+  parses had none. `TypedJafarParser.open(path)` and `ParsingContext.create()` were not affected
 - **A chunk's duration was converted as ticks; it is nanoseconds.** `Control.ChunkInfo.duration()`
   and the Go parser's `ChunkInfo.Duration()` multiplied the header's duration by the tick length.
   That is the same number only at 1e9 ticks per second: on a JDK 21 recording with a tick
