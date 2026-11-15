@@ -365,7 +365,8 @@ providers are reported, not silently dropped:
   (the same output appears when startup fails with "No JFR backends available").
 - A provider whose `getId()` or `getPriority()` throws is dropped the same way — those calls are
   needed to register the backend at all.
-- `jfr-shell` logs one `WARN` line per skipped provider at discovery time.
+- `jfr-shell` logs one `WARN` line per discovery pass, summarizing the skipped providers (up to 5
+  named, then a count).
 
 Fix: reinstall or delete the jar. Plugin jars live in `~/.jfr-shell/plugins` (override with
 `JFRSHELL_PLUGIN_DIR`), then restart the shell.

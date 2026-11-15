@@ -3,12 +3,21 @@ package io.jafar.shell.cli;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.jafar.shell.core.llm.LlmBackend;
+import java.io.FileOutputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.jar.JarOutputStream;
+import java.util.zip.ZipEntry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Command-level behaviour with a fake host.
@@ -135,6 +144,35 @@ class LlmCommandsTest {
     host.settings.put("llm.redact", "false");
     new LlmCommands(host).status();
     assertTrue(host.text().contains("OFF"));
+  }
+
+  @TempDir Path tempDir;
+
+  @Test
+  void statusReportsTheFailedToLoadSectionForABrokenProviderJar() throws Exception {
+    // A fixture jar whose service file names a provider class that cannot initialize — the shape
+    // of a broken installed plugin jar. Discovery runs over the thread context classloader (the
+    // plugin system is not initialized in tests), the way shell-core's discovery tests drive it.
+    Path jar = tempDir.resolve("broken-llm-provider.jar");
+    try (JarOutputStream out = new JarOutputStream(new FileOutputStream(jar.toFile()))) {
+      out.putNextEntry(new ZipEntry("META-INF/services/" + LlmBackend.class.getName()));
+      out.write((BrokenPluginLlmBackend.class.getName() + "\n").getBytes(StandardCharsets.UTF_8));
+      out.closeEntry();
+    }
+    URLClassLoader fixtureLoader =
+        new URLClassLoader(new URL[] {jar.toUri().toURL()}, getClass().getClassLoader());
+    ClassLoader previous = Thread.currentThread().getContextClassLoader();
+    Thread.currentThread().setContextClassLoader(fixtureLoader);
+    try {
+      FakeHost host = new FakeHost();
+      new LlmCommands(host).status();
+      String text = host.text();
+      assertTrue(text.contains("Failed to load"), text);
+      assertTrue(text.contains(BrokenPluginLlmBackend.class.getName()), text);
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+      fixtureLoader.close();
+    }
   }
 
   @Test

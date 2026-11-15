@@ -1030,12 +1030,20 @@ public class CommandDispatcher {
 
     if ("list".equals(subcmd)) {
       io.println("Available backends:");
-      JfrBackend current = registry.getCurrent();
+      JfrBackend current;
+      try {
+        current = registry.getCurrent();
+      } catch (IllegalStateException e) {
+        // Every backend broken (or none installed) — the list below and the "Failed to load"
+        // section are exactly where the user looks then, so they must still print.
+        current = null;
+      }
       for (JfrBackend b : registry.listAll()) {
         String id = ProviderDiscovery.call(b::getId, "?");
         String name = ProviderDiscovery.call(b::getName, "?");
         int priority = ProviderDiscovery.call(b::getPriority, -1);
-        String marker = id.equals(ProviderDiscovery.call(current::getId, "")) ? "*" : " ";
+        String marker =
+            current != null && id.equals(ProviderDiscovery.call(current::getId, "")) ? "*" : " ";
         io.printf("  %s %-10s %-20s (priority: %d)%n", marker, id, name, priority);
       }
       var failures = registry.discoveryFailures();

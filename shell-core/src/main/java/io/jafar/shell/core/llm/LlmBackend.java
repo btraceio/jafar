@@ -142,11 +142,8 @@ public interface LlmBackend {
     try {
       readiness = backend.readiness(config);
     } catch (Throwable t) {
-      if (t instanceof VirtualMachineError vme) {
-        throw vme;
-      }
-      if (t instanceof ThreadDeath death) {
-        throw death;
+      if (ProviderDiscovery.isFatal(t)) {
+        throw t;
       }
       return Readiness.notReady(
           "readiness check failed: " + ProviderDiscovery.describe(t),
@@ -183,7 +180,13 @@ public interface LlmBackend {
     if (id == null || id.isBlank()) {
       return Optional.empty();
     }
-    return discover().stream().filter(b -> b.id().equalsIgnoreCase(id)).findFirst();
+    return discover().stream()
+        .filter(
+            b -> {
+              String candidate = ProviderDiscovery.call(b::id, null);
+              return candidate != null && candidate.equalsIgnoreCase(id);
+            })
+        .findFirst();
   }
 
   /**

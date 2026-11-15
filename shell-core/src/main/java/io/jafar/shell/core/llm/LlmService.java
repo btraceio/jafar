@@ -87,7 +87,7 @@ public final class LlmService {
           .append("Available: ")
           .append(
               available.stream()
-                  .map(LlmBackend::id)
+                  .map(b -> ProviderDiscovery.call(b::id, "?"))
                   .collect(java.util.stream.Collectors.joining(", ")))
           .append(" — set llm.backend to one of these, or 'auto'.");
       if (!failures.isEmpty()) {
@@ -563,7 +563,7 @@ public final class LlmService {
   }
 
   private LlmResponse send(LlmRequest request) throws LlmException {
-    LlmBackend.Readiness readiness = backend.readiness(config);
+    LlmBackend.Readiness readiness = LlmBackend.probeReadiness(backend, config);
     if (!readiness.ready()) {
       throw new LlmException(readiness.detail(), readiness.remedy());
     }

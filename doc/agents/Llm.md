@@ -75,9 +75,10 @@ Architecture, and the reasons it is shaped this way:
   can re-run.
 - **Provider discovery never lets a broken jar win.** `LlmBackend.discover()` goes through
   `ProviderDiscovery` (`io.jafar.shell.core.discovery`), which converts
-  `ServiceConfigurationError` (and anything a provider throws from `id()`, `readiness()`,
-  `getPriority()` …) into a recorded skip instead of a crash — `catch (Exception)` was never enough,
-  because `ServiceConfigurationError` is an `Error`. `LlmBackend.discoverWithFailures()` /
+  `ServiceConfigurationError` (and anything a provider throws from `id()`, or from the JFR SPI's
+  `getId()`/`getPriority()` …) into a recorded skip instead of a crash — `catch (Exception)` was never enough,
+  because `ServiceConfigurationError` is an `Error`. A provider whose `readiness()` throws is not
+  skipped: it is reported not-ready via `llm status` and `ask`. `LlmBackend.discoverWithFailures()` /
   `BackendRegistry.discoveryFailures()` carry the skipped providers and their causes; `llm status`
   and `backend list` print them ("Failed to load"), and the "no backend" error paths name them.
   The same guard skips JFR backend providers (`BackendRegistry.loadBackends`). Discovery is not

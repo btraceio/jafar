@@ -6,6 +6,7 @@ import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.ScriptRunner;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -192,7 +193,7 @@ public final class Main implements Callable<Integer> {
         System.err.println(
             "Available backends: "
                 + registry.listAll().stream()
-                    .map(JfrBackend::getId)
+                    .map(b -> ProviderDiscovery.call(b::getId, "?"))
                     .collect(Collectors.joining(", ")));
         printBackendFailures(registry);
         return false;
@@ -279,7 +280,7 @@ public final class Main implements Callable<Integer> {
           System.err.println(
               "Available backends: "
                   + registry.listAll().stream()
-                      .map(JfrBackend::getId)
+                      .map(b -> ProviderDiscovery.call(b::getId, "?"))
                       .collect(Collectors.joining(", ")));
           printBackendFailures(registry);
           return 1;
@@ -559,7 +560,7 @@ public final class Main implements Callable<Integer> {
           System.err.println(
               "Available backends: "
                   + registry.listAll().stream()
-                      .map(JfrBackend::getId)
+                      .map(b -> ProviderDiscovery.call(b::getId, "?"))
                       .collect(Collectors.joining(", ")));
           printBackendFailures(registry);
           return 1;

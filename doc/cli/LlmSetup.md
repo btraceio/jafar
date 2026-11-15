@@ -50,8 +50,8 @@ artifact's Maven listing) is self-contained; the OpenAI-compatible backend's thi
 POM-listed dependencies (currently just gson) are the equivalent files:
 
 ```bash
-jafar-shell --install-plugin /path/to/llm-anthropic-X.Y.Z-all.jar
-jafar-shell --install-plugin /path/to/llm-openai-X.Y.Z.jar
+jfr-shell --install-plugin /path/to/llm-anthropic-X.Y.Z-all.jar
+jfr-shell --install-plugin /path/to/llm-openai-X.Y.Z.jar
 ```
 
 Each backend supplies its own default model, so there is no cross-provider default to get wrong:
@@ -420,8 +420,9 @@ keep working, and every command that goes through LLM discovery reports what was
   failure) print the same list.
 
 The fix is to reinstall or remove the broken jar. Plugin jars live in `~/.jfr-shell/plugins` (or
-`$JFRSHELL_PLUGIN_DIR`); delete the offending one, or reinstall it
-(`jafar-shell --install-plugin <path-or-coordinates>`), then restart the shell. A provider whose
+`$JFRSHELL_PLUGIN_DIR`); delete the jar or reinstall it with
+`jfr-shell --install-plugin <path-to.jar>` (the shell can also reinstall from the catalog on next
+explicit use), then restart the shell. A provider whose
 *health check* throws (rather than the jar failing to load) is treated as not-ready, and `llm status`
 shows the exception as the reason.
 

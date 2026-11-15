@@ -97,6 +97,28 @@ class LlmBackendBrokenProviderTest {
   }
 
   @Test
+  void providerWhoseIdIsBlankIsSkippedAndReported() throws Exception {
+    try (URLClassLoader loader =
+        serviceJar(
+            "blank-id",
+            List.of(
+                BlankIdPluginLlmBackend.class.getName(), TestPluginLlmBackend.class.getName()))) {
+      runWithLoader(
+          loader,
+          () -> {
+            ProviderDiscovery.Outcome<LlmBackend> outcome = LlmBackend.discoverWithFailures();
+            assertEquals(
+                List.of(TestPluginLlmBackend.ID),
+                outcome.providers().stream().map(LlmBackend::id).toList(),
+                "the blank-id provider is skipped");
+            assertTrue(
+                outcome.failures().stream().anyMatch(f -> f.detail().contains("blank id")),
+                "the blank-id failure is recorded: " + outcome.failures());
+          });
+    }
+  }
+
+  @Test
   void autoSelectionSkipsTheReadinessThrowingProvider() throws Exception {
     try (URLClassLoader loader =
         serviceJar(
@@ -114,7 +136,7 @@ class LlmBackendBrokenProviderTest {
             // The broken one reports not-ready with the cause, rather than blowing up llm status.
             LlmBackend throwing =
                 LlmBackend.discover().stream()
-                    .filter(b -> b.id().equals("throwing-readiness"))
+                    .filter(b -> b.id().equals("aaa-throwing-readiness"))
                     .findFirst()
                     .orElseThrow();
             LlmBackend.Readiness readiness = LlmBackend.probeReadiness(throwing, config);

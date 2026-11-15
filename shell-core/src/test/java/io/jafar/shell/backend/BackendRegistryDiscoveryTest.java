@@ -53,6 +53,24 @@ class BackendRegistryDiscoveryTest {
     }
   }
 
+  @Test
+  void providerWithBlankIdIsSkippedAndReported() throws Exception {
+    try (URLClassLoader loader =
+        serviceJar(
+            "blank-id",
+            List.of(BlankIdJfrBackend.class.getName(), ReadyJfrBackend.class.getName()))) {
+      BackendRegistry.LoadedBackends loaded = BackendRegistry.loadBackends(loader);
+      List<String> ids = loaded.providers().stream().map(JfrBackend::getId).toList();
+      assertTrue(ids.contains("ready-jfr-backend"), "healthy provider kept: " + ids);
+      assertTrue(
+          loaded.providers().stream().noneMatch(b -> b instanceof BlankIdJfrBackend),
+          "the blank-id provider is skipped: " + ids);
+      assertTrue(
+          loaded.failures().stream().anyMatch(f -> f.detail().contains("blank id")),
+          "the blank-id failure is recorded: " + loaded.failures());
+    }
+  }
+
   private URLClassLoader serviceJar(String name, List<String> providerClasses) throws IOException {
     Files.createDirectories(tempDir);
     Path jar = tempDir.resolve(name + ".jar");

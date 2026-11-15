@@ -70,10 +70,10 @@ class ProviderDiscoveryTest {
   }
 
   @Test
-  void corruptServiceFileIsReportedAndLaterEntriesSurvive() throws Exception {
-    // One corrupt and one good provider listed in the same file: the broken entry must not be
-    // fatal to the pass as a whole (a same-jar failure may still lose that jar's other providers —
-    // the JDK aborts that file's parse — but the call must come back, not throw).
+  void corruptServiceFileIsReportedAndCallReturns() throws Exception {
+    // The JDK aborts the parse of a services file it cannot read, so the good entry listed after
+    // the corrupt one is lost with it. The assertion therefore only checks that the failure is
+    // recorded and the call returns — not that later entries survive.
     String services = "!!!not-a-class!!!\n" + DummyProvider.class.getName() + "\n";
     Path jar = tempDir.resolve("corrupt.jar");
     try (java.util.jar.JarOutputStream out =

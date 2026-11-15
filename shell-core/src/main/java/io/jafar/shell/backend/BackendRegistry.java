@@ -157,9 +157,22 @@ public final class BackendRegistry {
       }
     }
 
-    // 3. Select by highest priority
+    // 3. Select by highest priority. getPriority() is called again here (loadBackends only
+    // vetted it), so a provider that breaks between the two calls sorts last instead of killing
+    // selection for every other backend.
     return backends.values().stream()
-        .max(Comparator.comparingInt(JfrBackend::getPriority))
+        .max(
+            Comparator.comparingInt(
+                (JfrBackend backend) -> {
+                  Integer priority = ProviderDiscovery.call(backend::getPriority, null);
+                  if (priority == null) {
+                    log.warn(
+                        "Backend '{}' failed the getPriority() re-check; sorting it last",
+                        backend.getClass().getName());
+                    return Integer.MIN_VALUE;
+                  }
+                  return priority;
+                }))
         .orElseThrow(() -> new IllegalStateException(noBackendsMessage()));
   }
 
