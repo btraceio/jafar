@@ -101,7 +101,7 @@ In this repository the recurring multiplicities are:
 | JfrPath execution | via `JfrSelector` when supplied; via `JfrPathEvaluator` directly when not |
 | LLM backends | `llm-anthropic`, and `llm-openai`'s `openai` + `ollama` profiles |
 | Untyped parsers | Java (`parser-core`) and Go (`go-parser`) — see the [parity rule](../../AGENTS.md#rules) |
-| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses) and generated `EventStreamGenerated` (`parser-codegen`, not reachable from the public API) — held equal by `GeneratedUntypedParityTest` |
+| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses when `parser-codegen` is not on the classpath, or with `-Djafar.untyped.generated=false`) and generated `EventStreamGenerated` (`parser-codegen`; what `UntypedJafarParser` uses otherwise, `UntypedJafarParserImpl.usesGeneratedReader`) — held equal by `GeneratedUntypedParityTest` |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
 | Chunks | one parsing task per chunk on a pool of `max(availableProcessors - 2, 1)` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
 

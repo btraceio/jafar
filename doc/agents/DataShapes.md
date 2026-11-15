@@ -175,7 +175,12 @@ won varied between runs: `Code generation failed for datadog.ProfilerCounter` ap
 and in none of the next five. It looked flaky and was deterministic per ordering.
 
 The cache is now keyed by `UntypedCodeGenerator.cacheKey` — name, id and full reachable layout —
-and each chunk keeps its own id → deserializer map. The typed path was already safe: it chooses its
+and each chunk keeps its own id → deserializer map. Since then the cache has outgrown the parse: a
+`ParsingContext` hands one cache to every untyped parse made from it, so the same key now has to
+hold between *recordings*. It does, for the reason it holds between chunks — a chunk is
+self-contained, so two chunks of one file are no more related than two files — and
+`SharedUntypedDeserializerCacheTest` pins it with recordings that reuse an id, rename a field, or
+differ only in a `@Timestamp` annotation. The typed path was already safe: it chooses its
 cache by `MetadataFingerprint`. Anything else that outlives a chunk must not be keyed by a class id
 either.
 

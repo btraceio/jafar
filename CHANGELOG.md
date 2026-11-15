@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `events/T | count()` returned 316,700 to 317,233 for 320,000 events of a 32-chunk recording, and
   `sum`, `stats`, `groupBy`, plain row listings, projections, decorations and flame graphs shared
   the defect. The consumers now guard their state (#204)
+- **Untyped parsers made from one `ParsingContext` share their generated deserializers.** The
+  context returned a new deserializer cache for every `run()`, so two untyped parsers of one
+  context, or two runs of one parser, each generated every event deserializer again, although the
+  documentation said the context shares them. The context now owns one cache for all its untyped
+  parses, strategies and `withParallelism` views; it is emptied when it holds more than 4096
+  deserializers. `UntypedJafarParser.open(path)`, which takes no context, keeps a cache per parse
 - **A corrupted or truncated JFR recording is rejected with an `IOException` that says what is
   wrong with it.** The Java parser followed sizes, counts and offsets from the file without
   checking them, so a damaged recording failed with whatever the JDK threw on the way
