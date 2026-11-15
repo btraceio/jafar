@@ -97,7 +97,7 @@ recording run at the same time. When writing or reviewing one:
       :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun \
       :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun \
       :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun \
-      :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun
+      :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --tests '*TypedTypeFilterChunkRaceTest' --rerun
   done
   ```
 

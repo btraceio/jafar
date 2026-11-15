@@ -70,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A typed parse no longer returns `null` for a constant-pool field when another chunk of the
+  recording does not declare the field's type.** The typed parser indexes only the constant pools
+  of types its handlers reference, and kept that set of types, computed from one chunk's metadata,
+  in a field shared by the threads parsing the chunks. When two chunks computed it at the same
+  time, the set from a chunk without the type could be applied to the chunk that has it: its pool
+  was skipped and every reference into it read as `null`, with no error (in `tck-test.jfr`, all
+  1,892 `jdk.GCHeapSummary.when` values of an affected parse). The set is now computed per
+  chunk. A side effect: chunks after the first are filtered too, where they used to
+  index every pool
 - **A chunk's duration was converted as ticks; it is nanoseconds.** `Control.ChunkInfo.duration()`
   and the Go parser's `ChunkInfo.Duration()` multiplied the header's duration by the tick length.
   That is the same number only at 1e9 ticks per second: on a JDK 21 recording with a tick

@@ -47,7 +47,7 @@ executed (R4); the wall-time column records what those runs measured.
 | Jazzer regression corpus | The committed inputs under `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/` replay through the `@FuzzTest` target inside ordinary `:parser-core:test`; the cause-chain oracle fails on any `Error` anywhere in the chain and on any root cause that is neither `io.jafar.*` nor `IOException`, and bounds each input's runtime (the hang oracle) | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` | none — the corpus is the committed seeds; a new input is a hand-minimized crash file from a fuzz session, committed like any other change | the known-escapes allowlist below — a pinned escape, never a PR-body statement | `tests` (JDK 21 cell, inside `:parser-core:test`) | ~6 s warm (measured) |
 | Adversarial recordings | The six `adv-*` seeds regenerate byte-identically from the committed enum — drift fails naming the seed and the regen command — and each seed's parse delivers one pinned specific outcome: a named exception class plus message fragment, or an exact delivered-event count ("did not crash" is not an outcome) | `./gradlew :test-recordings:generateAdversarialRecordings :test-recordings:test` | `./gradlew :test-recordings:generateAdversarialRecordings` | none — drift is fixed, or the case is deliberately rebuilt and re-pinned in the diff | `tests` (JDK 21 cell: drift in `:test-recordings:test`, pinned outcomes in `:parser-core:test`) | ~2 s warm (measured) |
 | Known-escapes allowlist | An input listed in `parser-core/src/test/resources/io/jafar/parser/fuzz/known-escapes.txt` may escape the oracle only with exactly its pinned delivered throwable; an entry whose input no longer escapes FAILS "stale known-escape <sha>: remove the entry" — the list is shrink-only | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` (the oracle enforces it; `EscapeOracleTest` proves each rule permanently) | none — no test or tool ever writes the list; growth is a visible hand edit in the diff, always with a `# reason:` line | the list itself — there is deliberately no third PR-body statement (I1, D3) | `tests` (JDK 21 cell, inside `:parser-core:test`) | included in the corpus row's ~6 s |
-| Processor-count matrix (concurrency) | The three shell determinism nets, the pool-mirror abort tests, the JFR golden dumps and the shared-`ParsingContext` stress test all hold at both pool extremes — `-XX:ActiveProcessorCount=1` and `=16`, i.e. `StreamingChunkParser` pool sizes 1 and 14 — and every covered class's JUnit XML carries the `availableProcessors=<n> …` audit line proving the flag reached that JVM (R9) | `./gradlew -Pjafar.activeProcessorCount=1 :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun` — then the same command with `=16` | none — the nets are the oracle | none — a race must be fixed | `concurrency-matrix` (both cells) | measured as separate invocations in the step-5 reports: nets 10 s at =1 / 6 s at =16; abort + goldens ~4 s / ~3 s; stress ~8 s / ~7.3 s warm; the single combined invocation lands with the first CI run (see the subsection's R8 note) |
+| Processor-count matrix (concurrency) | The three shell determinism nets, the pool-mirror abort tests, the JFR golden dumps, the shared-`ParsingContext` stress test and the typed type-filter race test all hold at both pool extremes — `-XX:ActiveProcessorCount=1` and `=16`, i.e. `StreamingChunkParser` pool sizes 1 and 14 — and every covered class's JUnit XML carries the `availableProcessors=<n> …` audit line proving the flag reached that JVM (R9) | `./gradlew -Pjafar.activeProcessorCount=1 :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --tests '*TypedTypeFilterChunkRaceTest' --rerun` — then the same command with `=16` | none — the nets are the oracle | none — a race must be fixed | `concurrency-matrix` (both cells) | measured as separate invocations in the step-5 reports: nets 10 s at =1 / 6 s at =16; abort + goldens ~4 s / ~3 s; stress ~8 s / ~7.3 s warm; the single combined invocation lands with the first CI run (see the subsection's R8 note) |
 | Java/Go differential oracle | The Java and the Go untyped parser dump every corpus fixture plus the shared `go-parser/jfr/testdata` node-pool recordings under the one canonical line format (`JfrCanonicalDump` on the Java side, `go-parser/internal/differential` on the Go side), and the dumps must be identical modulo the root-caused allowlist: headers validated first (fixture sha256, event count vs line count, one-sided errors), then event totals and per-type histograms exact, then a line merge whose first mismatch names the event type, the field path and both lines | `./gradlew :parser-core:differentialTest --rerun` (needs `go` on PATH — a missing `go` fails the test naming PATH and the exact attempted command, never skips) | none — the allowlist `parser-core/src/test/resources/differential/allowlist.txt` is hand-edited and shrink-only; fixing a divergence is forced to shrink it | none — each allowlist entry documents a root-caused divergence with its proof in its `# reason:` line; a new divergence is fixed or root-caused, never waved through | `differential` (runs when `parser-core/`, `parser-codegen/` or `go-parser/` changes, and on every non-PR trigger) | ~9 s warm locally over the 6 fixtures (measured); the task deliberately sits outside `check` because it needs the Go toolchain |
 
 ## API evolution
@@ -557,8 +557,8 @@ and the trailing space in the needle pins `=1` against `=16`.
 (`MultiChunkDeterminismTest`, `ConstantPoolChunkLocalityTest`,
 `JFRSessionDeterminismTest`), the pool-mirror abort tests
 (`EventDecodeFailureTest`, `GeneratedEventDecodeFailureTest`), the JFR
-golden dumps — their digests are identical at `=1` and `=16` — and the
-shared-`ParsingContext` stress test.
+golden dumps — their digests are identical at `=1` and `=16` — the
+shared-`ParsingContext` stress test, and `TypedTypeFilterChunkRaceTest`.
 
 **The stress test.** `SharedParsingContextStressTest` (parser-codegen) runs,
 through one shared `ParsingContext`, N=8 concurrent parses of `tck-test.jfr`
@@ -586,14 +586,35 @@ parse generates nothing.
 > `both parses must carry the context's one cache`. **When a test's name says
 > "shared", assert the identity of the shared thing.**
 
-**A standing failure at `=16` (R8).** The stress test can fail on a *typed*
-parse: `round 3 parse 4 (typed): chunk 1 differs … expected … when=After GC …
-but was … when=null` — seen once in 7 runs at `=16` on a 4-core host. It is
-not the untyped cache: 8 concurrent typed-only parses of `tck-test.jfr`, 150
-rounds, with no untyped parse in the JVM, returned `when() == null` for every
-`jdk.GCHeapSummary` event of a whole parse (1,892 at a time) in 4 of 5 runs
-on the code before the cache became per-context, mostly when each parse had
-a `ParsingContext` of its own. The cause is not known and it is not fixed.
+**The typed failure this section used to call standing.** The stress test
+could fail on a *typed* parse: `round 3 parse 4 (typed): chunk 1 differs …
+expected … when=After GC … but was … when=null` — seen once in 7 runs at
+`=16` on a 4-core host, and recorded here as cause unknown. The cause is the
+race the next paragraph describes, fixed in `TypedJafarParserImpl` (#211): it
+needs no untyped parse and no shared `ParsingContext`, which is why 8
+concurrent typed-only parses, each with a context of its own, showed it too.
+With the fix the stress test and `TypedTypeFilterChunkRaceTest` passed 300
+consecutive runs at the default count on 4 cores.
+
+**The typed type-filter race test.** `TypedTypeFilterChunkRaceTest`
+(parser-codegen) provokes a race the stress test caught only once in 16
+and once in 18 consecutive local runs: `TypedJafarParserImpl` kept the set
+of types its handlers reference in one field shared by the chunk threads of a parse, so the set computed from a
+chunk that does not declare a type (`tck-test.jfr` chunk 2 has no
+`jdk.types.GCWhen`) could decide which constant pools another chunk indexed,
+and that chunk's references read as `null`. The test parses the recording 60
+times with two chunk threads and compares every `when()` of
+`jdk.GCHeapSummary` with a one-thread parse. It brings the two threads to
+the computation together through a handler factory's `bind` callback (the
+class comment says how) and asserts that this line-up happened in all 60
+parses, so losing the seam fails the test instead of weakening it. It asks
+for two chunk threads itself (`withParallelism(2)`), so both matrix cells
+exercise the same interleaving; it is in the matrix for the audit line and
+because the fix must hold at both counts. Without the fix it failed in 30 of
+30 runs (20 at the default count on 4 cores, 5 at `=1`, 5 at `=16`), each
+with "1892 of 1892 values are null", first at attempt 1 to 14 of 60. Its
+companion `TypedChunkTypeFilterTest` pins the cause without the interleaving:
+every chunk has a filter built from its own metadata.
 
 **The recorded fire cases (R5).** Both recorded races are probabilistic; each
 was re-run until it failed, then reverted (sha-verified against the
