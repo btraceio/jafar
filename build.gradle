@@ -140,6 +140,47 @@ subprojects { p ->
     }
 }
 
+// Clean-code static analysis on every Java module's main sources. Runs as part of `check`,
+// so `./gradlew build` runs it locally and in CI. The ruleset is curated (must be green
+// on the tree; see config/pmd/ruleset.xml).
+//
+// Deliberately NOT the `pmd` plugin: it registers a pmd<SourceSet> task for *every* source
+// set and wires them into `check`, and those tasks depend on their source set's compile
+// tasks. parser-core's MR-JAR source sets (java9/java13/java21) have auto-created compile
+// tasks with no `--release` option — nothing in the tree ever executed them, and PMD would
+// have dragged them into every build (they fail on a JDK 8 toolchain). One manual task per
+// module, main sources only, keeps the graph exactly as it was.
+def pmdToolVersion = '7.25.0'
+
+subprojects { p ->
+    p.plugins.withId('java') {
+        def pmdTools = p.configurations.maybeCreate('pmdTools')
+        p.dependencies.add('pmdTools', "net.sourceforge.pmd:pmd:${pmdToolVersion}")
+        p.dependencies.add('pmdTools', "net.sourceforge.pmd:pmd-java:${pmdToolVersion}")
+        p.dependencies.add('pmdTools', "net.sourceforge.pmd:pmd-ant:${pmdToolVersion}")
+
+        p.tasks.register('pmdMain', Pmd) {
+            description = 'Clean-code analysis of main sources (config/pmd/ruleset.xml).'
+            group = 'verification'
+            ruleSetFiles = rootProject.files('config/pmd/ruleset.xml')
+            ruleSets = []
+            source = p.sourceSets.main.allJava
+            classpath = p.sourceSets.main.output + p.sourceSets.main.compileClasspath
+            pmdClasspath = pmdTools
+            maxFailures = 0
+            ignoreFailures = false
+            rulesMinimumPriority = 5
+            targetJdk = org.gradle.api.plugins.quality.TargetJdk.VERSION_1_7 // legacy enum; ignored by the PMD 7 worker
+            threads = 1
+            incrementalAnalysis = false
+            consoleOutput = true
+        }
+        p.tasks.named('check') {
+            dependsOn p.tasks.named('pmdMain')
+        }
+    }
+}
+
 // Ensure formatting is checked during all builds
 allprojects {
     tasks.matching { it.name == 'check' }.configureEach {
