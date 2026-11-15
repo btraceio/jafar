@@ -26,7 +26,7 @@ DD_JFR_FILE="$HERE/demo/src/test/resources/test-dd.jfr"
 # Use direct-download links (dl=1) and follow redirects
 AP_URL="https://www.dropbox.com/scl/fi/lp5bj8adi3l7jge9ykayr/test-ap.jfr?rlkey=28wghlmp7ge4bxnan9ccwarby&dl=1"
 JFR_URL="https://www.dropbox.com/scl/fi/5uhp13h9ltj38joyqmwo5/test-jfr.jfr?rlkey=p0wmznxgm7zud6xzaydled69c&dl=1"
-DD_JFR_URL="https://www.dropbox.com/scl/fi/1hqtubs3pawamcydyp2t9/test-dd.jfr?rlkey=ug101qmbjgfd9xa1b2svq0zn8&st=oof9fvmo&dl=0"
+DD_JFR_URL="https://www.dropbox.com/scl/fi/1hqtubs3pawamcydyp2t9/test-dd.jfr?rlkey=ug101qmbjgfd9xa1b2svq0zn8&st=oof9fvmo&dl=1"
 
 if [ ! -f "$AP_FILE" ]; then
   echo "Downloading test-ap.jfr -> $AP_FILE"
@@ -54,5 +54,5 @@ if [ ! -f "$PARSER_RES_DIR/test-jfr.jfr" ]; then
   cp -f "$JFR_FILE" "$PARSER_RES_DIR/test-jfr.jfr"
 fi
 if [ ! -f "$PARSER_RES_DIR/test-dd.jfr" ]; then
-  cp -f "$JFR_FILE" "$PARSER_RES_DIR/test-dd.jfr"
+  cp -f "$DD_JFR_FILE" "$PARSER_RES_DIR/test-dd.jfr"
 fi
