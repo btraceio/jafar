@@ -105,14 +105,15 @@ public final class LlmConfig {
    * <p>This seam lets tests pin the environment instead of inheriting the process one — a developer
    * shell (or a CI runner) may well export {@code JAFAR_LLM_*} or any other variable a test would
    * otherwise pick up. Pass {@code name -> null} for no environment variables at all, mirroring how
-   * {@code null} {@code lookup} means no shell variables.
+   * {@code null} {@code lookup} means no shell variables; {@code null} {@code settingsFile} means
+   * no settings file, likewise.
    */
   public LlmConfig(
       Function<String, String> lookup,
       java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile,
       Function<String, String> env) {
     this.lookup = lookup == null ? name -> null : lookup;
-    this.settingsFile = settingsFile;
+    this.settingsFile = settingsFile == null ? () -> java.util.Optional.empty() : settingsFile;
     this.env = env == null ? name -> null : env;
   }
 
