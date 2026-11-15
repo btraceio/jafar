@@ -5,9 +5,15 @@ Build a minimal JFR Shell backend in 10 minutes. This tutorial creates a working
 ## What You'll Build
 
 A backend named `mini` that:
+
 - Streams events from JFR recordings
 - Provides event type metadata
 - Works with JFR Shell immediately
+
+The example below keeps metadata limited to event types. The production `jdk` backend also follows
+field descriptors recursively, making nested Thread, Class, StackTrace, and Method types available
+to the metadata browser and LLM field requests across multi-chunk recordings. See
+[Backend Capabilities](Backends.md#backend-capabilities) for the public JDK API's limits.
 
 ## Prerequisites
 

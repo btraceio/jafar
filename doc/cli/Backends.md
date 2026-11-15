@@ -47,14 +47,32 @@ Each backend declares a set of capabilities. JFR Shell adapts its features based
 | `UNTYPED_HANDLERS` | Map-based event access | ✓ | ✓ |
 | `CONTEXT_REUSE` | Share parsing context across sessions | ✓ | ✗ |
 
+The JDK backend reads merged event metadata and recovers chunk-local types from events, following
+nested field descriptors, including threads, classes, stack traces, frames, and methods. These types appear in the TUI
+metadata browser and in the fields supplied to `ask` and `as-query` in both shells. For example,
+with a recording open and the JDK backend selected:
+
+```text
+metadata class java.lang.Thread --fields
+metadata class jdk.types.StackTrace --fields
+```
+
+Array fields such as stack-trace frames retain their array dimension. Names follow the public JDK
+API: symbol-backed strings appear as `java.lang.String`, rather than separate raw symbol types.
+Types unreachable from event field descriptors, raw constant pools, and chunk headers are not
+exposed by this backend. A type's presence in metadata does not mean it emitted events.
+
+In the TUI metadata sidebar, `/` filters type names. Clearing or dismissing a filter keeps the
+selected type visible; canceling a search with no matches restores a selection in the full list.
+
 > **Multi-chunk recordings (Datadog profiler and similar):** the JDK backend builds its type
 > table with `RecordingFile.readEventTypes()`, which merges every chunk's type table into one
 > id-to-name mapping. If chunks redefine the same type id (e.g. `jdk.VirtualizationInformation` and
 > `datadog.ExecutionSample` both as 101), the merged view misattributes or hides the chunk-local
 > types. The backend detects this and recovers the chunk-local types from event payloads, logging a
-> warning; ids in the recovered view are chunk-local and not unique across chunks, and a type
-> name defined in several chunks may appear once per chunk in listings. Detection happens on
-> metadata access (types with no events, or non-event types, cannot be recovered or warned about);
+> warning; ids in the recovered view are chunk-local and not unique across chunks, and listings
+> keep one representative per type name. Detection happens on metadata access (types with no events
+> and types unreachable from recovered field descriptors cannot be recovered or warned about);
 > the recovery scan is capped at 2,000,000 events per call; the warning is emitted at most
 > once per recording change (switching between recordings may re-warn for a previously warned
 > recording). A type whose events all occur beyond the recovery-scan cap is reported as missing

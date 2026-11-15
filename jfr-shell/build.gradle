@@ -119,6 +119,52 @@ test {
     }
 }
 
+// Separate JVM/classpath: a selected JDK backend must never be rescued by the Jafar plugin.
+sourceSets {
+    jdkMetadataTest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations.jdkMetadataTestImplementation.extendsFrom(configurations.testImplementation)
+configurations { metadataShellPlugins }
+dependencies {
+    jdkMetadataTestImplementation 'com.google.code.gson:gson:2.10.1'
+    jdkMetadataTestRuntimeOnly project(':jfr-shell-jdk')
+    jdkMetadataTestRuntimeOnly project(':llm-openai')
+    jdkMetadataTestRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    jdkMetadataTestRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    metadataShellPlugins project(':jfr-shell-jdk')
+    metadataShellPlugins project(':llm-openai')
+}
+tasks.register('jdkMetadataTest', Test) {
+    group = 'verification'
+    description = 'Checks multi-chunk TUI/LLM metadata with only the JDK recording backend'
+    testClassesDirs = sourceSets.jdkMetadataTest.output.classesDirs
+    classpath = sourceSets.jdkMetadataTest.runtimeClasspath
+    dependsOn 'shadowJar', ':jafar-shell:jar', configurations.metadataShellPlugins
+    inputs.files(tasks.named('shadowJar'), project(':jafar-shell').tasks.named('jar'))
+        .withPropertyName('shellArtifacts').withPathSensitivity(PathSensitivity.NONE)
+    useJUnitPlatform()
+    setEnvironment(environment.findAll { key, value ->
+        !key.startsWith('JAFAR_LLM_') && !key.startsWith('LLM_') && key != 'JFRSHELL_BACKEND'
+    })
+    systemProperty 'jfr.shell.backend', 'jdk'
+    systemProperty 'jfr.shell.registry.remote', 'false'
+    systemProperty 'jfr.shell.plugin.dir', layout.buildDirectory.dir('jdk-metadata-test/plugins').get().asFile
+    systemProperty 'user.home', layout.buildDirectory.dir('jdk-metadata-test/home').get().asFile
+    environment 'JAFAR_LLM_CONFIG', layout.buildDirectory.file('jdk-metadata-test/empty.properties').get().asFile
+    environment 'XDG_CONFIG_HOME', layout.buildDirectory.dir('jdk-metadata-test/config').get().asFile
+    doFirst {
+        def settings = layout.buildDirectory.file('jdk-metadata-test/empty.properties').get().asFile
+        settings.parentFile.mkdirs()
+        settings.text = ''
+        systemProperty 'metadata.shell.classpath', files(tasks.shadowJar.archiveFile, configurations.metadataShellPlugins).asPath
+        systemProperty 'metadata.unified.classpath', files(project(':jafar-shell').tasks.jar.archiveFile, sourceSets.jdkMetadataTest.runtimeClasspath).asPath
+    }
+}
+tasks.named('check') { dependsOn 'jdkMetadataTest' }
+
 processResources {
     from(rootProject.file('jfr-shell-plugins.json'))
 }

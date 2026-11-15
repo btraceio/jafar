@@ -324,6 +324,12 @@ needs and gets their fields — with the types those fields lead to, so a path c
 That makes `sampledThread/javaName` something the model reads rather than invents. It costs one
 extra round trip, and about 1,200 characters instead of 24,000.
 
+This metadata enrichment is shared by `jfr-shell` and the unified `jafar-shell`. With the JDK
+recording backend, it includes events declared in later chunks and nested types exposed by the
+public JDK API. The TUI metadata browser uses the same backend inventory. JDK symbol-backed fields
+use the API's `java.lang.String` name; raw symbol tables remain unavailable. Chunk-local type
+recovery is subject to the [JDK backend limits](Backends.md#backend-capabilities).
+
 **Types with no events are separated out.** JFR metadata declares every type the JVM registered,
 whether or not it emitted anything — so a recording made with an agent that ships its own sampler
 lists an empty `jdk.ExecutionSample` next to a vendor type holding thousands of events, and a model

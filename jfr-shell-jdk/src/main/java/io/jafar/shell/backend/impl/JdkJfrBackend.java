@@ -10,6 +10,7 @@ import io.jafar.shell.backend.MetadataSource;
 import io.jafar.shell.backend.UnsupportedCapabilityException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -19,6 +20,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import jdk.jfr.AnnotationElement;
 import jdk.jfr.EventType;
 import jdk.jfr.ValueDescriptor;
 import jdk.jfr.consumer.RecordedEvent;
@@ -34,7 +37,7 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li>EVENT_STREAMING - Full support via RecordingFile
- *   <li>METADATA_CLASSES - Event types only (no internal types like jdk.types.Symbol)
+ *   <li>METADATA_CLASSES - Event types and recursively reachable field types
  *   <li>STREAMING_PARSE - Streaming event iteration
  *   <li>UNTYPED_HANDLERS - Events converted to Map format
  * </ul>
@@ -158,9 +161,10 @@ public final class JdkJfrBackend implements JfrBackend {
    *
    * <p>Detection and recovery happen only when metadata is actually requested through this class,
    * and only for types that have at least one event in the file — chunk-local types with zero
-   * events and non-event chunk-local types are unrecoverable. {@link #loadClass(Path, String)}
-   * returns the descriptor from the first chunk (file order) defining the name. The recovery scan
-   * is capped at {@link #MAX_RECOVERY_SCAN_EVENTS} events.
+   * events and types unreachable from recovered event field descriptors are unrecoverable. {@link
+   * #loadClass(Path, String)} prefers the merged descriptor, falling back to the first recovered
+   * descriptor in file order. Listings contain one representative per name, including reachable
+   * nested types. The recovery scan is capped at {@link #MAX_RECOVERY_SCAN_EVENTS} events.
    */
   static final class JdkMetadataSource implements MetadataSource {
     private static final Logger log = LoggerFactory.getLogger(JdkMetadataSource.class);
@@ -175,13 +179,15 @@ public final class JdkJfrBackend implements JfrBackend {
 
     @Override
     public Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
+      Map<String, Map<String, Object>> byName = new LinkedHashMap<>();
+      Set<String> seen = new HashSet<>();
       try (RecordingFile rf = new RecordingFile(recording)) {
         for (EventType eventType : rf.readEventTypes()) {
-          if (eventType.getName().equals(typeName)) {
-            return convertEventType(eventType);
-          }
+          seen.add(typeKey(eventType));
+          indexEventType(eventType, byName);
         }
       }
+      if (byName.containsKey(typeName)) return byName.get(typeName);
       // The merged view drops chunk-local types on id collision; recover from events,
       // whose types resolve against their own chunk's metadata.
       try (RecordingFile rf = new RecordingFile(recording)) {
@@ -201,9 +207,10 @@ public final class JdkJfrBackend implements JfrBackend {
             return null;
           }
           EventType eventType = event.getEventType();
-          if (eventType.getName().equals(typeName)) {
+          if (seen.add(typeKey(eventType))) indexEventType(eventType, byName);
+          if (byName.containsKey(typeName)) {
             warnChunkLocalTypes(recording);
-            return convertEventType(eventType);
+            return byName.get(typeName);
           }
         }
       }
@@ -231,14 +238,14 @@ public final class JdkJfrBackend implements JfrBackend {
 
     @Override
     public List<Map<String, Object>> loadAllClasses(Path recording) throws Exception {
-      List<Map<String, Object>> result = new ArrayList<>();
+      Map<String, Map<String, Object>> byName = new LinkedHashMap<>();
       Set<String> seen = new HashSet<>();
       Map<Long, String> mergedIdToName = new HashMap<>();
       try (RecordingFile rf = new RecordingFile(recording)) {
         for (EventType eventType : rf.readEventTypes()) {
           seen.add(typeKey(eventType));
           mergedIdToName.put(eventType.getId(), eventType.getName());
-          result.add(convertEventType(eventType));
+          indexEventType(eventType, byName);
         }
       }
       // Recover chunk-local types that the merged view dropped. Types with zero events in the
@@ -262,7 +269,7 @@ public final class JdkJfrBackend implements JfrBackend {
             break;
           }
           if (seen.add(typeKey(eventType))) {
-            result.add(convertEventType(eventType));
+            indexEventType(eventType, byName);
           }
         }
       }
@@ -276,7 +283,31 @@ public final class JdkJfrBackend implements JfrBackend {
             recording,
             MAX_RECOVERY_SCAN_EVENTS);
       }
-      return result;
+      return new ArrayList<>(byName.values());
+    }
+
+    private static void indexEventType(EventType type, Map<String, Map<String, Object>> byName) {
+      byName.putIfAbsent(type.getName(), convertEventType(type));
+      collectFieldTypes(type.getFields(), byName);
+    }
+
+    private static void collectFieldTypes(
+        List<ValueDescriptor> fields, Map<String, Map<String, Object>> byName) {
+      for (ValueDescriptor field : fields) {
+        String name = field.getTypeName();
+        if (byName.containsKey(name)) continue;
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("id", field.getTypeId());
+        meta.put("name", name);
+        meta.put("superType", null);
+        meta.put(
+            "primitive",
+            Set.of("boolean", "byte", "char", "short", "int", "long", "float", "double")
+                .contains(name));
+        addFields(meta, field.getFields());
+        byName.put(name, meta);
+        collectFieldTypes(field.getFields(), byName);
+      }
     }
 
     private static String typeKey(EventType type) {
@@ -317,8 +348,9 @@ public final class JdkJfrBackend implements JfrBackend {
       for (var ann : eventType.getAnnotationElements()) {
         String typeName = ann.getTypeName();
         String simple = typeName.substring(typeName.lastIndexOf('.') + 1);
-        classAnn.add("@" + simple);
-        classAnnFull.add(typeName);
+        String value = annotationSuffix(ann);
+        classAnn.add("@" + simple + value);
+        classAnnFull.add(typeName + value);
       }
       meta.put("classAnnotations", classAnn);
       meta.put("classAnnotationsFull", classAnnFull);
@@ -341,16 +373,20 @@ public final class JdkJfrBackend implements JfrBackend {
       meta.put("settingsByName", settingsByName);
       meta.put("settings", settingsDisplay);
 
-      // Fields
+      addFields(meta, eventType.getFields());
+      return meta;
+    }
+
+    private static void addFields(Map<String, Object> meta, List<ValueDescriptor> fields) {
       Map<String, Map<String, Object>> fieldsByName = new LinkedHashMap<>();
       List<String> fieldsDisplay = new ArrayList<>();
-      for (ValueDescriptor field : eventType.getFields()) {
+      for (ValueDescriptor field : fields) {
         Map<String, Object> fm = new HashMap<>();
         String fName = field.getName();
         String fType = field.getTypeName();
         fm.put("name", fName);
         fm.put("type", fType);
-        fm.put("dimension", 0); // JDK API doesn't expose array dimension directly
+        fm.put("dimension", field.isArray() ? 1 : 0);
         fm.put("hasConstantPool", false); // Not available via JDK API
         fm.put("label", field.getLabel());
         fm.put("description", field.getDescription());
@@ -361,8 +397,9 @@ public final class JdkJfrBackend implements JfrBackend {
         for (var a : field.getAnnotationElements()) {
           String typeName = a.getTypeName();
           String simple = typeName.substring(typeName.lastIndexOf('.') + 1);
-          ann.add("@" + simple);
-          annFull.add(typeName);
+          String value = annotationSuffix(a);
+          ann.add("@" + simple + value);
+          annFull.add(typeName + value);
         }
         fm.put("annotations", ann);
         fm.put("annotationsFull", annFull);
@@ -374,8 +411,19 @@ public final class JdkJfrBackend implements JfrBackend {
       meta.put("fieldsByName", fieldsByName);
       meta.put("fields", fieldsDisplay);
       meta.put("fieldCount", fieldsDisplay.size());
+    }
 
-      return meta;
+    private static String annotationSuffix(AnnotationElement annotation) {
+      if (annotation.getValues().isEmpty()) return "";
+      return "("
+          + annotation.getValues().stream()
+              .map(
+                  value ->
+                      value instanceof Object[] array
+                          ? Arrays.deepToString(array)
+                          : String.valueOf(value))
+              .collect(Collectors.joining(", "))
+          + ")";
     }
   }
 }

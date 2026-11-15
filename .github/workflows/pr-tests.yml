@@ -479,17 +479,15 @@ jobs:
           mkdir -p artifacts/xml artifacts/html
           shopt -s globstar nullglob
           copied=0
-          # allocationTest* covers allocationTest and allocationTest8 (the dedicated
-          # allocation tasks report under their own test-results dirs), so the
-          # named failing set and the combined report see those cells too.
-          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml **/build/test-results/endToEndTest/*.xml **/build/test-results/allocationTest*/*.xml; do
+          # Include every Test task: metadata, end-to-end and allocation suites too.
+          for f in **/build/test-results/*/*.xml; do
             cp "$f" artifacts/xml/
             copied=1
           done
           if [ "$copied" -eq 0 ]; then
             echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > artifacts/xml/placeholder.xml
           fi
-          for d in **/build/reports/tests/test **/build/reports/tests/test8 **/build/reports/tests/endToEndTest; do
+          for d in **/build/reports/tests/*; do
             if [ -d "$d" ]; then
               dest="artifacts/html/$(basename "$d")"
               mkdir -p "$dest"

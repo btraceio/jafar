@@ -26,6 +26,10 @@ See [Verification.md](Verification.md) for how to know a change actually works.
   - CI does not run this script: it tests against the generated recordings. The repository variable
     `JAFAR_TEST_DD_URL` that CI used to pass to it (#140) is no longer read by any workflow.
 
+Check free space before fetching recordings: observed downloads include a 170 MiB `test-ap.jfr`
+and a roughly 1.7 GB `test-jfr.jfr`, before copies into parser test resources. The downloader
+writes to a temporary file and removes failed downloads; normal tests use generated fixtures.
+
 ## Essential Commands
 ```bash
 # Build all modules (generates the test recordings first)

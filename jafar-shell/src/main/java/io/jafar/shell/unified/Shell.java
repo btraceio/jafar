@@ -1414,6 +1414,17 @@ public final class Shell implements AutoCloseable {
                 }
 
                 @Override
+                public List<io.jafar.shell.core.llm.PromptBuilder.TypeEntry> documentedTypes() {
+                  return ((CommandDispatcher) moduleContext).describedTypes();
+                }
+
+                @Override
+                public List<io.jafar.shell.core.llm.PromptBuilder.TypeEntry> fieldsOf(
+                    List<String> typeNames) {
+                  return ((CommandDispatcher) moduleContext).describeFields(typeNames);
+                }
+
+                @Override
                 @SuppressWarnings("unchecked")
                 public List<Map<String, Object>> runQuery(String query) throws Exception {
                   Optional<SessionManager.SessionRef<Session>> current = sessions.getCurrent();

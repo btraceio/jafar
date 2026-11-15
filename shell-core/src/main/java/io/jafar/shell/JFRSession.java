@@ -10,6 +10,7 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -77,8 +78,8 @@ public final class JFRSession implements Session {
   /**
    * Types discovered in the recording, merged from every chunk in recording order. Sets keep the
    * order in which types were first seen. For a name defined by several chunks, {@code
-   * metadataTypeIds} holds the id from the last chunk (type ids are chunk-local), which is what a
-   * sequential parse overwriting one map would return.
+   * metadataTypeIds} holds the id from the last chunk on the Jafar path (type ids are chunk-local).
+   * The JDK path uses its metadata source's representative descriptor for each name.
    */
   private record TypeIndex(
       Set<String> eventTypes,
@@ -103,16 +104,6 @@ public final class JFRSession implements Session {
   }
 
   /**
-   * Scan the recording file to collect metadata and populate available event types. Uses
-   * StreamingChunkParser directly and skips each chunk's events once its metadata is read.
-   *
-   * <p>{@code StreamingChunkParser} parses chunks on a thread pool, so {@code onMetadata} runs
-   * concurrently for different chunks. Each chunk collects into its own {@link ChunkTypes}, and the
-   * chunks are merged in recording order after {@code parse} returns.
-   *
-   * @throws IOException if the recording cannot be parsed
-   */
-  /**
    * The chunk parser of the session's own scans (metadata, chunk ids, constant pool types). It
    * takes its thread count from the session's {@link ParsingContext}, so a session opened with
    * {@code withParallelism(n)} scans on {@code n} threads like its parsers do.
@@ -122,7 +113,42 @@ public final class JFRSession implements Session {
         new UntypedParserContextFactory(), parsingContext.parallelism());
   }
 
+  /**
+   * Scan the recording file to collect metadata and populate available event types. The JDK backend
+   * supplies its descriptor inventory, including recovered chunk-local and nested types. The Jafar
+   * path uses StreamingChunkParser and skips events after reading each chunk's metadata.
+   *
+   * <p>{@code StreamingChunkParser} parses chunks on a thread pool, so {@code onMetadata} runs
+   * concurrently for different chunks. Each chunk collects into its own {@link ChunkTypes}, and the
+   * chunks are merged in recording order after {@code parse} returns.
+   *
+   * @throws IOException if the recording cannot be parsed
+   */
   private void scanMetadata() throws IOException {
+    var backend = BackendRegistry.getInstance().getCurrent();
+    if ("jdk".equals(backend.getId())) {
+      ChunkTypes discovered = new ChunkTypes();
+      try {
+        for (Map<String, Object> type :
+            backend.createMetadataSource().loadAllClasses(recordingPath)) {
+          String name = (String) type.get("name");
+          discovered.allMetadataTypes.add(name);
+          discovered.metadataTypeIds.put(name, ((Number) type.get("id")).longValue());
+          if (Boolean.TRUE.equals(type.get("primitive"))) {
+            discovered.primitiveMetadataTypes.add(name);
+          } else {
+            discovered.nonPrimitiveMetadataTypes.add(name);
+            discovered.metadataTypes.add(name);
+          }
+          if ("jdk.jfr.Event".equals(type.get("superType"))) discovered.eventTypes.add(name);
+        }
+      } catch (Exception e) {
+        throw new IOException("Failed to scan metadata with backend jdk: " + recordingPath, e);
+      }
+      // Publish only after a successful scan, just like the chunk-local Jafar collector below.
+      publishTypes(discovered);
+      return;
+    }
     ConcurrentSkipListMap<Integer, ChunkTypes> byChunk = new ConcurrentSkipListMap<>();
     try (StreamingChunkParser parser = newScanParser()) {
       parser.parse(
@@ -170,6 +196,10 @@ public final class JFRSession implements Session {
       merged.primitiveMetadataTypes.addAll(chunk.primitiveMetadataTypes);
       merged.metadataTypeIds.putAll(chunk.metadataTypeIds);
     }
+    publishTypes(merged);
+  }
+
+  private void publishTypes(ChunkTypes merged) {
     ConcurrentHashMap<String, Long> counts = new ConcurrentHashMap<>();
     for (String t : merged.eventTypes) counts.put(t, 0L);
     types =
@@ -304,7 +334,8 @@ public final class JFRSession implements Session {
 
   /**
    * Get map of metadata type names to their type IDs. Type ids are chunk-local; for a name defined
-   * by several chunks this is the id from the last chunk in recording order.
+   * by several chunks, the Jafar path uses the last chunk in recording order; the JDK path uses its
+   * metadata source's representative descriptor.
    */
   public Map<String, Long> getMetadataTypeIds() {
     return types.metadataTypeIds();
