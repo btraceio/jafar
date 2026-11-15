@@ -26,10 +26,6 @@ final class Decorators {
     this.eval = eval;
   }
 
-  private boolean matchesAll(Map<String, Object> map, List<Predicate> predicates) {
-    return MatchEngine.matchesAll(map, predicates, eval.defaultListMatchMode);
-  }
-
   List<Map<String, Object>> evaluateDecorateByTime(
       JFRSession session, Query query, JfrPath.DecorateByTimeOp op) throws Exception {
     if (query.root != Root.EVENTS) {
@@ -47,19 +43,18 @@ final class Decorators {
 
     // PASS 2: Stream primary events and decorate
     List<Map<String, Object>> result = new ArrayList<>();
-    eval.source.streamEvents(
+    eval.forEachMatching(
         session.getRecordingPath(),
-        ev -> {
-          if (!primaryType.equals(ev.typeName())) return;
-          if (!matchesAll(ev.value(), query.predicates)) return;
-
+        List.of(primaryType),
+        query.predicates,
+        event -> {
           // Find matching decorators for this event
           List<Map<String, Object>> matchingDecorators =
-              findTimeRangeMatches(ev.value(), decorators, op.threadPathPrimary);
+              findTimeRangeMatches(event, decorators, op.threadPathPrimary);
 
           // Wrap event with decorators
           Map<String, Object> decorated =
-              new DecoratedEventMap(ev.value(), matchingDecorators, op.decoratorFields);
+              new DecoratedEventMap(event, matchingDecorators, op.decoratorFields);
 
           synchronized (result) {
             result.add(decorated);
@@ -73,13 +68,11 @@ final class Decorators {
       throws Exception {
     List<DecoratorTimeRange> decorators = new ArrayList<>();
 
-    eval.source.streamEvents(
+    eval.forEachMatching(
         recording,
-        ev -> {
-          if (!op.decoratorEventType.equals(ev.typeName())) return;
-
-          Map<String, Object> event = ev.value();
-
+        List.of(op.decoratorEventType),
+        List.of(),
+        event -> {
           // Extract thread ID
           Object threadId = Values.get(event, op.threadPathDecorator.toArray());
           if (threadId == null) return;
@@ -157,20 +150,19 @@ final class Decorators {
 
     // PASS 2: Stream primary events and decorate
     List<Map<String, Object>> result = new ArrayList<>();
-    eval.source.streamEvents(
+    eval.forEachMatching(
         session.getRecordingPath(),
-        ev -> {
-          if (!primaryType.equals(ev.typeName())) return;
-          if (!matchesAll(ev.value(), query.predicates)) return;
-
+        List.of(primaryType),
+        query.predicates,
+        event -> {
           // Compute correlation key for primary event
-          Object primaryKey = evaluateKeyExpr(ev.value(), op.primaryKey);
+          Object primaryKey = evaluateKeyExpr(event, op.primaryKey);
           List<Map<String, Object>> matchingDecorators =
               primaryKey == null ? List.of() : decoratorIndex.getOrDefault(primaryKey, List.of());
 
           // Wrap event with decorators
           Map<String, Object> decorated =
-              new DecoratedEventMap(ev.value(), matchingDecorators, op.decoratorFields);
+              new DecoratedEventMap(event, matchingDecorators, op.decoratorFields);
 
           synchronized (result) {
             result.add(decorated);
@@ -184,13 +176,11 @@ final class Decorators {
       Path recording, JfrPath.DecorateByKeyOp op) throws Exception {
     Map<Object, List<Map<String, Object>>> index = new HashMap<>();
 
-    eval.source.streamEvents(
+    eval.forEachMatching(
         recording,
-        ev -> {
-          if (!op.decoratorEventType.equals(ev.typeName())) return;
-
-          Map<String, Object> event = ev.value();
-
+        List.of(op.decoratorEventType),
+        List.of(),
+        event -> {
           // Compute correlation key
           Object key = evaluateKeyExpr(event, op.decoratorKey);
           if (key == null) return;

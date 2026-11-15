@@ -571,14 +571,32 @@ workflow is exercised before it reaches the default branch:
 `workflow_dispatch` only works for workflows already on the default branch —
 the same pattern as `go-parser-bench.yml`'s `bench/**`.
 
-**What runs.** The repository's two JMH task sets, with their JSON output
-pinned by `-rff`:
+**What runs.** Two whole JMH task sets and one benchmark class of a third, with
+their JSON output pinned by `-rff`:
 
 ```bash
 mkdir -p build/jmh
 ./gradlew --no-daemon :parser-core:jmh -PjmhArgs="-rf json -rff build/jmh/parser-core.json <JMH_ARGS>"
 ./gradlew --no-daemon :pprof-parser:jmh -PjmhArgs="-rf json -rff build/jmh/pprof-parser.json <JMH_ARGS>"
+./gradlew --no-daemon :parser-codegen:jmh -PjmhArgs="-rf json -rff build/jmh/parser-codegen-pushdown.json <JMH_ARGS> QueryPushdownBenchmark"
 ```
+
+The third line runs `QueryPushdownBenchmark` only (the trailing JMH regex):
+what a one-type or time-bounded query costs with and without the parser's type
+filter and chunk skipping, on a 32-chunk recording it generates per trial. The
+rest of `:parser-codegen:jmh` has never run here and is left out. With the
+default `-wi 2 -i 5 -f 1` this step took 467 s locally on 4 processors and
+produced 16 records.
+
+**A benchmark that throws disappears, quietly.** `QueryPushdownBenchmark`
+checks what it counted against its recording's known shape and throws on a
+mismatch. JMH then leaves that benchmark out of the result JSON and the Gradle
+task still exits 0: with the expected count made wrong on purpose, the log held
+`IllegalStateException: Counted 20 events of bench.Rare, expected 22`, the JSON
+was `[]`, and the exit status was 0. Beside the other modules' result files the
+trend script would have printed a shorter table and exited 0. So the trend step
+passes `--require QueryPushdownBenchmark.<method>` for each of its six methods,
+and `jmh_trend.py` exits 2 when one has no record.
 
 The tasks are JavaExec with the repo root as their working directory, so the
 benchmark `@Param` fixture paths resolve and the results land in
@@ -609,7 +627,9 @@ expired previous artifact is not an error — the report says "no baseline".
 inert. Exit 2 is reserved for unusable result data (unparseable JSON, a
 record lacking `benchmark` or `primaryMetric`, a non-numeric score, a
 current run with no result JSON at all): that is a pipeline bug, not a
-performance statement, and only that fails the workflow.
+performance statement, and only that fails the workflow. A benchmark named
+with `--require` that has no record in the current run is the same kind of
+bug and the same exit 2.
 `scripts/tests/test_jmh_trend.sh` (part of `run_all.sh`) proves each rule on
 the real JMH payload shape — the numbers nest under `primaryMetric`, and
 `scoreError` can arrive as the string `"NaN"`.

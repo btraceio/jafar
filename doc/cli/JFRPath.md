@@ -266,6 +266,14 @@ events/jdk.ExecutionSample[on(startTime, "2024-08-13")]
 events/jdk.JavaMonitorEnter[on(startTime, "2024-08-13") and duration>1000000]
 ```
 
+**Which time filters make a query faster.** A filter that puts a lower bound on `startTime`
+(`after`, `between`, `on`, `startTime>=...`, `startTime>...`) lets the parser skip every chunk that
+ended before it, without reading that chunk's constant pools or events. An upper bound alone
+(`before`, `startTime<=...`) skips nothing: an event is written when it ends, so a later chunk can
+hold events that started earlier. The result is the same either way. Only filters on `startTime`
+itself, inside the brackets and combined with `and`, are used; a filter inside `filter(...)` or
+under `or`/`not` with another field is not.
+
 ### List/Array Matching
 
 For list and array fields, control how filters apply to elements:
@@ -1171,8 +1179,12 @@ events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorC
 1. **Streaming First**: All operations use streaming parser when possible
 2. **Lazy Evaluation**: Events processed incrementally, not loaded into memory
 3. **Early Abort**: `--limit` stops parsing once enough matches collected
-4. **Minimal Syntax**: Path-based navigation, filters inline with brackets
-5. **Composability**: Filters, projection, and pipelines compose naturally
+4. **Type Pushdown**: only the event types a query names are decoded; every other event is skipped
+   at the cost of reading its header
+5. **Chunk Skipping**: a lower bound on `startTime` in a query's brackets skips the chunks that end
+   before it
+6. **Minimal Syntax**: Path-based navigation, filters inline with brackets
+7. **Composability**: Filters, projection, and pipelines compose naturally
 
 ## Examples by Root
 

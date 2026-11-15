@@ -110,6 +110,14 @@ public abstract class EventStream implements ChunkParserListener {
     }
 
     MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
+    // Decided before decoding: an event no handler wants costs its header and nothing else. An id
+    // the metadata does not declare is not skipped, so it is still reported as undecodable.
+    Object selection = eventClz == null ? Boolean.TRUE : select(context, typeId, eventClz);
+    if (selection == null) {
+      // The listener still sees the event; StreamingChunkParser repositions past its payload.
+      return delegate == null
+          || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
+    }
     Map<String, Object> value;
     try {
       builder.reset();
@@ -137,7 +145,7 @@ public abstract class EventStream implements ChunkParserListener {
               || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
     }
     // Outside the try: an exception from the handler is the handler's, not a decoding failure.
-    onEventValue(eventClz, value, ctl);
+    onEventValue(eventClz, value, ctl, selection);
     return !ctl.isAborted()
         && (delegate == null
             || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
@@ -202,4 +210,34 @@ public abstract class EventStream implements ChunkParserListener {
    * @param ctl parser {@linkplain Control} object
    */
   protected abstract void onEventValue(MetadataClass type, Map<String, Object> value, Control ctl);
+
+  /**
+   * Decides, before an event is decoded, whether anything wants it.
+   *
+   * <p>Called on the chunk's thread for every event whose type the chunk's metadata declares. The
+   * default wants every event.
+   *
+   * @param context the chunk's context
+   * @param typeId the event's type id, local to the chunk
+   * @param type the event's type
+   * @return {@code null} to skip the event without decoding it; anything else to decode it, and
+   *     that object is handed back to {@link #onEventValue(MetadataClass, Map, Control, Object)}
+   */
+  protected Object select(ParserContext context, long typeId, MetadataClass type) {
+    return Boolean.TRUE;
+  }
+
+  /**
+   * Called for each decoded event with what {@link #select} returned for it. The default ignores
+   * the selection and calls {@link #onEventValue(MetadataClass, Map, Control)}.
+   *
+   * @param type the metadata class type of the event
+   * @param value the decoded event
+   * @param ctl the control object for this parsing session
+   * @param selection the non-null object {@link #select} returned for this event
+   */
+  protected void onEventValue(
+      MetadataClass type, Map<String, Object> value, Control ctl, Object selection) {
+    onEventValue(type, value, ctl);
+  }
 }

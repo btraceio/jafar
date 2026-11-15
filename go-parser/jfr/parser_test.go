@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -343,6 +344,40 @@ func TestChunkInfoTickConversion(t *testing.T) {
 	}
 	if got := info.StartTime().UnixNano(); got != testStartNanos {
 		t.Errorf("StartTime = %d, want %d", got, testStartNanos)
+	}
+}
+
+// The header's duration is in nanoseconds whatever the tick frequency. It used
+// to be converted as a tick count, which is the same number only at 1e9 ticks
+// per second: on a JDK 21 recording with a frequency of 2.1e9, a chunk that
+// lasted 119.3 ms (the distance to the next chunk's start, exactly) was
+// reported as 56.8 ms.
+func TestChunkDurationIsNanosecondsWhateverTheFrequency(t *testing.T) {
+	const durationNanos = 119_294_428
+	for _, frequency := range []int64{2_100_000_000, 1_000_000, 1_000_000_000} {
+		data := chunkSpec{
+			metadata:   testMetadata(),
+			startNanos: testStartNanos,
+			startTicks: testStartTicks,
+			frequency:  frequency,
+			duration:   durationNanos,
+		}.build()
+		var info *ChunkInfo
+		if err := NewParser(data).ParseWith(Options{
+			OnChunkStart: func(ci *ChunkInfo, _ *Metadata) error {
+				info = ci
+				return nil
+			},
+			OnError: FailOnError,
+		}, nil); err != nil {
+			t.Fatalf("frequency %d: parse: %v", frequency, err)
+		}
+		if info == nil {
+			t.Fatalf("frequency %d: OnChunkStart was not called", frequency)
+		}
+		if got := info.Duration(); got != time.Duration(durationNanos) {
+			t.Errorf("frequency %d: Duration() = %d ns, want %d ns", frequency, got.Nanoseconds(), durationNanos)
+		}
 	}
 }
 

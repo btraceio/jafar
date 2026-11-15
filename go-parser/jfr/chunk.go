@@ -33,7 +33,8 @@ type ChunkHeader struct {
 	MetadataOffset int64
 	// StartNanos is the chunk start time in nanoseconds since the epoch.
 	StartNanos int64
-	// Duration is the chunk duration in ticks.
+	// Duration is the chunk duration in nanoseconds, whatever the tick
+	// frequency: only event fields are in ticks.
 	Duration int64
 	// StartTicks is the chunk start time expressed in ticks.
 	StartTicks int64
@@ -117,9 +118,10 @@ func (c *ChunkInfo) StartTime() time.Time {
 	return time.Unix(0, c.startNanos)
 }
 
-// Duration returns the chunk duration.
+// Duration returns the chunk duration. The header stores it in nanoseconds,
+// so it is not converted with the tick frequency.
 func (c *ChunkInfo) Duration() time.Duration {
-	return time.Duration(c.AsDurationNanos(c.Header.Duration))
+	return time.Duration(c.Header.Duration)
 }
 
 // Size returns the chunk size in bytes.

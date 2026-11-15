@@ -1,7 +1,8 @@
 name: Nightly JMH Benchmarks
 
 # The JMH trend run (spec AC-7.2): the existing :parser-core:jmh and
-# :pprof-parser:jmh tasks, run overnight and on demand, with their JSON results
+# :pprof-parser:jmh tasks and QueryPushdownBenchmark from :parser-codegen:jmh,
+# run overnight and on demand, with their JSON results
 # uploaded as the `jmh-results` artifact and compared against the previous
 # successful run's artifact by scripts/jmh_trend.py. The comparison is advisory
 # only — a wall-clock gate would be flaky or inert (kb/dead-ends) — so a
@@ -91,6 +92,19 @@ jobs:
           ./gradlew --no-daemon :pprof-parser:jmh \
             -PjmhArgs="-rf json -rff build/jmh/pprof-parser.json $JMH_ARGS"
 
+      # One benchmark class of parser-codegen, selected by the trailing JMH regex:
+      # the module's other benchmarks have never run in this workflow. It
+      # generates its own 32-chunk recording per trial (nothing to download) and
+      # checks what it counted against that recording's known shape, throwing on
+      # a mismatch. A benchmark that throws is left out of the result JSON while
+      # this step still exits 0, so the trend step below names the methods it
+      # requires (--require).
+      - name: Run QueryPushdownBenchmark (parser-codegen JMH)
+        run: |
+          mkdir -p build/jmh
+          ./gradlew --no-daemon :parser-codegen:jmh \
+            -PjmhArgs="-rf json -rff build/jmh/parser-codegen-pushdown.json $JMH_ARGS QueryPushdownBenchmark"
+
       # The previous successful run of this workflow is the baseline. GH_TOKEN
       # is the runner's token; gh is the runner's own binary (the local shim
       # rule in AGENTS.md is about developer machines, not runners). No
@@ -128,11 +142,16 @@ jobs:
         run: |
           set -euo pipefail
           args=(--current build/jmh)
+          for method in decodeAllFilterInHandler typeFilterInParser ceilingSkipEveryEvent \
+              ceilingSkipEveryChunk startTimeRangeSecondHalf startTimeRangeNothing; do
+            args+=(--require "QueryPushdownBenchmark.$method")
+          done
           if [ "${{ steps.previous.outputs.have_previous }}" = "true" ]; then
             args+=(--previous build/jmh-previous)
           fi
           # The script exits 0 for any timing change (advisory) and 2 only for
-          # malformed result data, which is a pipeline bug worth failing on.
+          # malformed result data or a required benchmark with no result, which
+          # is a pipeline bug worth failing on.
           python3 scripts/jmh_trend.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload JMH results

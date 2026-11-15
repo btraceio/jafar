@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`UntypedJafarParser.handle(TypeFilter, EventHandler)`** - registers a handler for the event
+  types a filter accepts. An event is decoded only if some registered handler wants its type, so
+  the others cost their header and nothing more. The filter is asked once per chunk and type. An
+  undecodable event of a type nobody wants is no longer reported, because it is never decoded. The
+  Go parser's `Options.TypeFilter` has done the same since it was written
+- **`TypeFilter.named(...)`** - a filter accepting event types by exact name, for the common case
+- **`UntypedJafarParser.handle(TypeFilter, TimeRange, EventHandler)` and `TimeRange`** - a handler
+  can say which start times it wants, and the parser skips every chunk that ends before the range
+  begins: such a chunk costs its header and metadata, and its constant pools and events are not
+  read. The range is a hint, so the handler still checks `startTime`. Only the range's lower bound
+  skips anything: an event is written when it is committed and can start long before its chunk
+  (36 minutes, for `datadog.HeapLiveObject` in a Datadog recording), so a chunk that starts after
+  the range is always read
+- **Go parser: `Options.StartTime` and `Options.OnChunkSkipped`** - the same chunk skipping, with
+  the same rule
+- **JfrPath skips chunks by a query's start-time filter.** `after(startTime, ...)`,
+  `between(startTime, ...)`, `on(startTime, ...)` and `startTime>=...` in a query's brackets
+  become a range for the parser, including the time windows of `jfr_use` and `jfr_tsa`. Results
+  are unchanged; `before(...)` and `startTime<=...` alone skip nothing
+- **JfrPath decodes only the event types a query names.** `events/T | ...` used to decode every
+  event of every type and compare the type name afterwards; it now registers a type filter with
+  the parser. Results are unchanged
 - **`ParsingContext.withParallelism(int)`** - a context sharing the original's caches whose parsers
   read chunks on the given number of threads. `withParallelism(1)` delivers events one at a time, in
   file order, so handlers need no synchronization. The default stays
@@ -48,6 +70,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A chunk's duration was converted as ticks; it is nanoseconds.** `Control.ChunkInfo.duration()`
+  and the Go parser's `ChunkInfo.Duration()` multiplied the header's duration by the tick length.
+  That is the same number only at 1e9 ticks per second: on a JDK 21 recording with a tick
+  frequency of 2.1e9, a chunk that lasted 119.3 ms was reported as 56.8 ms. Both now return the
+  header value. `jfr2pprof` sums these durations for the profile's duration, which was short by
+  the same factor on such recordings
+- **The time window of `jfr_use` and `jfr_tsa` selected nothing.** `startTime` and `endTime` are
+  nanoseconds from the recording's start, and were compared with event start times, which are
+  nanoseconds since the epoch, without converting: a `startTime` excluded nothing and an `endTime`
+  excluded every event. They are now added to the recording's start. An epoch-nanosecond value,
+  as in an event's `startTime`, is accepted too, and the result's `timeWindow` reports
+  `recordingStartEpochNanos`, `startTimeEpochNanos` and `endTimeEpochNanos`, so the reading is
+  visible
+- **JfrPath results were short and differed from run to run on multi-chunk recordings.** Chunks are
+  parsed in parallel and every query's consumer updated plain shared state from the chunk threads:
+  `events/T | count()` returned 316,700 to 317,233 for 320,000 events of a 32-chunk recording, and
+  `sum`, `stats`, `groupBy`, plain row listings, projections, decorations and flame graphs shared
+  the defect. The consumers now guard their state (#204)
 - **A corrupted or truncated JFR recording is rejected with an `IOException` that says what is
   wrong with it.** The Java parser followed sizes, counts and offsets from the file without
   checking them, so a damaged recording failed with whatever the JDK threw on the way

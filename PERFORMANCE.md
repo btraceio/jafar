@@ -193,9 +193,19 @@ parser.handle(MyEvent.class, (event, ctl) -> {
   }
 });
 
-// Even better: Use type filtering if possible
-// (Future feature)
 ```
+
+The untyped parser can skip unwanted event types before decoding them:
+
+```java
+parser.handle(
+    TypeFilter.named("jdk.ExecutionSample"),
+    (type, event, ctl) -> process(event));
+```
+
+A handler registered without a filter makes the parser decode every event. See
+`QueryPushdownBenchmark` in `parser-codegen` for what the filter is worth on a multi-chunk
+recording.
 
 ### 5. Adjust Heap Size
 For large files (>1 GB):
