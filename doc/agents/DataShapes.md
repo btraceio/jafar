@@ -308,6 +308,21 @@ that every chunk has a filter answering from its own metadata.
 Two things to take from it. A lambda that reads a field is not a snapshot: capture a local. And
 when a test fails rarely, load the machine before concluding anything from a run of passes.
 
+The block next to it had the same shape twice over, for build-time handlers. Registered
+`HandlerFactory` instances were attached to metadata classes "once per recording", so only to the
+chunk that read its metadata first; and the handlers `jafar-processor` generates kept the id of
+each referenced type's constant pool in a static field, bound once from that same chunk. On a
+two-chunk recording whose chunks give `test.Label` different ids, the second chunk's three events
+reached the handler as `null` (no runtime handler to stand in: `jafar-processor`'s tests run
+without `parser-codegen`). With the factories attached to every chunk, the chunk that had not
+bound the statics read `label()` as `null` and `labels()` as an empty array. In both cases which
+chunk came out right changed from run to run (the first chunk in 6 of 8 runs, the second in 2),
+so one chunk's events were always correct. Factories are now attached to each chunk's metadata
+classes, and a generated handler takes the pool's type id from its `Plan`, which is built per
+metadata class and so per chunk (`GeneratedFactoryMultiChunkTest`). A handler generated before
+this still reads its static ids, bound once per run: it is right on recordings whose chunks agree
+on those ids, and wrong on the others until it is regenerated.
+
 ---
 
 ## Before you trust a shape

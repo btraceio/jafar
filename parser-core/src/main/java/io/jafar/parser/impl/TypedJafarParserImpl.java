@@ -27,7 +27,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -224,23 +223,23 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
           @Override
           public boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
-            if (!globalHandlerMap.isEmpty()) {
-              TypedParserContext lCtx = (TypedParserContext) context;
-              synchronized (this) {
-                lCtx.setClassTypeMap(
-                    chunkTypeClassMap.computeIfAbsent(chunkIndex, k -> new LongObjectHashMap<>()));
-                lCtx.addTargetTypeMap(globalHandlerMap);
-              }
-              context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
-              ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
-              boolean proceed =
-                  parserListener == null
-                      || parserListener.onChunkStart(context, chunkIndex, header);
-              // A chunk that starts after an abort is skipped; onChunkEnd still runs.
-              return proceed && !aborted.get();
+            // Set the chunk up whether or not handlers are registered: a parser listener alone
+            // also has the chunk parsed, and onEvent reads the class map for every event.
+            TypedParserContext lCtx = (TypedParserContext) context;
+            synchronized (this) {
+              lCtx.setClassTypeMap(
+                  chunkTypeClassMap.computeIfAbsent(chunkIndex, k -> new LongObjectHashMap<>()));
+              lCtx.addTargetTypeMap(globalHandlerMap);
             }
-            return parserListener != null
-                && parserListener.onChunkStart(context, chunkIndex, header);
+            context.put(Control.ChunkInfo.class, new ChunkInfoImpl(header));
+            ((ControlImpl) control.get()).setStream(context.get(RecordingStream.class));
+            // With no listener, a chunk is worth parsing only if a handler is registered.
+            boolean proceed =
+                parserListener == null
+                    ? !globalHandlerMap.isEmpty()
+                    : parserListener.onChunkStart(context, chunkIndex, header);
+            // A chunk that starts after an abort is skipped; onChunkEnd still runs.
+            return proceed && !aborted.get();
           }
 
           @Override
@@ -264,25 +263,29 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             TypedParserContext lContext = (TypedParserContext) context;
             LongObjectHashMap<Class<?>> typeClassMap = lContext.getClassTypeMap();
 
-            // Bind build-time factories once per recording
-            if (!factoryMap.isEmpty() && !factoriesBound) {
-              synchronized (TypedJafarParserImpl.this) {
-                if (!factoriesBound) {
-                  // First, bind factories for type ID resolution
-                  for (HandlerFactory<?> factory : factoryMap.values()) {
-                    factory.bind(context.getMetadataLookup());
-                  }
-
-                  // Then inject factories into corresponding MetadataClass instances
-                  for (Map.Entry<Class<?>, HandlerFactory<?>> entry : factoryMap.entrySet()) {
-                    String jfrTypeName = entry.getValue().getJfrTypeName();
-                    MetadataClass metadataClass = context.getMetadataLookup().getClass(jfrTypeName);
-                    if (metadataClass != null) {
-                      metadataClass.bindFactory(entry.getValue());
+            if (!factoryMap.isEmpty()) {
+              // Type ids kept in static fields by handlers generated before they read them from
+              // their per-chunk plan: bound once per run, from whichever chunk gets here first.
+              if (!factoriesBound) {
+                synchronized (TypedJafarParserImpl.this) {
+                  if (!factoriesBound) {
+                    for (HandlerFactory<?> factory : factoryMap.values()) {
+                      factory.bind(context.getMetadataLookup());
                     }
+                    factoriesBound = true;
                   }
+                }
+              }
 
-                  factoriesBound = true;
+              // Attach each factory to this chunk's metadata class. Metadata classes are per
+              // chunk: attaching them for one chunk only left every other chunk without a
+              // factory, and its events were then decoded by a runtime handler where there was
+              // one and delivered as null where there was none.
+              for (HandlerFactory<?> factory : factoryMap.values()) {
+                MetadataClass metadataClass =
+                    context.getMetadataLookup().getClass(factory.getJfrTypeName());
+                if (metadataClass != null) {
+                  metadataClass.bindFactory(factory);
                 }
               }
             }

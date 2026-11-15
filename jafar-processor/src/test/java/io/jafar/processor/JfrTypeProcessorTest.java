@@ -99,11 +99,11 @@ class JfrTypeProcessorTest {
 
     assertThat(compilation).succeeded();
 
-    // Verify handler has constant pool type ID field
+    // Verify the read plan holds the pool's type id, per metadata class
     assertThat(compilation)
         .generatedSourceFile("test.JFRExecutionSampleHandler")
         .contentsAsUtf8String()
-        .contains("STACKTRACE_TYPE_ID");
+        .contains("final long stackTrace_cpType;");
   }
 
   @Test
@@ -515,15 +515,15 @@ class JfrTypeProcessorTest {
 
     assertThat(compilation).succeeded();
 
-    // Verify handler has multiple type ID fields
+    // Verify the read plan holds one pool type id per field
     assertThat(compilation)
         .generatedSourceFile("test.JFRMultiCPEventHandler")
         .contentsAsUtf8String()
-        .contains("THREAD_TYPE_ID");
+        .contains("final long thread_cpType;");
     assertThat(compilation)
         .generatedSourceFile("test.JFRMultiCPEventHandler")
         .contentsAsUtf8String()
-        .contains("STACKTRACE_TYPE_ID");
+        .contains("final long stackTrace_cpType;");
   }
 
   @Test
@@ -758,15 +758,15 @@ class JfrTypeProcessorTest {
     assertThat(compilation)
         .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
         .contentsAsUtf8String()
-        .doesNotContain("BYTEARRAY_TYPE_ID");
+        .doesNotContain("byteArray_cpType");
     assertThat(compilation)
         .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
         .contentsAsUtf8String()
-        .doesNotContain("INTARRAY_TYPE_ID");
+        .doesNotContain("intArray_cpType");
     assertThat(compilation)
         .generatedSourceFile("test.JFRPrimitiveArrayEventHandler")
         .contentsAsUtf8String()
-        .doesNotContain("LONGARRAY_TYPE_ID");
+        .doesNotContain("longArray_cpType");
   }
 
   @Test
@@ -809,7 +809,7 @@ class JfrTypeProcessorTest {
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains("STACKFRAME_TYPE_ID");
+        .contains("final long frames_cpType;");
 
     // Verify handler has CP reference array field for the array
     assertThat(compilation)
@@ -839,22 +839,21 @@ class JfrTypeProcessorTest {
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains("constantPools.getConstantPool(STACKFRAME_TYPE_ID)");
+        .contains("constantPools.getConstantPool(p.frames_cpType)");
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
         .contains("get(this.frames_cpRef[i])");
 
-    // Verify bind method sets up the type ID
+    // Verify the type id comes from the field's own metadata, and no static holds one
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains(
-            "MetadataClass jdk_types_StackFrameClass = metadata.getClass(\"jdk.types.StackFrame\");");
+        .contains("frames_cpType = metaField.getType().getId();");
     assertThat(compilation)
         .generatedSourceFile("test.JFRStackTraceEventHandler")
         .contentsAsUtf8String()
-        .contains("STACKFRAME_TYPE_ID = jdk_types_StackFrameClass.getId()");
+        .doesNotContain("_TYPE_ID");
 
     // Verify array creation and loop in getter
     assertThat(compilation)

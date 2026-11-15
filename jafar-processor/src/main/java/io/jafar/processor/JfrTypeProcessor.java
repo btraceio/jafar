@@ -44,19 +44,9 @@ import javax.tools.JavaFileObject;
 public class JfrTypeProcessor extends AbstractProcessor {
 
   // Inline templates for code generation snippets
-  private static final String STATIC_FIELD_TEMPLATE =
-      "  /** Type ID for %s constant pool. Bound at runtime. */\n"
-          + "  private static volatile long %s = -1L;\n\n";
-
   private static final String INSTANCE_FIELD_CP_TEMPLATE = "  private long %s_cpRef;\n";
   private static final String INSTANCE_FIELD_CP_ARRAY_TEMPLATE = "  private long[] %s_cpRef;\n";
   private static final String INSTANCE_FIELD_TEMPLATE = "  private %s %s;\n";
-
-  private static final String BIND_BODY_TEMPLATE =
-      "    MetadataClass %sClass = metadata.getClass(\"%s\");\n"
-          + "    if (%sClass != null) {\n"
-          + "      %s = %sClass.getId();\n"
-          + "    }\n";
 
   private static final String SWITCH_CASE_CP_TEMPLATE =
       "        case \"%1$s\":\n"
@@ -146,8 +136,9 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   // A complex-typed accessor: a pool reference or an inline value, decided by the metadata.
   private static final String VALIDATE_CASE_COMPLEX_TEMPLATE =
-      "          case \"%s\":\n"
-          + "            %s = planComplex(metadata, metaField, \"%s\", %s, %s);\n"
+      "          case \"%1$s\":\n"
+          + "            %2$s_inline = planComplex(metadata, metaField, \"%3$s\", %4$s, %5$s);\n"
+          + "            %2$s_cpType = metaField.getType().getId();\n"
           + "            break;\n";
 
   // A String accessor: an inline string or a reference to a pooled string or wrapper of one.
@@ -173,33 +164,37 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private static final String RESET_FIELD_PRIMITIVE_TEMPLATE = "    this.%s = %s;\n";
   private static final String RESET_FIELD_OBJECT_TEMPLATE = "    this.%s = null;\n";
 
-  // A chunk need not have a pool of every type; like the runtime-generated handlers
-  // (CodeGenerator), an absent pool yields null, and an empty array for an array field.
+  // The pool is looked up by the id the field's type has in the chunk the value was read from
+  // (Plan): type ids are chunk-local. A chunk need not have a pool of every type; like the
+  // runtime-generated handlers (CodeGenerator), an absent pool yields null, and an empty array
+  // for an array field.
   private static final String GETTER_CP_TEMPLATE =
       "  @Override\n"
           + "  public %1$s %2$s() {\n"
-          + "%7$s"
-          + "    if (%3$s == -1L || constantPools == null) {\n"
+          + "%4$s"
+          + "    Plan p = this.plan;\n"
+          + "    if (p == null || constantPools == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(%5$s);\n"
-          + "    return cp == null ? null : (%4$s) cp.get(%6$s_cpRef);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "    return cp == null ? null : (%1$s) cp.get(%3$s_cpRef);\n"
           + "  }\n\n";
 
   private static final String GETTER_CP_ARRAY_TEMPLATE =
       "  @Override\n"
           + "  public %1$s[] %2$s() {\n"
-          + "%12$s"
-          + "    if (%3$s == -1L || constantPools == null || this.%4$s_cpRef == null) {\n"
+          + "%4$s"
+          + "    Plan p = this.plan;\n"
+          + "    if (p == null || constantPools == null || this.%3$s_cpRef == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(%10$s);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
           + "    if (cp == null) {\n"
-          + "      return new %5$s[0];\n"
+          + "      return new %1$s[0];\n"
           + "    }\n"
-          + "    %5$s[] result = new %6$s[this.%7$s_cpRef.length];\n"
-          + "    for (int i = 0; i < this.%8$s_cpRef.length; i++) {\n"
-          + "      result[i] = (%9$s) cp.get(this.%11$s_cpRef[i]);\n"
+          + "    %1$s[] result = new %1$s[this.%3$s_cpRef.length];\n"
+          + "    for (int i = 0; i < this.%3$s_cpRef.length; i++) {\n"
+          + "      result[i] = (%1$s) cp.get(this.%3$s_cpRef[i]);\n"
           + "    }\n"
           + "    return result;\n"
           + "  }\n\n";
@@ -335,9 +330,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
             .set("INTERFACE_NAME", interfaceName)
             .set("HANDLER_NAME", handlerName)
             .set("JFR_TYPE_NAME", jfrTypeName)
-            .set("STATIC_TYPE_ID_FIELDS", buildStaticTypeIdFields(fields))
             .set("INSTANCE_FIELDS", buildInstanceFields(fields))
-            .set("BIND_BODY", buildBindBody(fields))
             .set("SWITCH_CASES", buildSwitchCases(fields))
             .set("VALIDATE_CASES", buildValidateCases(fields))
             .set("PLAN_FIELDS", buildPlanFields(fields))
@@ -415,12 +408,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   // --- Template application methods (single item) ---
 
-  /** Generates a static type ID field declaration for constant pool resolution. */
-  private String staticFieldDeclaration(String cpType) {
-    String fieldName = cpTypeIdFieldName(cpType);
-    return String.format(STATIC_FIELD_TEMPLATE, cpType, fieldName);
-  }
-
   /** Generates an instance field declaration for constant pool reference. */
   private String instanceFieldCpDeclaration(String fieldName) {
     return String.format(INSTANCE_FIELD_CP_TEMPLATE, fieldName);
@@ -434,13 +421,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
   /** Generates an instance field declaration. */
   private String instanceFieldDeclaration(String javaType, String fieldName) {
     return String.format(INSTANCE_FIELD_TEMPLATE, javaType, fieldName);
-  }
-
-  /** Generates bind method body for a constant pool type. */
-  private String bindStatement(String cpType) {
-    String fieldName = cpTypeIdFieldName(cpType);
-    String varName = sanitizeVarName(cpType);
-    return String.format(BIND_BODY_TEMPLATE, varName, cpType, varName, fieldName, varName);
   }
 
   /** Generates a switch case for a complex field: inline when the plan says so, else pooled. */
@@ -501,19 +481,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   /** Generates getter method for constant pool field. */
   private String getterMethodCp(
-      String returnType,
-      String methodName,
-      String cpTypeName,
-      String fieldName,
-      String inlineHandler) {
-    String cpTypeIdField = cpTypeIdFieldName(cpTypeName);
+      String returnType, String methodName, String fieldName, String inlineHandler) {
     return String.format(
         GETTER_CP_TEMPLATE,
         returnType,
         methodName,
-        cpTypeIdField,
-        returnType,
-        cpTypeIdField,
         fieldName,
         inlineGetterPrefix(fieldName, inlineHandler));
   }
@@ -524,24 +496,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   /** Generates getter method for constant pool array field. */
   private String getterMethodCpArray(
-      String elementType,
-      String methodName,
-      String cpTypeName,
-      String fieldName,
-      String inlineHandler) {
-    String cpTypeIdField = cpTypeIdFieldName(cpTypeName);
+      String elementType, String methodName, String fieldName, String inlineHandler) {
     return String.format(
         GETTER_CP_ARRAY_TEMPLATE,
         elementType,
         methodName,
-        cpTypeIdField,
-        fieldName,
-        elementType,
-        elementType,
-        fieldName,
-        fieldName,
-        elementType,
-        cpTypeIdField,
         fieldName,
         inlineGetterPrefix(fieldName, inlineHandler));
   }
@@ -552,26 +511,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
   }
 
   // --- Build methods (aggregate multiple items) ---
-
-  /** Builds static type ID fields for constant pool resolution. */
-  private String buildStaticTypeIdFields(List<FieldInfo> fields) {
-    Set<String> cpTypes = new HashSet<>();
-    for (FieldInfo field : fields) {
-      if (field.needsConstantPool) {
-        cpTypes.add(field.cpTypeName);
-      }
-    }
-
-    if (cpTypes.isEmpty()) {
-      return "";
-    }
-
-    StringBuilder sb = new StringBuilder();
-    for (String cpType : cpTypes) {
-      sb.append(staticFieldDeclaration(cpType));
-    }
-    return sb.toString();
-  }
 
   /** Builds instance field declarations. */
   private String buildInstanceFields(List<FieldInfo> fields) {
@@ -597,26 +536,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
           sb.append(instanceFieldCpDeclaration(field.fieldName));
         }
       }
-    }
-    return sb.toString();
-  }
-
-  /** Builds the bind method body. */
-  private String buildBindBody(List<FieldInfo> fields) {
-    Set<String> cpTypes = new HashSet<>();
-    for (FieldInfo field : fields) {
-      if (field.needsConstantPool) {
-        cpTypes.add(field.cpTypeName);
-      }
-    }
-
-    if (cpTypes.isEmpty()) {
-      return "";
-    }
-
-    StringBuilder sb = new StringBuilder();
-    for (String cpType : cpTypes) {
-      sb.append(bindStatement(cpType));
     }
     return sb.toString();
   }
@@ -666,7 +585,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
             String.format(
                 VALIDATE_CASE_COMPLEX_TEMPLATE,
                 field.jfrFieldName,
-                field.fieldName + "_inline",
+                field.fieldName,
                 field.cpTypeName,
                 field.isArray,
                 field.inlineHandler == null ? "null" : "\"" + field.inlineHandler + "\""));
@@ -701,7 +620,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
             .append("} is stored inline rather than as a constant pool reference. */\n")
             .append("    final boolean ")
             .append(field.fieldName)
-            .append("_inline;\n");
+            .append("_inline;\n")
+            .append("    /** The id of the type of {@code ")
+            .append(field.jfrFieldName)
+            .append("}, and so of its pool, in this metadata class's chunk; -1 if absent. */\n")
+            .append("    final long ")
+            .append(field.fieldName)
+            .append("_cpType;\n");
       } else if (field.isPooledString()) {
         sb.append("    /** The pool {@code ")
             .append(field.jfrFieldName)
@@ -720,6 +645,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
     for (FieldInfo field : fields) {
       if (field.needsConstantPool) {
         sb.append("      boolean ").append(field.fieldName).append("_inline = false;\n");
+        sb.append("      long ").append(field.fieldName).append("_cpType = -1L;\n");
       } else if (field.isPooledString()) {
         sb.append("      long ").append(field.fieldName).append("_cpType = -1L;\n");
       }
@@ -731,17 +657,18 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private String buildPlanAssign(List<FieldInfo> fields) {
     StringBuilder sb = new StringBuilder();
     for (FieldInfo field : fields) {
-      String name = null;
       if (field.needsConstantPool) {
-        name = field.fieldName + "_inline";
+        appendPlanAssign(sb, field.fieldName + "_inline");
+        appendPlanAssign(sb, field.fieldName + "_cpType");
       } else if (field.isPooledString()) {
-        name = field.fieldName + "_cpType";
-      }
-      if (name != null) {
-        sb.append("      this.").append(name).append(" = ").append(name).append(";\n");
+        appendPlanAssign(sb, field.fieldName + "_cpType");
       }
     }
     return sb.toString();
+  }
+
+  private static void appendPlanAssign(StringBuilder sb, String name) {
+    sb.append("      this.").append(name).append(" = ").append(name).append(";\n");
   }
 
   /**
@@ -816,20 +743,12 @@ public class JfrTypeProcessor extends AbstractProcessor {
           // CP array - resolve long[] to object array
           sb.append(
               getterMethodCpArray(
-                  field.elementType,
-                  field.methodName,
-                  field.cpTypeName,
-                  field.fieldName,
-                  field.inlineHandler));
+                  field.elementType, field.methodName, field.fieldName, field.inlineHandler));
         } else {
           // Single CP reference
           sb.append(
               getterMethodCp(
-                  field.returnType,
-                  field.methodName,
-                  field.cpTypeName,
-                  field.fieldName,
-                  field.inlineHandler));
+                  field.returnType, field.methodName, field.fieldName, field.inlineHandler));
         }
       } else if (field.isPooledString()) {
         sb.append(String.format(GETTER_STRING_TEMPLATE, field.fieldName));
@@ -1002,16 +921,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
     String qualifiedName = typeElement.getQualifiedName().toString();
     int lastDot = qualifiedName.lastIndexOf('.');
     return lastDot > 0 ? qualifiedName.substring(0, lastDot) : "";
-  }
-
-  private String cpTypeIdFieldName(String jfrTypeName) {
-    // Convert jdk.types.StackTrace -> STACKTRACE_TYPE_ID
-    String simpleName = jfrTypeName.substring(jfrTypeName.lastIndexOf('.') + 1);
-    return simpleName.toUpperCase() + "_TYPE_ID";
-  }
-
-  private String sanitizeVarName(String name) {
-    return name.replace('.', '_').replace('$', '_');
   }
 
   private String generateReadCode(FieldInfo field) {

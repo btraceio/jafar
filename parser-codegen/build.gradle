@@ -215,6 +215,8 @@ dependencies {
 
 test {
     jvmArgs '-Xmx8g', '-Xms1g'
+    // 8 GB heap: never at the same time as another such task (gradle/large-heap-tests.gradle)
+    usesService(rootProject.ext.largeHeapTestSlot)
 }
 
 // JMH benchmark task
