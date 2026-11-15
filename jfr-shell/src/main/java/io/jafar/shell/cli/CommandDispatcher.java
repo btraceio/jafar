@@ -16,6 +16,7 @@ import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.core.analysis.AnalysisTarget;
 import io.jafar.shell.core.analysis.JfrAnalyses;
 import io.jafar.shell.core.analysis.Progress;
+import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.llm.LlmSettings;
 import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -1009,14 +1010,19 @@ public class CommandDispatcher {
     if (args.isEmpty()) {
       // Show current backend and capabilities
       JfrBackend current = registry.getCurrent();
-      io.println("Current backend: " + current.getName() + " (" + current.getId() + ")");
-      io.println("Version: " + current.getVersion());
-      io.println("Priority: " + current.getPriority());
+      String curId = ProviderDiscovery.call(current::getId, "?");
+      String curName = ProviderDiscovery.call(current::getName, "?");
+      String curVersion = ProviderDiscovery.call(current::getVersion, "?");
+      int curPriority = ProviderDiscovery.call(current::getPriority, -1);
+      java.util.Set<BackendCapability> curCaps =
+          ProviderDiscovery.call(
+              () -> current.getCapabilities(), java.util.Set.<BackendCapability>of());
+      io.println("Current backend: " + curName + " (" + curId + ")");
+      io.println("Version: " + curVersion);
+      io.println("Priority: " + curPriority);
       io.println(
           "Capabilities: "
-              + current.getCapabilities().stream()
-                  .map(BackendCapability::name)
-                  .collect(Collectors.joining(", ")));
+              + curCaps.stream().map(BackendCapability::name).collect(Collectors.joining(", ")));
       return;
     }
 
@@ -1026,9 +1032,21 @@ public class CommandDispatcher {
       io.println("Available backends:");
       JfrBackend current = registry.getCurrent();
       for (JfrBackend b : registry.listAll()) {
-        String marker = b.getId().equals(current.getId()) ? "*" : " ";
-        io.printf(
-            "  %s %-10s %-20s (priority: %d)%n", marker, b.getId(), b.getName(), b.getPriority());
+        String id = ProviderDiscovery.call(b::getId, "?");
+        String name = ProviderDiscovery.call(b::getName, "?");
+        int priority = ProviderDiscovery.call(b::getPriority, -1);
+        String marker = id.equals(ProviderDiscovery.call(current::getId, "")) ? "*" : " ";
+        io.printf("  %s %-10s %-20s (priority: %d)%n", marker, id, name, priority);
+      }
+      var failures = registry.discoveryFailures();
+      if (!failures.isEmpty()) {
+        io.println("");
+        io.println("Failed to load:");
+        for (var failure : failures) {
+          io.println("  " + failure);
+        }
+        io.println("  Reinstall or remove the broken jar (plugins live in ~/.jfr-shell/plugins),");
+        io.println("  then restart the shell.");
       }
       io.println("");
       io.println(

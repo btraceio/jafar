@@ -355,6 +355,21 @@ jfr-shell-jdk/                      # JDK API backend plugin
 jfr-shell-tck/                      # Technology Compatibility Kit
 ```
 
+## When a provider jar is broken
+
+A backend jar that fails to load — missing class, failing static initializer, unreadable services
+file — is skipped at discovery time and does not take down the shell or the other backends. Such
+providers are reported, not silently dropped:
+
+- `backend list` shows a **Failed to load** section naming each skipped provider and the reason
+  (the same output appears when startup fails with "No JFR backends available").
+- A provider whose `getId()` or `getPriority()` throws is dropped the same way — those calls are
+  needed to register the backend at all.
+- `jfr-shell` logs one `WARN` line per skipped provider at discovery time.
+
+Fix: reinstall or delete the jar. Plugin jars live in `~/.jfr-shell/plugins` (override with
+`JFRSHELL_PLUGIN_DIR`), then restart the shell.
+
 ## Offline/Airgapped Installation
 
 For environments without internet access (Docker images, air-gapped systems), plugins can be manually installed from local JAR files:

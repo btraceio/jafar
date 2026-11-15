@@ -1,14 +1,16 @@
 package io.jafar.shell.core.llm;
 
+import io.jafar.shell.core.discovery.ProviderDiscovery;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import java.util.ServiceLoader;
 
 /**
  * A source of model completions for the shell's LLM features.
  *
  * <p>This interface is the seam that keeps every provider SDK out of {@code shell-core}. Backends
- * are discovered with {@link ServiceLoader}, so a shell that does not ship one still compiles,
+ * are discovered with {@code ServiceLoader}, so a shell that does not ship one still compiles,
  * starts and runs every non-LLM command unchanged — {@link #discover()} simply returns empty and
  * the {@code ask} command reports that LLM support is not installed.
  *
@@ -81,14 +83,79 @@ public interface LlmBackend {
    * <p>Discovery order is deliberately not a preference order — see {@link #select(String,
    * LlmConfig)}, which picks a backend that is actually usable rather than the alphabetically first
    * one.
+   *
+   * <p>A provider jar that fails to load is skipped, not fatal: see {@link #discoverWithFailures()}
+   * if you need to know which providers were skipped and why.
    */
   static List<LlmBackend> discover() {
-    List<LlmBackend> backends = new java.util.ArrayList<>();
-    for (LlmBackend backend : ServiceLoader.load(LlmBackend.class, discoveryClassLoader())) {
-      backends.add(backend);
+    return discoverWithFailures().providers();
+  }
+
+  /**
+   * Loads every backend on the classpath, reporting providers that had to be skipped.
+   *
+   * <p>An installed provider jar can be broken (missing class, failing static initializer, no
+   * public no-arg constructor, unreadable {@code META-INF/services} entry). Such providers are
+   * skipped and reported rather than aborting discovery — otherwise one broken jar would take down
+   * every LLM command, even when a healthy backend is installed. Providers that throw from {@code
+   * id()} are skipped the same way; a blank id is treated as broken too.
+   */
+  static ProviderDiscovery.Outcome<LlmBackend> discoverWithFailures() {
+    ProviderDiscovery.Outcome<LlmBackend> raw =
+        ProviderDiscovery.loadAll(LlmBackend.class, discoveryClassLoader());
+    List<ProviderDiscovery.Failure> failures = new ArrayList<>(raw.failures());
+    List<LlmBackend> usable = new ArrayList<>();
+    List<String> ids = new ArrayList<>();
+    for (LlmBackend backend : raw.providers()) {
+      String name = ProviderDiscovery.providerName(backend);
+      String id = ProviderDiscovery.call(backend::id, null, failures, name, "id()");
+      if (id == null) {
+        continue; // id() threw; failure already recorded
+      }
+      if (id.isBlank()) {
+        failures.add(new ProviderDiscovery.Failure(name, "id() returned a blank id"));
+        continue;
+      }
+      usable.add(backend);
+      ids.add(id);
     }
-    backends.sort(java.util.Comparator.comparing(LlmBackend::id));
-    return List.copyOf(backends);
+    // Sort by pre-fetched id: calling id() again could throw or sort differently mid-sort.
+    record Keyed(LlmBackend backend, String id) {}
+    List<Keyed> keyed = new ArrayList<>(usable.size());
+    for (int i = 0; i < usable.size(); i++) {
+      keyed.add(new Keyed(usable.get(i), ids.get(i)));
+    }
+    keyed.sort(Comparator.comparing(Keyed::id));
+    List<LlmBackend> sorted = new ArrayList<>(keyed.size());
+    for (Keyed k : keyed) {
+      sorted.add(k.backend());
+    }
+    return new ProviderDiscovery.Outcome<>(sorted, failures);
+  }
+
+  /**
+   * Calls {@link #readiness(LlmConfig)} without letting a broken provider take the caller down. A
+   * provider that throws (or returns null) reports not-ready with the cause as the detail.
+   */
+  static Readiness probeReadiness(LlmBackend backend, LlmConfig config) {
+    final Readiness readiness;
+    try {
+      readiness = backend.readiness(config);
+    } catch (Throwable t) {
+      if (t instanceof VirtualMachineError vme) {
+        throw vme;
+      }
+      if (t instanceof ThreadDeath death) {
+        throw death;
+      }
+      return Readiness.notReady(
+          "readiness check failed: " + ProviderDiscovery.describe(t),
+          "The backend threw while reporting its readiness — fix or reinstall its jar, "
+              + "or select a different backend with 'set llm.backend'.");
+    }
+    return readiness != null
+        ? readiness
+        : Readiness.notReady("readiness check returned null", "Reinstall the backend jar.");
   }
 
   /**
@@ -131,14 +198,29 @@ public interface LlmBackend {
    */
   static Optional<LlmBackend> select(String preferredId, LlmConfig config) {
     List<LlmBackend> backends = discover();
-    if (backends.isEmpty()) {
+    return select(preferredId, config, backends);
+  }
+
+  /**
+   * Selects from an already-discovered list, so callers that also need the discovery failures do
+   * not pay for a second pass (every pass instantiates every provider).
+   */
+  static Optional<LlmBackend> select(
+      String preferredId, LlmConfig config, List<LlmBackend> backends) {
+    if (backends == null || backends.isEmpty()) {
       return Optional.empty();
     }
     if (preferredId != null && !preferredId.isBlank() && !"auto".equalsIgnoreCase(preferredId)) {
-      return backends.stream().filter(b -> b.id().equalsIgnoreCase(preferredId)).findFirst();
+      return backends.stream()
+          .filter(
+              b -> {
+                String id = ProviderDiscovery.call(b::id, null);
+                return id != null && id.equalsIgnoreCase(preferredId);
+              })
+          .findFirst();
     }
     return backends.stream()
-        .filter(b -> b.readiness(config).ready())
+        .filter(b -> probeReadiness(b, config).ready())
         .findFirst()
         .or(() -> Optional.of(backends.get(0)));
   }

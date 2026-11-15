@@ -144,6 +144,19 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  /** Prints providers skipped during backend discovery, if any, with a fix hint. */
+  private static void printBackendFailures(BackendRegistry registry) {
+    var failures = registry.discoveryFailures();
+    if (failures.isEmpty()) {
+      return;
+    }
+    System.err.println("Failed to load " + failures.size() + " backend provider(s):");
+    for (var failure : failures) {
+      System.err.println("  " + failure);
+    }
+    System.err.println("Reinstall or remove the broken jar(s) from ~/.jfr-shell/plugins.");
+  }
+
   private boolean validateBackend() {
     try {
       BackendRegistry registry = BackendRegistry.getInstance();
@@ -151,6 +164,7 @@ public final class Main implements Callable<Integer> {
       // Auto-install default backend if none available
       if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
         System.err.println("Error: No JFR backends available");
+        printBackendFailures(registry);
         return false;
       }
 
@@ -180,6 +194,7 @@ public final class Main implements Callable<Integer> {
                 + registry.listAll().stream()
                     .map(JfrBackend::getId)
                     .collect(Collectors.joining(", ")));
+        printBackendFailures(registry);
         return false;
       }
       return true;
@@ -238,6 +253,7 @@ public final class Main implements Callable<Integer> {
         // Auto-install default backend if none available
         if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
           System.err.println("Error: No JFR backends available");
+          printBackendFailures(registry);
           return 1;
         }
 
@@ -265,6 +281,7 @@ public final class Main implements Callable<Integer> {
                   + registry.listAll().stream()
                       .map(JfrBackend::getId)
                       .collect(Collectors.joining(", ")));
+          printBackendFailures(registry);
           return 1;
         }
       } catch (IllegalStateException e) {
@@ -516,6 +533,7 @@ public final class Main implements Callable<Integer> {
         // Auto-install default backend if none available
         if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
           System.err.println("Error: No JFR backends available");
+          printBackendFailures(registry);
           return 1;
         }
 
@@ -543,6 +561,7 @@ public final class Main implements Callable<Integer> {
                   + registry.listAll().stream()
                       .map(JfrBackend::getId)
                       .collect(Collectors.joining(", ")));
+          printBackendFailures(registry);
           return 1;
         }
       } catch (IllegalStateException e) {

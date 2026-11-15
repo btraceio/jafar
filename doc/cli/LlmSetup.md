@@ -404,6 +404,30 @@ it runs", and an investigation chooses each query from the result of the last on
 query to show in advance. With it on, `ask` says so and sends nothing; use `as-query` for a single
 query you approve, or `ask --dry-run` to read the opening request.
 
+## A broken provider jar
+
+If an installed provider jar is damaged or incomplete — its classes are missing, its static initializer throws,
+or its service descriptor names the wrong class — the shell skips it instead of dying. Healthy providers
+keep working, and every command that goes through LLM discovery reports what was skipped:
+
+- `llm status` lists the healthy backends, then a **Failed to load** section naming each skipped provider
+  and why (e.g. `NoClassDefFoundError`, `ExceptionInInitializerError`).
+- Automatic selection ignores the broken provider; it never picks one that failed to load.
+- If you explicitly set `llm.backend` to the broken provider, the error says so: it lists the providers
+  that failed to load next to the ones that work, with a hint that the one you asked for may be among
+  them. Nothing is silently substituted.
+- Startup errors that can't proceed at all (`No JFR backends available`, a JFR-side discovery
+  failure) print the same list.
+
+The fix is to reinstall or remove the broken jar. Plugin jars live in `~/.jfr-shell/plugins` (or
+`$JFRSHELL_PLUGIN_DIR`); delete the offending one, or reinstall it
+(`jafar-shell --install-plugin <path-or-coordinates>`), then restart the shell. A provider whose
+*health check* throws (rather than the jar failing to load) is treated as not-ready, and `llm status`
+shows the exception as the reason.
+
+The same protection covers the JFR backend plugins: `backend list` shows a **Failed to load**
+section, and a broken backend jar no longer takes down startup or `backend` selection.
+
 ## Settings
 
 All settable three ways — `set` in the shell, a `JAFAR_LLM_*` environment variable, or a line in

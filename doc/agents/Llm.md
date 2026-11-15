@@ -73,6 +73,16 @@ Architecture, and the reasons it is shaped this way:
   rather than being truncated. Each run writes its queries to a `.jfrs` transcript — handoff §3.4
   argues that is the feature, since it converts the loop's non-determinism into something a human
   can re-run.
+- **Provider discovery never lets a broken jar win.** `LlmBackend.discover()` goes through
+  `ProviderDiscovery` (`io.jafar.shell.core.discovery`), which converts
+  `ServiceConfigurationError` (and anything a provider throws from `id()`, `readiness()`,
+  `getPriority()` …) into a recorded skip instead of a crash — `catch (Exception)` was never enough,
+  because `ServiceConfigurationError` is an `Error`. `LlmBackend.discoverWithFailures()` /
+  `BackendRegistry.discoveryFailures()` carry the skipped providers and their causes; `llm status`
+  and `backend list` print them ("Failed to load"), and the "no backend" error paths name them.
+  The same guard skips JFR backend providers (`BackendRegistry.loadBackends`). Discovery is not
+  allowed to be silent: a skipped provider is always reported somewhere a human can see.
+
 - **The command layer, not the loop, holds the rows.** `LlmService.Step` carries a row *count*; the
   rows themselves pass through the caller's `QueryRunner`. `LlmCommands.analyze` therefore parks the
   last rows in the runner and renders them from the step callback, which is what puts the table
