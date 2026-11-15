@@ -382,7 +382,6 @@ public final class JfrAnalyses {
   public Map<String, Object> exceptions(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
-    String sessionId = (String) args.get("sessionId");
     int minCount = args.get("minCount") instanceof Number n ? n.intValue() : 1;
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
 
@@ -615,7 +614,6 @@ public final class JfrAnalyses {
   public Map<String, Object> hotmethods(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
-    String sessionId = (String) args.get("sessionId");
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 20;
     boolean includeNative = args.get("includeNative") instanceof Boolean b ? b : true;
 
@@ -753,7 +751,6 @@ public final class JfrAnalyses {
 
   public Map<String, Object> use(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
-    String sessionId = (String) args.get("sessionId");
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     boolean includeInsights = args.get("includeInsights") instanceof Boolean b ? b : true;
@@ -767,16 +764,14 @@ public final class JfrAnalyses {
             : Set.copyOf(resourcesList);
 
     {
-      String timeFilter = buildTimeFilter(startTimeNs, endTimeNs);
+      TimeWindow window = resolveTimeWindow(target, startTimeNs, endTimeNs);
+      String timeFilter = buildTimeFilter(window);
 
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("method", "USE");
       result.put("recordingPath", target.recordingPath().toString());
-      if (startTimeNs != null || endTimeNs != null) {
-        Map<String, Object> timeWindow = new LinkedHashMap<>();
-        if (startTimeNs != null) timeWindow.put("startTime", startTimeNs);
-        if (endTimeNs != null) timeWindow.put("endTime", endTimeNs);
-        result.put("timeWindow", timeWindow);
+      if (window != null) {
+        result.put("timeWindow", window.toMap());
       }
 
       Map<String, Object> resourceMetrics = new LinkedHashMap<>();
@@ -1515,18 +1510,6 @@ public final class JfrAnalyses {
             recommendations.add("Moderate queue saturation - monitor executor capacity");
           }
         }
-
-        // Warn if Datadog profiler but no queue events
-        String eventType = null;
-        if (threadsRes.containsKey("utilization")) {
-          // Try to detect if Datadog profiler is being used
-          // This is a heuristic - we check if we have any Datadog-specific data
-          if (threadsSat != null && !threadsSat.containsKey("queueSaturation")) {
-            // Check if we might be using Datadog profiler
-            // For now, we skip this warning as we can't reliably detect profiler type
-            // without additional context
-          }
-        }
       }
     }
 
@@ -1579,7 +1562,6 @@ public final class JfrAnalyses {
 
   public Map<String, Object> tsa(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
-    String sessionId = (String) args.get("sessionId");
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     int topThreads = args.get("topThreads") instanceof Number n ? n.intValue() : 10;
@@ -1588,7 +1570,8 @@ public final class JfrAnalyses {
     boolean includeInsights = args.get("includeInsights") instanceof Boolean b ? b : true;
 
     {
-      String timeFilter = buildTimeFilter(startTimeNs, endTimeNs);
+      TimeWindow window = resolveTimeWindow(target, startTimeNs, endTimeNs);
+      String timeFilter = buildTimeFilter(window);
 
       // Detect execution event type
       String eventType = detectExecutionEventType(target);
@@ -1645,11 +1628,8 @@ public final class JfrAnalyses {
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("method", "TSA");
       result.put("recordingPath", target.recordingPath().toString());
-      if (startTimeNs != null || endTimeNs != null) {
-        Map<String, Object> timeWindow = new LinkedHashMap<>();
-        if (startTimeNs != null) timeWindow.put("startTime", startTimeNs);
-        if (endTimeNs != null) timeWindow.put("endTime", endTimeNs);
-        result.put("timeWindow", timeWindow);
+      if (window != null) {
+        result.put("timeWindow", window.toMap());
       }
       result.put("totalSamples", totalSamples);
       result.put("totalThreads", threadMetrics.size());
@@ -2094,16 +2074,89 @@ public final class JfrAnalyses {
     return splitIdx >= 0 ? fullClassName.substring(splitIdx + 1) : fullClassName;
   }
 
-  String buildTimeFilter(Long startNs, Long endNs) {
+  /**
+   * The {@code startTime}/{@code endTime} arguments of an analysis, resolved against the recording.
+   *
+   * <p>The arguments are nanoseconds from the recording's start; event start times are nanoseconds
+   * since the epoch. They used to be compared without converting, so an offset as {@code startTime}
+   * excluded nothing and an offset as {@code endTime} excluded every event.
+   *
+   * @param startArg the {@code startTime} argument as given, or {@code null}
+   * @param endArg the {@code endTime} argument as given, or {@code null}
+   * @param recordingStart the start of the recording's earliest chunk, epoch nanoseconds
+   * @param fromEpochNanos the window's start in epoch nanoseconds, or {@code null} when open
+   * @param toEpochNanos the window's end in epoch nanoseconds, or {@code null} when open
+   */
+  record TimeWindow(
+      Long startArg, Long endArg, long recordingStart, Long fromEpochNanos, Long toEpochNanos) {
+
+    /**
+     * An argument as epoch nanoseconds. A value at or after the recording's start is already one
+     * (an event's {@code startTime}, copied from a query result): no offset into a recording is
+     * that large, since the recording's start is itself decades of nanoseconds. Anything smaller is
+     * an offset from the recording's start.
+     */
+    static Long toEpochNanos(Long arg, long recordingStart) {
+      if (arg == null) {
+        return null;
+      }
+      return arg >= recordingStart ? arg : recordingStart + arg;
+    }
+
+    /** What the result reports: the arguments as given, and what they were taken to mean. */
+    Map<String, Object> toMap() {
+      Map<String, Object> map = new LinkedHashMap<>();
+      if (startArg != null) map.put("startTime", startArg);
+      if (endArg != null) map.put("endTime", endArg);
+      map.put("recordingStartEpochNanos", recordingStart);
+      if (fromEpochNanos != null) map.put("startTimeEpochNanos", fromEpochNanos);
+      if (toEpochNanos != null) map.put("endTimeEpochNanos", toEpochNanos);
+      return map;
+    }
+  }
+
+  /**
+   * Resolves a time window against the recording, or returns {@code null} when neither bound was
+   * given.
+   *
+   * @throws IllegalArgumentException if the recording's start cannot be read: a window that cannot
+   *     be placed must not silently become "everything" or "nothing"
+   */
+  TimeWindow resolveTimeWindow(AnalysisTarget target, Long startNs, Long endNs) throws Exception {
     if (startNs == null && endNs == null) {
+      return null;
+    }
+    long recordingStart = Long.MAX_VALUE;
+    for (Map<String, Object> chunk :
+        evaluator.evaluate(target.session(), JfrPathParser.parse("chunks"))) {
+      if (chunk.get("startNanos") instanceof Number n) {
+        recordingStart = Math.min(recordingStart, n.longValue());
+      }
+    }
+    if (recordingStart == Long.MAX_VALUE) {
+      throw new IllegalArgumentException(
+          "Cannot apply a time window: the recording's start time could not be read from its"
+              + " chunks");
+    }
+    return new TimeWindow(
+        startNs,
+        endNs,
+        recordingStart,
+        TimeWindow.toEpochNanos(startNs, recordingStart),
+        TimeWindow.toEpochNanos(endNs, recordingStart));
+  }
+
+  /** The JfrPath filter for a window, on event start times; empty for no window. */
+  String buildTimeFilter(TimeWindow window) {
+    if (window == null) {
       return "";
     }
     List<String> conditions = new ArrayList<>();
-    if (startNs != null) {
-      conditions.add("startTime>=" + startNs);
+    if (window.fromEpochNanos() != null) {
+      conditions.add("startTime>=" + window.fromEpochNanos());
     }
-    if (endNs != null) {
-      conditions.add("startTime<=" + endNs);
+    if (window.toEpochNanos() != null) {
+      conditions.add("startTime<=" + window.toEpochNanos());
     }
     return "[" + String.join(" and ", conditions) + "]";
   }
@@ -2144,7 +2197,6 @@ public final class JfrAnalyses {
 
   public Map<String, Object> diagnose(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
-    String sessionId = (String) args.get("sessionId");
     Boolean includeAnalysis = args.get("includeAnalysis") instanceof Boolean b ? b : true;
     String depth = args.get("depth") instanceof String d ? d : "full";
     boolean runDeepAnalysis = !"quick".equalsIgnoreCase(depth);

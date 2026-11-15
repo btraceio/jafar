@@ -16,11 +16,17 @@ import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.openjdk.jmc.flightrecorder.writer.api.Recording;
 import org.openjdk.jmc.flightrecorder.writer.api.Recordings;
 
@@ -96,7 +102,8 @@ public class TypedJafarParserTest {
     URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
 
     try (TypedJafarParser parser = TypedJafarParser.open(new File(uri).getAbsolutePath())) {
-      Map<Long, Integer> idToCount = new HashMap<>();
+      // Handlers run on one thread per chunk, and CP ids are chunk-local: key on (chunk, id).
+      Map<String, Integer> idToCount = new ConcurrentHashMap<>();
 
       parser.handle(
           JFRExecutionSample.class,
@@ -109,7 +116,7 @@ public class TypedJafarParserTest {
             assertNotNull(stackTrace, "Resolved stackTrace should not be null");
 
             // Test 2: The same ID should consistently map to the same resolved object
-            idToCount.merge(rawId, 1, Integer::sum);
+            idToCount.merge(ctl.chunkInfo().chunkId() + ":" + rawId, 1, Integer::sum);
 
             // Test 3: Verify stackTrace has frames
             assertTrue(stackTrace.frames().length > 0, "StackTrace should have at least one frame");
@@ -134,31 +141,42 @@ public class TypedJafarParserTest {
   /**
    * Test that the same constant pool index always resolves to the same object, validating
    * consistency between raw index and resolved value accessors.
+   *
+   * <p>Constant pool ids are chunk-local: the same id in two chunks may name two different stack
+   * traces. The test therefore keys on (chunk, id), and also runs against a two-chunk recording
+   * built from two different recordings, where ids do collide across chunks.
    */
-  @Test
-  void testConstantPoolIndexConsistency() throws Exception {
-    URI uri = TypedJafarParserTest.class.getClassLoader().getResource("test-ap.jfr").toURI();
+  @ParameterizedTest(name = "{displayName}[{0}]")
+  @ValueSource(strings = {"test-ap.jfr", "test-ap.jfr+test-jfr.jfr"})
+  void testConstantPoolIndexConsistency(String fixture, @TempDir Path tempDir) throws Exception {
+    String[] parts = fixture.split("\\+");
+    Path recording;
+    if (parts.length == 1) {
+      recording = AbortProbe.resource(parts[0]);
+    } else {
+      Path[] paths = new Path[parts.length];
+      for (int i = 0; i < parts.length; i++) {
+        paths[i] = AbortProbe.resource(parts[i]);
+      }
+      recording = AbortProbe.concat(tempDir.resolve("concat.jfr"), paths);
+    }
 
-    try (TypedJafarParser parser = TypedJafarParser.open(new File(uri).getAbsolutePath())) {
-      Map<Long, String> idToFirstFrameMethod = new HashMap<>();
+    try (TypedJafarParser parser = TypedJafarParser.open(recording.toString())) {
+      Map<String, String> idToFirstFrameMethod = new ConcurrentHashMap<>();
+      List<String> mismatches = Collections.synchronizedList(new ArrayList<>());
 
       parser.handle(
           JFRExecutionSample.class,
           (event, ctl) -> {
-            long id = event.stackTraceId();
+            String key = ctl.chunkInfo().chunkId() + ":" + event.stackTraceId();
             var stackTrace = event.stackTrace();
 
             if (stackTrace != null && stackTrace.frames().length > 0) {
               String method = stackTrace.frames()[0].method().name();
-
-              // If we've seen this ID before, verify it resolves to the same stack trace
-              if (idToFirstFrameMethod.containsKey(id)) {
-                assertEquals(
-                    idToFirstFrameMethod.get(id),
-                    method,
-                    "Same CP index should always resolve to same stackTrace");
-              } else {
-                idToFirstFrameMethod.put(id, method);
+              String previous = idToFirstFrameMethod.putIfAbsent(key, method);
+              // If we've seen this (chunk, id) before, it must resolve to the same stack trace
+              if (previous != null && !previous.equals(method)) {
+                mismatches.add(key + ": " + previous + " vs " + method);
               }
             }
           });
@@ -166,6 +184,9 @@ public class TypedJafarParserTest {
       parser.run();
 
       assertFalse(idToFirstFrameMethod.isEmpty(), "Should have mapped IDs to stackTrace data");
+      assertTrue(
+          mismatches.isEmpty(),
+          "Same (chunk, CP index) should always resolve to same stackTrace: " + mismatches);
     }
   }
 }

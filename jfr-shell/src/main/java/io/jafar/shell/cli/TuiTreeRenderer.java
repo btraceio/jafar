@@ -289,6 +289,7 @@ public final class TuiTreeRenderer {
       try {
         return Math.max(40, Integer.parseInt(cols.trim()));
       } catch (NumberFormatException ignore) {
+        // malformed COLUMNS: try the system property
       }
     }
     String prop = System.getProperty("jfr.shell.width");
@@ -296,6 +297,7 @@ public final class TuiTreeRenderer {
       try {
         return Math.max(40, Integer.parseInt(prop.trim()));
       } catch (NumberFormatException ignore) {
+        // malformed width property: fall back to the default
       }
     }
     return DEFAULT_WIDTH;

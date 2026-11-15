@@ -62,7 +62,30 @@ opts := jfr.Options{
 err = parser.ParseWith(opts, handler)
 ```
 
-Returning `jfr.ErrStop` from the handler ends parsing successfully; any other
+To read only the events from some point in time on, give the parser the range and it skips the
+chunks that ended before it:
+
+```go
+from := jfr.Since(startOfInterest) // epoch nanoseconds, the unit of an event's startTime
+opts := jfr.Options{
+    StartTime: from,
+    OnError:   jfr.FailOnError,
+}
+err = parser.ParseWith(opts, func(e *jfr.Event) error {
+    if !from.Contains(e.Values["startTime"].(int64)) {
+        return nil // a hint, not a filter: the chunks that are read deliver everything
+    }
+    // ...
+    return nil
+})
+```
+
+Only the lower bound skips chunks: an event is written when it is committed and can start long
+before the chunk it was written to, so `jfr.Until(t)` skips nothing. A skipped chunk is reported
+to `Options.OnChunkSkipped`, not to `OnChunkStart` or `OnChunkEnd`.
+
+Returning `jfr.ErrStop` from the handler ends parsing successfully - the whole
+recording, not only the current chunk; no event is delivered after it. Any other
 error aborts it and is returned from `Parse` unchanged.
 
 ## Value model
@@ -82,12 +105,49 @@ Event fields arrive in `Event.Values` keyed by field name:
 | `java.lang.String`    | `string`, or `nil` for a null string       |
 | inline complex value  | `map[string]any`                           |
 | constant pool value   | `*jfr.Ref`                                 |
-| array                 | `*jfr.Array`                               |
+| array                 | `*jfr.Array` (see [Arrays](#arrays))       |
 
 Fields annotated `@Timestamp(TICKS)` and `@Timespan(TICKS)` are normalised:
 timestamps become nanoseconds since the epoch and timespans become nanosecond
 durations, so callers never handle raw ticks. `ChunkInfo` exposes the same
 conversions for values you convert yourself.
+
+### Arrays
+
+An array field decodes to a `*jfr.Array` whose `Elems` field holds the elements
+in a slice. Its Go type follows the element type, so numeric elements are stored
+unboxed and decoding them allocates nothing per element:
+
+| `ElementType`  | `Elems`     | Elements                                             |
+|----------------|-------------|------------------------------------------------------|
+| `int`, `long`  | `[]int64`   | normalised like a scalar field of the type           |
+| `float`        | `[]float32` |                                                      |
+| `double`       | `[]float64` |                                                      |
+| `short`        | `[]int16`   |                                                      |
+| `char`         | `[]uint16`  |                                                      |
+| anything else  | `[]any`     | each with the Go type of a scalar field of the type  |
+
+Constant pool references are always `*Ref` elements in an `[]any`, whatever
+their type. Switch on `Elems` to read the elements in bulk; `Len` and `At` work
+on any array, but `At` boxes a numeric element:
+
+```go
+if arr, ok := e.Values["values"].(*jfr.Array); ok {
+    switch elems := arr.Elems.(type) {
+    case []int64:
+        for _, v := range elems { /* int64, no allocation */ }
+    case []any:
+        for _, v := range elems { /* *jfr.Ref, map[string]any, string, ... */ }
+    }
+}
+```
+
+`Get` indexes arrays through `At`, and `ResolveDeep` turns a numeric array into
+a copy of its slice and any other array into an `[]any`.
+
+Arrays inside constant pool entries are allocated 64 at a time, as long-lived
+as their pool. An event's arrays are allocated individually, so keeping one
+keeps nothing else alive.
 
 ### Constant pool references
 
@@ -182,8 +242,10 @@ Two other things matter more than they look:
 Run `go test -bench . ./...` to reproduce. Every benchmark runs once per
 available recording, and picks its workload event types per recording rather
 than by name, so the numbers stay comparable across files. Run
-`./get_resources.sh` from the repository root first to add the larger
-recordings; set `JAFAR_BENCH_JFR` to benchmark one specific file.
+`./gradlew :test-recordings:generateTestRecordings` (or `./get_resources.sh` for
+the real ones) from the repository root first to add the larger recordings;
+set `JAFAR_BENCH_JFR` to benchmark one specific file, for example one made with
+`./gradlew :test-recordings:generateBenchmarkRecording -Pchunks=400 -Poutput=/tmp/large.jfr`.
 
 ## Error handling
 
@@ -192,8 +254,11 @@ magic, an out-of-range chunk size, undecodable chunk metadata — always abort
 parsing.
 
 Recoverable problems — a checkpoint chain that cannot be followed, a constant
-pool referring to an undeclared type, a single event that fails to decode — are
-reported through `Options.OnError`. When `OnError` is nil they are ignored and
+pool referring to an undeclared type or holding an entry that cannot be read, a
+single event that fails to decode (a reference to a string pool entry that does
+not exist included) — are reported through `Options.OnError`. An unreadable pool
+entry ends that checkpoint: the entries indexed before it stay usable, and each
+reference to a later one is reported as an event error. When `OnError` is nil they are ignored and
 parsing continues, which is what reading a truncated or non-conforming recording
 on a best-effort basis needs. Pass `jfr.FailOnError` to turn them into failures:
 
@@ -201,18 +266,107 @@ on a best-effort basis needs. Pass `jfr.FailOnError` to turn them into failures:
 err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
 ```
 
+A checkpoint problem that can leave entries unindexed is remembered for the
+chunk. From then on, an event holding a reference from any pooled field (a
+string, a thread, a stack trace, a class) to an entry missing from its pool
+fails to decode, for example with `constant pool reference 3 to test.Node does
+not resolve: the pool has no such entry (constant pool indexing stopped early in
+this chunk: ...)`. The indexing failure is wrapped, so `errors.Is`/`errors.As`
+reach it. The indices writers use for an absent value stay a `*Ref` that
+resolves to nil: 0 from HotSpot, and `math.MinInt64` from the JMC writer, which
+writes a null value that way. So does a dangling reference in a chunk that was
+indexed completely, as in the JDK's reader (strings excepted: a string
+reference that does not resolve is always an error).
+
+An indexed entry whose own pooled field refers to an abandoned entry is found
+when it is resolved rather than when the event is decoded: it cannot be decoded,
+so `Ref.Value` returns nil and `Ref.Err` returns the error, which wraps the
+indexing failure. The error is kept per entry and returned again without
+decoding the entry again. `ResolveDeep` resolves such an entry to nil, as it
+does any entry that cannot be decoded; check `Err` on the references where that
+matters. Pinned by `TestReferenceToUnindexedPoolEntryIsReportedNotResolvedToNil`
+(with `ReuseValues` off and on),
+`TestUndeclaredPoolTypeFailsEveryReferenceIntoTheAbandonedPools`,
+`TestUndecodableEntryFailsOnResolutionTheSameWayEachTime` and
+`TestDanglingReferenceInIntactChunkResolvesToNil`, which read the same
+recordings as the Java parser's `UnindexedPoolReferenceTest`
+([jfr/testdata](jfr/testdata/README.md)).
+
 ## Differences from the Java parser
 
+* **Simple-type references are not collapsed.** Java now offers
+  `Values.resolvedDeepCollapsed`, which turns a reference to a JFR simple type into its scalar.
+  Here such a reference still decodes to the one-entry map `{field: value}` and no helper collapses
+  it; not ported yet (btraceio/jafar#108).
 * **Untyped only.** No typed API, no code generation, no annotation processor.
+* **The type filter is per parse here, per handler in Java.** `Options.TypeFilter` governs the one
+  `EventFunc` of a `ParseWith` call. Java's `UntypedJafarParser.handle(TypeFilter, EventHandler)`
+  attaches a filter to each handler, because a Java parser can have several; an event is decoded
+  when any handler wants its type. Both skip a rejected event before decoding it, so neither
+  reports an undecodable event of a rejected type.
+* **The start-time range is per parse here, per handler in Java, with the same rule.**
+  `Options.StartTime` and Java's `handle(TypeFilter, TimeRange, EventHandler)` both skip a chunk
+  that ends more than a second before the range begins, and never one that starts after it; both
+  read an unfinished chunk and one whose wanted `startTime` is not a tick timestamp. In Java a
+  chunk is skipped only when every registered handler has a range that rules it out. A skipped
+  chunk reaches `OnChunkSkipped` here; a Java parser listener sees `onChunkStart`, `onMetadata`
+  and `onChunkEnd(skipped = true)`. Pinned by `TestStartTime*` here and `UntypedTimeRangeTest` and
+  `ChunkPruningTest` in Java.
 * **Sequential.** The Java parser hands chunks to a thread pool and calls
   handlers from those threads. This one decodes chunks in recording order and
   calls the handler on the calling goroutine, so events arrive in file order.
+  It also makes stopping exact: `ErrStop` and Java's `Control.abort()` both end
+  the whole recording, but in Java another chunk's thread may still deliver the
+  one event it was already dispatching, while here nothing follows `ErrStop`.
 * **In memory.** `Open` reads the whole file rather than memory-mapping it. Use
   `NewParser` when you already hold the bytes.
-* **Framing is enforced.** Constant pool entries have to lie within their
-  checkpoint event; the Java parser does not check this. It only matters for
-  malformed recordings, where this parser drops the pool rather than indexing
-  entries at garbage offsets.
+* **An undecodable event is skipped by default.** Here a nil `Options.OnError`
+  ignores it and parsing resumes at the next event, using the event size the
+  parser has already read. The Java untyped parser fails the parse by default
+  (`EventDecodingException`, naming the type, chunk and position) and skips only
+  when `UntypedJafarParser.onDecodeError` returns `true`, the counterpart of an
+  `OnError` that returns nil. Neither delivers the bad event, even partially.
+  Pinned by `TestUndecodableEventIsReportedAndSkipped` here and
+  `EventDecodeFailureTest` in `parser-core`.
+* **Both reject a malformed recording with an error that names the defect; the checks are the
+  same, the strictness is not.** The size, count, offset, nesting-depth and undeclared-type checks
+  in `forEachChunk`, `readChunkHeader`, `readElement`, `readCheckpoints` and `readValue` have
+  Java counterparts with the same bounds (64 levels of metadata and of value nesting, counts
+  bounded by the bytes that are left, 1024 zero type ids). Two things differ. A metadata class
+  without a `name` is kept here with an empty name; Java rejects the recording, because it
+  dispatches on type names. And a checkpoint chain that cannot be followed is recoverable here
+  (see the next point) while it fails the parse in Java. Pinned by `MalformedRecordingTest` in
+  `parser-core`; the same corruption sweep was run against this parser when the Java checks
+  were added (2367 inputs, no panic, no hang) but is not a committed test here.
+* **A corrupted constant pool entry is recoverable here.** Go reports it
+  through `Options.OnError` and keeps the entries indexed before it; Java fails
+  the parse, naming the pool and index, even with a decode error handler, since
+  that handler is about one event. The same holds for a pool of a type the
+  chunk metadata does not declare. So only Go can see a partially indexed pool,
+  and only Go needs the per-reference check described under
+  [Error handling](#error-handling).
+* **An undecodable constant pool entry resolves to nil.** Resolving a reference
+  to an entry that cannot be decoded returns nil here, with the reason in
+  `Ref.Err`. The Java parser throws from `getValue()` instead. Both decode such
+  an entry once and keep the failure: later resolutions return the same error
+  here and rethrow the same exception there. Pinned by
+  `TestReferenceToUnindexedPoolEntryIsReportedNotResolvedToNil` here and
+  `UnindexedPoolReferenceTest` in `parser-core`. Both refuse to skip an entry whose string
+  encoding is unknown, and both report a reference to a missing string entry
+  instead of reading it as null. Pinned by
+  `TestCorruptedPoolStringIsReportedNotMisaligned` and
+  `TestDanglingStringReferenceIsReported` here.
+* **A misframed checkpoint is recoverable here.** Both parsers check that a
+  checkpoint's constant pools end exactly where the event's size says, as the
+  JDK's own reader does, and both name the checkpoint (`checkpoint at N:
+  constant pools end at X, but the event size S says it ends at Y`). This
+  parser also stops at an entry that runs past the event. It reports either
+  through `Options.OnError` and carries on: since the entry that went wrong
+  cannot be known, a checkpoint whose pools end short keeps none of the entries
+  it indexed, and references into them fail their events with the framing error
+  as the cause. The Java parser fails the parse. Pinned by
+  `TestCheckpointPoolsEndingShortOfTheEventSizeAreReported` here and
+  `CheckpointFramingTest` in `parser-core`.
 * **Type IDs are chunk-scoped**, as they are in the format. A recording whose
   chunks come from different producers can map the same type ID to different
   type names, and each chunk is decoded against its own metadata.
@@ -225,6 +379,14 @@ err := parser.ParseWith(jfr.Options{OnError: jfr.FailOnError}, handler)
   - a GC phase name, a flag name, a thread state - holds one copy of it rather
   than one per event. This is Jafar's `CachedStringParser` widened from its
   single entry to a small direct-mapped table.
+* **Unboxed arrays are typed slices.** The Java parser stores `int`/`long`,
+  `float`, `double`, `short` and `char` array elements in a `long[]`,
+  `float[]`, `double[]`, `short[]` or `char[]` behind `ArrayType`; this one
+  stores an `[]int64`, `[]float32`, `[]float64`, `[]int16` or `[]uint16` in
+  `Array.Elems`. Same elements, same values; neither boxes them. `byte` and
+  `boolean` elements go in an `[]any` (Java: `byte[]`, `boolean[]` filled by
+  boxing): converting a single-byte value to an interface never allocates in
+  Go, and every `Byte` and `Boolean` box is cached in Java.
 * **Optimizations that do not port.** The typed API and the generated untyped
   deserializers (`UntypedStrategy`, `LazyEventMap`) rest on run-time bytecode
   generation. `LazyEventMap` in particular works because Java lets a lazy object
@@ -253,10 +415,11 @@ gofmt -l .
 ```
 
 The tests and benchmarks pick up whatever recordings are present.
-`./get_resources.sh` in the repository root downloads the larger ones from
-Dropbox into `parser-core/src/test/resources/` and `demo/src/test/resources/`;
-both the suite and the benchmarks find them there and report each file
-separately. Without them they fall back to the recordings checked into the
+`./gradlew :test-recordings:generateTestRecordings` in the repository root
+generates them into `parser-core/src/test/resources/` and
+`demo/src/test/resources/` (`./get_resources.sh` downloads the real ones to the
+same place); both the suite and the benchmarks find them there and report each
+file separately. Without them they fall back to the recordings checked into the
 repository.
 
 The **Go Parser Benchmarks** GitHub Actions workflow does this download and runs
@@ -276,3 +439,16 @@ module is built outside the repository tree.
 
 The event counts pinned by `recording_test.go` were cross-checked against the
 JDK's own `jfr summary` tool.
+
+`internal/differential` is a harness, not API: it is the Go half of the
+Java/Go differential gate that [doc/agents/Gates.md](../doc/agents/Gates.md)
+in the repository root documents. `differential.Dump` renders a recording
+into the canonical dump format shared with the Java side's `JfrCanonicalDump`
+(one sorted line per event, constant pools resolved deep, floats as IEEE-754
+bit patterns, a header naming the side, the fixture's sha256 and the event
+count), and `internal/differential/cmd/jfrdump` is the thin command the
+Java-side `:parser-core:differentialTest` task invokes
+(`go run ./internal/differential/cmd/jfrdump`). It lives outside `jfr/` on
+purpose — being test tooling, not parser production code, the Java/Go parity
+rules that track production changes to the untyped parsers do not apply to
+it — and nothing in this module's public surface depends on it.

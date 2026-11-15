@@ -29,7 +29,7 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | top(${top_n}, by=
 
 echo
 echo "=== Thread Allocation Statistics ==="
-events/jdk.ThreadAllocationStatistics | groupBy(eventThread/javaName) | top(${top_n}, by=sum(allocated))
+events/jdk.ThreadAllocationStatistics | groupBy(thread/javaName, agg=sum, value=allocated) | top(${top_n}, by=value)
 
 echo
 echo "=== Monitor Contention by Class ==="
@@ -37,7 +37,7 @@ events/jdk.JavaMonitorEnter | groupBy(monitorClass/name) | top(${top_n}, by=coun
 
 echo
 echo "=== Thread Sleep Events ==="
-events/jdk.ThreadSleep | groupBy(eventThread/javaName) | top(${top_n}, by=sum(time))
+events/jdk.ThreadSleep | groupBy(eventThread/javaName, agg=sum, value=time) | top(${top_n}, by=value)
 
 echo
 echo "=== Thread Park Events (Blocking Operations) ==="

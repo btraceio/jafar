@@ -25,8 +25,10 @@ final class MapValueBuilderBaseline implements ValueProcessor {
     this.context = context;
   }
 
+  /** Prepares for the next event, discarding anything a failed event left behind. */
   void reset() {
     root = null;
+    stack.clear();
   }
 
   Map<String, Object> getRoot() {
@@ -49,7 +51,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
   public void onShortValue(MetadataClass type, String fld, short value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addShort(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -61,7 +63,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
   public void onCharValue(MetadataClass type, String fld, char value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addChar(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -79,7 +81,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
     value = TemporalNormalizer.normalize(owner, fld, value, chunkInfo());
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addLong(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -92,7 +94,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
     value = TemporalNormalizer.normalize(type, fld, value, chunkInfo());
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addLong(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -128,7 +130,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
   public void onDoubleValue(MetadataClass owner, String fld, double value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addDouble(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;
@@ -140,7 +142,7 @@ final class MapValueBuilderBaseline implements ValueProcessor {
   public void onFloatValue(MetadataClass owner, String fld, float value) {
     ArrayHolder ah = stack.peek(ArrayHolder.class);
     if (ah != null) {
-      ah.add(value);
+      ah.addFloat(value);
     } else {
       Map<String, Object> parent = stack.peek(Map.class);
       assert parent != null;

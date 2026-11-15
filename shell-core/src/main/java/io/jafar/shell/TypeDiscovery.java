@@ -102,7 +102,8 @@ public final class TypeDiscovery {
    * @throws IOException if reading fails
    */
   public Map<String, Long> getTypeCounts(Path recordingPath) throws Exception {
-    Map<String, Long> typeCounts = new HashMap<>();
+    // The handler runs on several chunk-parsing threads at once.
+    Map<String, Long> typeCounts = new java.util.concurrent.ConcurrentHashMap<>();
 
     try (UntypedJafarParser parser = parsingContext.newUntypedParser(recordingPath)) {
       parser.handle(
@@ -190,17 +191,5 @@ public final class TypeDiscovery {
     }
 
     return false;
-  }
-
-  /**
-   * Convert JFR type name to Java interface name. e.g., "jdk.ExecutionSample" ->
-   * "JFRExecutionSample"
-   *
-   * @param typeName JFR type name
-   * @return Java interface name
-   */
-  private String toJavaInterfaceName(String typeName) {
-    String simpleName = typeName.substring(typeName.lastIndexOf('.') + 1);
-    return "JFR" + simpleName;
   }
 }

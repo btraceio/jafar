@@ -81,7 +81,7 @@ public final class HdumpTuiAdapter implements TuiAdapter {
       @SuppressWarnings("unchecked")
       List<Map<String, Object>> tableRows = (List<Map<String, Object>>) rows;
       io.renderTable(tableRows);
-    } else if (result instanceof List<?> rows && descriptor == CommandDescriptor.TABULAR) {
+    } else if (result instanceof List<?> && descriptor == CommandDescriptor.TABULAR) {
       // Empty tabular result — still route through renderTable for consistent "(no rows)" output
       io.renderTable(List.of());
     } else if (result instanceof List<?> rows) {

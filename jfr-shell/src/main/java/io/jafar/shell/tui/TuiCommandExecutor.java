@@ -6,9 +6,11 @@ import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.cli.TuiTableRenderer;
 import io.jafar.shell.core.BrowseCategoryDescriptor;
 import io.jafar.shell.core.CommandDescriptor;
+import io.jafar.shell.core.Failures;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
+import io.jafar.shell.core.llm.SecretCommands;
 import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import io.jafar.shell.tui.TuiContext.TuiParsedLine;
@@ -199,17 +201,22 @@ public final class TuiCommandExecutor {
       return;
     }
 
-    ctx.commandHistory.add(command);
-    ctx.lastCommand = command;
+    // A credential is kept out of the history file and the up arrow, as in the line shells
+    if (!SecretCommands.setsSecret(command)) {
+      ctx.commandHistory.add(command);
+    }
+    // What the screen shows of the command: a credential's value is hidden from tab names and echo
+    String shown = SecretCommands.hideValue(command);
+    ctx.lastCommand = shown;
 
     int currentIdx = findUnpinnedTab();
     if (currentIdx < 0) {
-      ctx.tabs.add(new ResultTab(command));
+      ctx.tabs.add(new ResultTab(shown));
       currentIdx = ctx.tabs.size() - 1;
     }
     ctx.activeTabIndex = currentIdx;
     ResultTab activeTab = ctx.activeTab();
-    activeTab.name = command;
+    activeTab.name = shown;
     activeTab.marqueeTick0 = ctx.renderTick;
     activeTab.lines.clear();
     activeTab.scrollOffset = 0;
@@ -330,7 +337,7 @@ public final class TuiCommandExecutor {
     }
 
     // Echo command
-    activeTab.lines.add("> " + command);
+    activeTab.lines.add("> " + SecretCommands.hideValue(command));
 
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
     ctx.asyncOutputBuffer = new ArrayList<>();
@@ -401,7 +408,7 @@ public final class TuiCommandExecutor {
   /** Submits a command directly to the TUI adapter, bypassing CommandDispatcher. */
   private void submitAdapterCommand(String command, CommandDescriptor desc) {
     ResultTab activeTab = ctx.activeTab();
-    activeTab.lines.add("> " + command);
+    activeTab.lines.add("> " + SecretCommands.hideValue(command));
     ctx.asyncLinesBeforeDispatch = activeTab.lines.size();
     ctx.asyncOutputBuffer = new ArrayList<>();
     ctx.asyncMaxLineWidth = 0;
@@ -696,6 +703,7 @@ public final class TuiCommandExecutor {
       double db = Double.parseDouble(b);
       return Double.compare(da, db);
     } catch (NumberFormatException ignore) {
+      // not numeric: fall back to natural string comparison
     }
     return a.compareToIgnoreCase(b);
   }
@@ -766,11 +774,13 @@ public final class TuiCommandExecutor {
         if (colon > 0 && line.substring(0, colon).chars().allMatch(Character::isDigit)) {
           line = line.substring(colon + 1);
         }
-        if (!line.isEmpty()) {
+        // A key line from before this filter is dropped, and gone from the file at the next save
+        if (!line.isEmpty() && !SecretCommands.setsSecret(line)) {
           ctx.commandHistory.add(line);
         }
       }
     } catch (IOException ignore) {
+      // unreadable or corrupt history: start fresh
     }
   }
 
@@ -788,6 +798,7 @@ public final class TuiCommandExecutor {
       }
       Files.write(TuiContext.HISTORY_PATH, formatted);
     } catch (IOException ignore) {
+      // history is best-effort: never fail shutdown over it
     }
   }
 
@@ -995,6 +1006,7 @@ public final class TuiCommandExecutor {
     ctx.sidebarSearchQuery = query;
     if (query.isEmpty() || ctx.sidebarTypes == null) {
       ctx.sidebarFilteredIndices = null;
+      normalizeSidebarSelection();
       return;
     }
     String lower = query.toLowerCase();
@@ -1007,6 +1019,36 @@ public final class TuiCommandExecutor {
     }
     ctx.sidebarFilteredIndices = indices;
     ctx.sidebarScrollOffset = 0;
+    if (!indices.contains(ctx.sidebarSelectedIndex)) {
+      ctx.sidebarSelectedIndex = indices.isEmpty() ? -1 : indices.get(0);
+    }
+    normalizeSidebarSelection();
+  }
+
+  private void normalizeSidebarSelection() {
+    int size = ctx.sidebarTypes == null ? 0 : ctx.sidebarTypes.size();
+    if (ctx.sidebarFilteredIndices != null) size = ctx.sidebarFilteredIndices.size();
+    if (size == 0) {
+      ctx.sidebarSelectedIndex = -1;
+      ctx.sidebarScrollOffset = 0;
+      return;
+    }
+    int visibleIndex =
+        ctx.sidebarFilteredIndices == null
+            ? ctx.sidebarSelectedIndex
+            : ctx.sidebarFilteredIndices.indexOf(ctx.sidebarSelectedIndex);
+    visibleIndex = Math.max(0, Math.min(visibleIndex, size - 1));
+    ctx.sidebarSelectedIndex =
+        ctx.sidebarFilteredIndices == null
+            ? visibleIndex
+            : ctx.sidebarFilteredIndices.get(visibleIndex);
+    int height = Math.max(1, ctx.sidebarAreaHeight);
+    ctx.sidebarScrollOffset = Math.max(0, Math.min(ctx.sidebarScrollOffset, size - height));
+    if (visibleIndex < ctx.sidebarScrollOffset) {
+      ctx.sidebarScrollOffset = visibleIndex;
+    } else if (visibleIndex >= ctx.sidebarScrollOffset + height) {
+      ctx.sidebarScrollOffset = visibleIndex - height + 1;
+    }
   }
 
   void enterSearchMode() {
@@ -1028,8 +1070,7 @@ public final class TuiCommandExecutor {
     if (ctx.searchOriginFocus == Focus.DETAIL) {
       tab.detailSearchQuery = "";
     } else if (ctx.searchOriginSidebar) {
-      ctx.sidebarSearchQuery = "";
-      ctx.sidebarFilteredIndices = null;
+      applySidebarFilter("");
     } else {
       tab.searchQuery = "";
       tab.filteredIndices = null;
@@ -1055,6 +1096,11 @@ public final class TuiCommandExecutor {
     try {
       completer.complete(null, parsed, candidates);
     } catch (Exception e) {
+      // Leave the input as typed, but say why TAB offered nothing (e.g. the recording could not
+      // be re-read for chunk ids or constant-pool types). A hint, not addOutputLine: while a
+      // command runs, addOutputLine appends to asyncOutputBuffer, a plain list the command thread
+      // is writing to; the hint is UI-thread state only.
+      ctx.showHintMessage("Completion failed: " + Failures.describe(e));
       return;
     }
 
@@ -1288,6 +1334,7 @@ public final class TuiCommandExecutor {
       p.getOutputStream().close();
       p.waitFor(2, TimeUnit.SECONDS);
     } catch (Exception ignore) {
+      // clipboard helpers are optional; copy already reported its own errors
     }
   }
 

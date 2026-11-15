@@ -240,7 +240,7 @@ public final class OtlpPathEvaluator {
   private static List<Map<String, Object>> applyOp(
       List<Map<String, Object>> rows, SamplesPath.PipelineOp op, String defaultValueField) {
     return switch (op) {
-      case SamplesPath.CountOp c -> List.of(Map.of("count", rows.size()));
+      case SamplesPath.CountOp _ -> List.of(Map.of("count", rows.size()));
       case SamplesPath.TopOp top -> applyTop(rows, top, defaultValueField);
       case SamplesPath.GroupByOp gb -> applyGroupBy(rows, gb);
       case SamplesPath.StatsOp s -> applyStats(rows, s.valueField());

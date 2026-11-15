@@ -36,4 +36,36 @@ class JfrPathEvaluatorProjectionTest {
     assertEquals("main", out.get(0));
     assertEquals("worker-1", out.get(1));
   }
+
+  /**
+   * An index segment such as the documented {@code stackTrace/frames/0} used to switch on leftover
+   * debug output: a line on stderr and an append to {@code /tmp/jfr-shell-debug.log} for every
+   * event projected.
+   */
+  @Test
+  void indexSegmentWritesNothingToStderr() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (rec, consumer) ->
+                consumer.accept(
+                    new JfrPathEvaluator.Event(
+                        "jdk.ExecutionSample",
+                        Map.of("stackTrace", Map.of("frames", List.of(Map.of("lineNumber", 42))))));
+    var q = JfrPathParser.parse("events/jdk.ExecutionSample/stackTrace/frames/0/lineNumber");
+
+    java.io.PrintStream original = System.err;
+    java.io.ByteArrayOutputStream err = new java.io.ByteArrayOutputStream();
+    System.setErr(new java.io.PrintStream(err, true));
+    List<Object> out;
+    try {
+      out = new JfrPathEvaluator(src).evaluateValues(session, q);
+    } finally {
+      System.setErr(original);
+    }
+
+    assertEquals(List.of(42), out);
+    assertEquals("", err.toString(), "stderr");
+  }
 }

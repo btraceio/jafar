@@ -10,6 +10,10 @@ final class MultiTypeStack {
     stack = new ArrayDeque<>(capacity);
   }
 
+  void clear() {
+    stack.clear();
+  }
+
   void push(Object value) {
     stack.push(value);
   }

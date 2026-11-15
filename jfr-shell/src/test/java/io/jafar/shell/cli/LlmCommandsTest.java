@@ -1,12 +1,11 @@
 package io.jafar.shell.cli;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.shell.core.llm.LlmBackend;
 import java.io.FileOutputStream;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -34,6 +33,7 @@ class LlmCommandsTest {
 
   private static final class FakeHost implements LlmCommands.Host {
     final List<String> output = new ArrayList<>();
+    final List<String> errors = new ArrayList<>();
     final Map<String, String> settings = new HashMap<>();
     final List<String> queriesRun = new ArrayList<>();
     String moduleId = "jfr";
@@ -47,6 +47,12 @@ class LlmCommandsTest {
     @Override
     public void println(String line) {
       output.add(line);
+    }
+
+    @Override
+    public void error(String line) {
+      output.add(line);
+      errors.add(line);
     }
 
     @Override
@@ -78,6 +84,48 @@ class LlmCommandsTest {
     String text() {
       return String.join("\n", output);
     }
+  }
+
+  /**
+   * A command that did not do what it was asked reports its headline through {@code Host.error},
+   * which the shells count, so a failing {@code ask}/{@code as-query}/{@code explain} line fails a
+   * script. The advice after the headline stays ordinary output.
+   */
+  @Test
+  void failuresReportTheirHeadlineAsAnError() {
+    FakeHost usage = new FakeHost();
+    new LlmCommands(usage).asQuery("   ");
+    assertEquals(List.of("Usage: as-query [--dry-run] <question>"), usage.errors);
+
+    FakeHost noBackend = new FakeHost();
+    new LlmCommands(noBackend).asQuery("why slow?");
+    assertEquals(List.of("No LLM backend is installed."), noBackend.errors, noBackend.text());
+    assertTrue(noBackend.text().contains("plugin catalog"), noBackend.text());
+
+    FakeHost askNoBackend = new FakeHost();
+    new LlmCommands(askNoBackend).analyze("why slow?");
+    assertEquals(1, askNoBackend.errors.size(), askNoBackend.text());
+
+    FakeHost askUsage = new FakeHost();
+    new LlmCommands(askUsage).analyze("");
+    assertEquals(1, askUsage.errors.size(), askUsage.text());
+    assertTrue(askUsage.errors.get(0).startsWith("Usage: ask"), askUsage.text());
+
+    FakeHost nothingToExplain = new FakeHost();
+    new LlmCommands(nothingToExplain).explain("");
+    assertEquals(1, nothingToExplain.errors.size(), nothingToExplain.text());
+
+    FakeHost unknown = new FakeHost();
+    new LlmCommands(unknown).llm(List.of("frobnicate"));
+    assertEquals(List.of("Unknown: llm frobnicate"), unknown.errors);
+  }
+
+  @Test
+  void statusIsNotAFailure() {
+    FakeHost host = new FakeHost();
+    new LlmCommands(host).llm(List.of());
+    assertTrue(host.text().contains("Configuration"), host.text());
+    assertTrue(host.errors.isEmpty(), String.join("\n", host.errors));
   }
 
   @Test
@@ -151,27 +199,27 @@ class LlmCommandsTest {
   @Test
   void statusReportsTheFailedToLoadSectionForABrokenProviderJar() throws Exception {
     // A fixture jar whose service file names a provider class that cannot initialize — the shape
-    // of a broken installed plugin jar. Discovery runs over the thread context classloader (the
-    // plugin system is not initialized in tests), the way shell-core's discovery tests drive it.
+    // of a broken installed plugin jar. Installed as a local override jar the same way
+    // StartupLogTest does it, so the test does not care whether the plugin system was already
+    // initialized by an earlier test in this JVM (test order is not guaranteed).
     Path jar = tempDir.resolve("broken-llm-provider.jar");
     try (JarOutputStream out = new JarOutputStream(new FileOutputStream(jar.toFile()))) {
       out.putNextEntry(new ZipEntry("META-INF/services/" + LlmBackend.class.getName()));
       out.write((BrokenPluginLlmBackend.class.getName() + "\n").getBytes(StandardCharsets.UTF_8));
       out.closeEntry();
     }
-    URLClassLoader fixtureLoader =
-        new URLClassLoader(new URL[] {jar.toUri().toURL()}, getClass().getClassLoader());
-    ClassLoader previous = Thread.currentThread().getContextClassLoader();
-    Thread.currentThread().setContextClassLoader(fixtureLoader);
+    System.setProperty("jfr.shell.backend.jars", jar.toAbsolutePath().toString());
     try {
+      io.jafar.shell.plugin.PluginManager
+          .reinitialize(); // rebuild the plugin loader with the override
       FakeHost host = new FakeHost();
       new LlmCommands(host).status();
       String text = host.text();
       assertTrue(text.contains("Failed to load"), text);
       assertTrue(text.contains(BrokenPluginLlmBackend.class.getName()), text);
     } finally {
-      Thread.currentThread().setContextClassLoader(previous);
-      fixtureLoader.close();
+      System.clearProperty("jfr.shell.backend.jars");
+      io.jafar.shell.plugin.PluginManager.reinitialize(); // drop the override for later tests
     }
   }
 

@@ -20,7 +20,9 @@ public final class ShellModuleLoader {
       try {
         module.initialize();
         loaded.add(module);
-        LOG.info("Loaded module: {} ({})", module.getDisplayName(), module.getId());
+        // Routine status: DEBUG. jfr-shell's slf4j-simple prints INFO to the terminal, so at INFO
+        // this line appeared on every 'jfr-shell --tui' start (and stayed there after exit).
+        LOG.debug("Loaded module: {} ({})", module.getDisplayName(), module.getId());
       } catch (Exception e) {
         LOG.error("Failed to initialize module: {}", module.getId(), e);
       }

@@ -107,7 +107,10 @@ p.handle((type, value, ctl) -> { ... });
 **Limitations**:
 1. Parser instances (`TypedJafarParser`, `UntypedJafarParser`) are **not** thread-safe and should not be shared across threads
 2. `ParsingContext` instances **are** thread-safe and can be shared
-3. Handlers are called sequentially on the parser thread - concurrent handler execution is not supported
+3. Handlers are called concurrently: chunks are parsed in parallel on a pool of
+   `max(availableProcessors - 2, 1)` parser-owned threads, so a handler must be thread-safe. Events
+   are in file order within one chunk and unordered between chunks. A parser created from
+   `ParsingContext.withParallelism(1)` calls handlers one at a time, in file order
 
 **Example**:
 ```java

@@ -114,6 +114,25 @@ func TestReadStringRejectsUnknownEncoding(t *testing.T) {
 	}
 }
 
+// An unknown encoding id has no known payload length. skipString used to treat
+// it as an empty string and return nil, leaving the reader inside the string's
+// bytes while readString rejected the same input.
+func TestSkipStringRejectsUnknownEncoding(t *testing.T) {
+	md := &Metadata{stringTypeID: -1}
+	for _, id := range []byte{6, 9, 0x7f, 0x80, 0xff} {
+		data := []byte{id, 5, 'a', 'l', 'p', 'h', 'a'}
+		_, _, readErr := readString(newReader(data), md, nil)
+		skipErr := skipString(newReader(data))
+		if skipErr == nil {
+			t.Errorf("id %d: skipString returned nil, want an error", id)
+			continue
+		}
+		if readErr == nil || skipErr.Error() != readErr.Error() {
+			t.Errorf("id %d: skipString error %q, readString error %v; want the same", id, skipErr, readErr)
+		}
+	}
+}
+
 func TestSkipStringMatchesReadString(t *testing.T) {
 	for _, data := range [][]byte{
 		{strNull},

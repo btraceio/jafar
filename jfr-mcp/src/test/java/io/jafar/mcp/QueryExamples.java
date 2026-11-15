@@ -175,6 +175,15 @@ final class QueryExamples {
    */
   private static int scanQueryEnd(String text, int start, List<String> roots) {
     int i = start + rootLength(text.substring(start), roots);
+    // JfrPath roots carry their slash ("events/"), so the first segment follows the root directly;
+    // without this the loop stopped at it and no slash-rooted prose example was ever checked.
+    if (text.charAt(i - 1) == '/') {
+      int segment = consumeSegment(text, i);
+      if (segment == i) {
+        return -1; // "root/" with nothing after: grammar fragment, not an example
+      }
+      i = segment;
+    }
     while (i < text.length()) {
       char c = text.charAt(i);
       if (c == '/') {

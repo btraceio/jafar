@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -24,13 +25,14 @@ class ShowConstantPoolSymbolValuesTest {
   void symbolEntriesHaveNonEmptyString() throws Exception {
     Path jfr = resource("test-ap.jfr");
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
 
     var evaluator = new JfrPathEvaluator();
     var query = JfrPathParser.parse("cp/jdk.types.Symbol");
-    List<Map<String, Object>> rows = evaluator.evaluate(sessions.getCurrent().get().session, query);
+    List<Map<String, Object>> rows =
+        evaluator.evaluate((JFRSession) sessions.getCurrent().get().session, query);
 
     assertFalse(rows.isEmpty(), "Expected some cp/jdk.types.Symbol rows");
 

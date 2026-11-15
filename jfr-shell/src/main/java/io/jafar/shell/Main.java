@@ -4,17 +4,21 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
-import io.jafar.shell.cli.ScriptRunner;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.discovery.ProviderDiscovery;
+import io.jafar.shell.core.scripting.ScriptRunner;
+import io.jafar.shell.live.TailRunner;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 import picocli.CommandLine;
@@ -29,7 +33,9 @@ import picocli.CommandLine;
       Main.MetadataCommand.class,
       Main.ChunksCommand.class,
       Main.CpCommand.class,
-      Main.ScriptCommand.class
+      Main.ScriptCommand.class,
+      Main.PsCommand.class,
+      Main.TailCommand.class
     })
 public final class Main implements Callable<Integer> {
   @CommandLine.Option(
@@ -68,7 +74,7 @@ public final class Main implements Callable<Integer> {
       description = "Install a backend plugin from a local JAR file and exit")
   private String installPlugin;
 
-  static final class VersionProvider implements CommandLine.IVersionProvider {
+  public static final class VersionProvider implements CommandLine.IVersionProvider {
     @Override
     public String[] getVersion() {
       return new String[] {Version.VALUE};
@@ -170,6 +176,7 @@ public final class Main implements Callable<Integer> {
       }
 
       JfrBackend current = registry.getCurrent();
+      warnIfBackendNotFromThisBuild(current);
 
       // If user specified a backend, verify it was selected
       if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
@@ -205,6 +212,62 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  /** Backends built in this repository, versioned with the shell. */
+  private static final Set<String> IN_TREE_BACKENDS = Set.of("jafar", "jdk");
+
+  /**
+   * Prints {@link #backendBuildMismatch} to stderr when it applies.
+   *
+   * @param backend the backend the shell is about to use
+   */
+  static void warnIfBackendNotFromThisBuild(JfrBackend backend) {
+    String warning = backendBuildMismatch(Version.VALUE, backend);
+    if (warning != null) {
+      System.err.println(warning);
+    }
+  }
+
+  /**
+   * A development build of the shell ({@code -SNAPSHOT}) does not contain its backends: unless told
+   * otherwise it runs whatever {@code jfr-shell-jafar} is installed under {@code
+   * ~/.jfr-shell/plugins}, which it fetches from Maven Central on its first start. Typing a change
+   * to {@code jfr-shell-jafar} into such a shell then exercises the released backend, silently
+   * (doc/agents/Verification.md, R1). This names that case. A backend reporting {@code dev} has no
+   * jar manifest, so it was loaded from this tree's classes (Gradle tests, an IDE) and is not
+   * flagged; neither is a release build of the shell, nor a backend from outside this repository.
+   *
+   * @param shellVersion this shell's version
+   * @param backend the selected backend
+   * @return the warning, or {@code null} when the backend is the one built with this shell
+   */
+  static String backendBuildMismatch(String shellVersion, JfrBackend backend) {
+    if (shellVersion == null || !shellVersion.endsWith("-SNAPSHOT") || backend == null) {
+      return null;
+    }
+    String id = backend.getId();
+    String version = backend.getVersion();
+    if (!IN_TREE_BACKENDS.contains(id)
+        || version == null
+        || "dev".equals(version)
+        || version.equals(shellVersion)) {
+      return null;
+    }
+    String module = "jfr-shell-" + id;
+    return "Warning: this jfr-shell is a development build ("
+        + shellVersion
+        + ") but its '"
+        + id
+        + "' backend is version "
+        + version
+        + ", not the one built with it. To run the built backend, pass -Djfr.shell.backend.jars="
+        + module
+        + "/build/libs/"
+        + module
+        + "-"
+        + shellVersion
+        + ".jar (doc/agents/Verification.md, R1).";
+  }
+
   /**
    * Attempt to auto-install the default "jafar" backend from Maven repositories. After successful
    * installation, reinitializes the plugin system and re-discovers backends so the tool can
@@ -231,6 +294,56 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  /**
+   * Shared backend validation for non-interactive commands: selects the backend via system
+   * property, auto-installs a default when none is present, and honors {@code --backend} (incl. the
+   * auto-install-and-restart path). Returns 0 on success, or the process exit code.
+   */
+  static Integer validateBackend(String backend) {
+    if (backend != null) {
+      System.setProperty("jfr.shell.backend", backend);
+    }
+    try {
+      BackendRegistry registry = BackendRegistry.getInstance();
+
+      if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
+        System.err.println("Error: No JFR backends available");
+        printBackendFailures(registry);
+        return 1;
+      }
+
+      JfrBackend current = registry.getCurrent();
+      warnIfBackendNotFromThisBuild(current);
+      if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
+        if (PluginManager.getInstance().canInstall(backend)) {
+          System.err.println("Backend not found: " + backend);
+          System.err.print("Downloading from Maven repositories... ");
+          try {
+            PluginManager.getInstance().installPlugin(backend);
+            System.err.println("done.");
+            System.err.println("Restart jfr-shell to use backend: " + backend);
+            return 1;
+          } catch (Exception e) {
+            System.err.println("failed: " + e.getMessage());
+            return 1;
+          }
+        }
+        System.err.println("Error: Backend not found: " + backend);
+        System.err.println(
+            "Available backends: "
+                + registry.listAll().stream()
+                    .map(b -> ProviderDiscovery.call(b::getId, "?"))
+                    .collect(Collectors.joining(", ")));
+        printBackendFailures(registry);
+        return 1;
+      }
+    } catch (IllegalStateException e) {
+      System.err.println("Error: " + e.getMessage());
+      return 1;
+    }
+    return 0;
+  }
+
   // Base class for non-interactive commands
   abstract static class NonInteractiveCommand implements Callable<Integer> {
     @CommandLine.Parameters(index = "0", description = "Path to JFR recording file")
@@ -242,52 +355,9 @@ public final class Main implements Callable<Integer> {
     protected String backend;
 
     protected Integer executeNonInteractive(String command) {
-      // Set backend selection via system property before registry initializes
-      if (backend != null) {
-        System.setProperty("jfr.shell.backend", backend);
-      }
-
-      // Validate backend
-      try {
-        BackendRegistry registry = BackendRegistry.getInstance();
-
-        // Auto-install default backend if none available
-        if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
-          System.err.println("Error: No JFR backends available");
-          printBackendFailures(registry);
-          return 1;
-        }
-
-        JfrBackend current = registry.getCurrent();
-        if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
-          // Check if plugin can be auto-installed
-          if (PluginManager.getInstance().canInstall(backend)) {
-            System.err.println("Backend not found: " + backend);
-            System.err.print("Downloading from Maven repositories... ");
-
-            try {
-              PluginManager.getInstance().installPlugin(backend);
-              System.err.println("done.");
-              System.err.println("Restart jfr-shell to use backend: " + backend);
-              return 1;
-            } catch (Exception e) {
-              System.err.println("failed: " + e.getMessage());
-              return 1;
-            }
-          }
-
-          System.err.println("Error: Backend not found: " + backend);
-          System.err.println(
-              "Available backends: "
-                  + registry.listAll().stream()
-                      .map(b -> ProviderDiscovery.call(b::getId, "?"))
-                      .collect(Collectors.joining(", ")));
-          printBackendFailures(registry);
-          return 1;
-        }
-      } catch (IllegalStateException e) {
-        System.err.println("Error: " + e.getMessage());
-        return 1;
+      Integer rc = validateBackend(backend);
+      if (rc != 0) {
+        return rc;
       }
       Path path = Paths.get(jfrFile);
       if (!Files.exists(path)) {
@@ -297,7 +367,7 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager<JFRSession> sessions =
+        SessionManager<Session> sessions =
             new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
@@ -496,6 +566,160 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  /** {@code ps} — list local JVMs with discoverable JFR event repositories (issue #92). */
+  @CommandLine.Command(
+      name = "ps",
+      mixinStandardHelpOptions = true,
+      description = "List local JVMs ([jfr] marks a discoverable disk-backed JFR event repository)")
+  static class PsCommand implements Callable<Integer> {
+    @Override
+    public Integer call() {
+      var processes = io.jafar.shell.live.DefaultLiveStreams.INSTANCE.listLocalJvm();
+      if (processes.isEmpty()) {
+        System.out.println(
+            "No local JVMs found (perf-data tree under "
+                + io.jafar.shell.live.DefaultLiveStreams.INSTANCE.searchedBase()
+                + ")");
+        return 0;
+      }
+      System.out.println("Local JVMs (use 'jfr-shell tail <pid>' to stream events):");
+      for (var p : processes) {
+        System.out.println(io.jafar.shell.live.JvmProcesses.renderRow(p));
+      }
+      System.out.println(io.jafar.shell.live.JvmProcesses.JFR_LEGEND);
+      return 0;
+    }
+  }
+
+  /**
+   * {@code tail <pid> [filter]} — one-shot live event streaming. Deliberately bypasses {@code
+   * executeNonInteractive}: its StringBuilder output buffering would hold the whole stream in
+   * memory and print it only at the end. Events print+flush as they arrive; Ctrl-C exits 0 (the
+   * TailRunner's SIGINT handler interrupts the loop); the target JVM exiting ends the stream
+   * cleanly.
+   */
+  @CommandLine.Command(
+      name = "tail",
+      mixinStandardHelpOptions = true,
+      description = "Stream live JFR events from a local JVM until Ctrl-C")
+  static class TailCommand implements Callable<Integer> {
+    @CommandLine.Parameters(index = "0", description = "Target JVM PID")
+    private int pid;
+
+    @CommandLine.Parameters(
+        index = "1",
+        arity = "0..1",
+        description =
+            "JfrPath filter (events root, per-event operators only), e.g. "
+                + "\"events/jdk.ExecutionSample | filter(costlyStacks == true)\"")
+    private String filterExpr;
+
+    @CommandLine.Option(
+        names = {"--repository"},
+        description = "JFR event repository directory (bypasses discovery)")
+    private String repository;
+
+    @CommandLine.Option(
+        names = {"--limit", "-l"},
+        description = "Stop after N events (default: stream until Ctrl-C)")
+    private Long limit;
+
+    @CommandLine.Option(
+        names = {"--format", "-f"},
+        description = "Output format: table (default), json")
+    private String format = "table";
+
+    // Package-private output routing override; null => the process streams (System.out/err).
+    // Integration tests (LiveTailIT) inject captured PrintStreams here so they can read tail
+    // output without swapping the process-global streams from worker threads.
+    transient PrintStream outOverride;
+    transient PrintStream errOverride;
+
+    @Override
+    public Integer call() {
+      final PrintStream out = outOverride != null ? outOverride : System.out;
+      final PrintStream err = errOverride != null ? errOverride : System.err;
+      // Validate filter/format FIRST (cheap, no I/O) so a bad expression never reaches the
+      // hardening check or opens any stream.
+      io.jafar.shell.jfrpath.JfrPath.Query filter = null;
+      TailRunner.Format fmt;
+      try {
+        if (filterExpr != null && !filterExpr.isBlank()) {
+          filter = TailRunner.parseFilter(filterExpr);
+        }
+        fmt = TailRunner.parseFormat(format);
+      } catch (IllegalArgumentException e) {
+        err.println("Error: " + e.getMessage());
+        return 1;
+      }
+
+      Path repo;
+      try {
+        if (repository != null) {
+          repo = Path.of(repository);
+          if (!java.nio.file.Files.isDirectory(repo)) {
+            err.println("Error: repository directory not found: " + repo);
+            return 1;
+          }
+        } else {
+          // Discovery failure throws the rich IOException (searched temp base + --repository
+          // suggestion); it propagates to the catch below verbatim.
+          repo = io.jafar.shell.live.DefaultLiveStreams.INSTANCE.findRepository(pid);
+        }
+      } catch (Exception e) {
+        err.println("Error: " + e.getMessage());
+        return 1;
+      }
+
+      // attach applies the full planted-directory hardening (explicit --repository paths
+      // included) and returns a STARTED session. LiveJfrSession implements AutoCloseable
+      // (Session); close() is idempotent and never throws. TWRS closes the stream and its
+      // dispatch thread on the error path too; the shutdown hook stays for hard process exits
+      // (double-close is a no-op). The Ctrl-C path is TailRunner's signal handler interrupting
+      // the loop, which returns normally (exit 0).
+      try (io.jafar.shell.live.LiveStreamView session =
+          io.jafar.shell.live.DefaultLiveStreams.INSTANCE.attach(pid, repo)) {
+        Runtime.getRuntime()
+            .addShutdownHook(
+                new Thread(
+                    () -> {
+                      try {
+                        session.close();
+                      } catch (Exception ignored) {
+                        // close() is idempotent and never throws in practice
+                      }
+                    }));
+        TailRunner.run(
+            session,
+            filter,
+            fmt,
+            limit == null ? -1 : limit,
+            new TailRunner.PrintSink(
+                new CommandDispatcher.IO() {
+                  @Override
+                  public void println(String s) {
+                    out.println(s);
+                  }
+
+                  @Override
+                  public void printf(String fmt2, Object... args) {
+                    out.printf(fmt2, args);
+                  }
+
+                  @Override
+                  public void error(String s) {
+                    err.println(s);
+                  }
+                },
+                fmt));
+        return 0;
+      } catch (Exception e) {
+        err.println("Error: " + e.getMessage());
+        return 1;
+      }
+    }
+  }
+
   @CommandLine.Command(name = "script", description = "Execute a script file or from stdin")
   static class ScriptCommand implements Callable<Integer> {
     @CommandLine.Parameters(
@@ -522,55 +746,20 @@ public final class Main implements Callable<Integer> {
 
     @Override
     public Integer call() {
-      // Set backend selection via system property before registry initializes
-      if (backend != null) {
-        System.setProperty("jfr.shell.backend", backend);
-      }
-
-      // Validate backend
-      try {
-        BackendRegistry registry = BackendRegistry.getInstance();
-
-        // Auto-install default backend if none available
-        if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
-          System.err.println("Error: No JFR backends available");
-          printBackendFailures(registry);
-          return 1;
-        }
-
-        JfrBackend current = registry.getCurrent();
-        if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
-          // Check if plugin can be auto-installed
-          if (PluginManager.getInstance().canInstall(backend)) {
-            System.err.println("Backend not found: " + backend);
-            System.err.print("Downloading from Maven repositories... ");
-
-            try {
-              PluginManager.getInstance().installPlugin(backend);
-              System.err.println("done.");
-              System.err.println("Restart jfr-shell to use backend: " + backend);
-              return 1;
-            } catch (Exception e) {
-              System.err.println("failed: " + e.getMessage());
-              return 1;
-            }
-          }
-
-          System.err.println("Error: Backend not found: " + backend);
-          System.err.println(
-              "Available backends: "
-                  + registry.listAll().stream()
-                      .map(b -> ProviderDiscovery.call(b::getId, "?"))
-                      .collect(Collectors.joining(", ")));
-          printBackendFailures(registry);
-          return 1;
-        }
-      } catch (IllegalStateException e) {
-        System.err.println("Error: " + e.getMessage());
-        return 1;
+      Integer rc = validateBackend(backend);
+      if (rc != 0) {
+        return rc;
       }
       // Disable pager in script mode to prevent blocking on "-- more --" prompts
       System.setProperty("jfr.shell.pager", "off");
+
+      // '#!/usr/bin/env -S jbang jfr-shell@btraceio script -': the kernel passes the script's own
+      // path after '-', so that file is the script and $1 is the argument after it
+      var shebang = ScriptRunner.shebangScript(scriptPath, arguments);
+      if (shebang.isPresent()) {
+        scriptPath = shebang.get().toString();
+        arguments = new ArrayList<>(arguments.subList(1, arguments.size()));
+      }
 
       // Check if reading from stdin
       boolean fromStdin = "-".equals(scriptPath);
@@ -583,7 +772,7 @@ public final class Main implements Callable<Integer> {
 
       try {
         ParsingContext ctx = ParsingContext.create();
-        SessionManager<JFRSession> sessions =
+        SessionManager<Session> sessions =
             new SessionManager<>((p, c) -> new JFRSession(p, (ParsingContext) c), ctx);
         StringBuilder output = new StringBuilder();
         StringBuilder errors = new StringBuilder();
@@ -612,41 +801,21 @@ public final class Main implements Callable<Integer> {
                 null,
                 false); // Suppress informational messages in script mode
 
-        CommandDispatcher.IO scriptIO =
-            new CommandDispatcher.IO() {
-              @Override
-              public void println(String s) {
-                System.out.println(s);
-              }
-
-              @Override
-              public void printf(String fmt, Object... args) {
-                System.out.printf(fmt, args);
-              }
-
-              @Override
-              public void error(String s) {
-                System.err.println(s);
-              }
-            };
-
-        ScriptRunner runner = new ScriptRunner(dispatcher, scriptIO, arguments);
-        runner.setContinueOnError(continueOnError);
-
-        ScriptRunner.ExecutionResult result;
+        List<String> lines;
         if (fromStdin) {
           // Read from stdin
-          List<String> lines = new ArrayList<>();
+          lines = new ArrayList<>();
           try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
             String line;
             while ((line = reader.readLine()) != null) {
               lines.add(line);
             }
           }
-          result = runner.execute(lines);
         } else {
-          result = runner.execute(path);
+          lines = Files.readAllLines(path);
         }
+        ScriptRunner.ExecutionResult result =
+            dispatcher.runScript(lines, arguments, continueOnError);
 
         // Print captured output
         if (output.length() > 0) {

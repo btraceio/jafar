@@ -333,4 +333,21 @@ class JfrPathDateTimeFunctionsTest {
       assertEquals("1.50s", out.get(1).get("value"));
     }
   }
+
+  @Nested
+  class AsDateTimeInvalidPattern {
+    @Test
+    void invalidPatternIsNamedInTheError() throws Exception {
+      var eval = new JfrPathEvaluator(twoEvents);
+      var q =
+          JfrPathParser.parse(
+              "events/jdk.ExecutionSample | select(asDateTime(startTime, 'not-a-pattern') as t)");
+
+      var thrown = assertThrows(IllegalArgumentException.class, () -> eval.evaluate(session, q));
+
+      assertTrue(thrown.getMessage().contains("asDateTime()"), thrown.getMessage());
+      assertTrue(thrown.getMessage().contains("not-a-pattern"), thrown.getMessage());
+      assertNotNull(thrown.getCause());
+    }
+  }
 }

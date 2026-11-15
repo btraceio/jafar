@@ -249,16 +249,32 @@ try (TypedJafarParser parser = ctx.newTypedParser(jfrFile)) {
 
 ## Annotation Processor Configuration
 
+`jafar-processor` is not published to Maven Central, so build the jar from this repository first:
+
+```bash
+./gradlew :jafar-processor:jar
+```
+
 ### Gradle
 
 ```gradle
 dependencies {
     implementation 'io.btrace:jafar-parser:X.Y.Z'
-    annotationProcessor 'io.btrace:jafar-processor:X.Y.Z'
+    annotationProcessor 'io.btrace:jafar-parser:X.Y.Z'
+    annotationProcessor files('/path/to/jafar/jafar-processor/build/libs/jafar-processor-<version>.jar')
 }
 ```
 
 ### Maven
+
+Install the jar into your local Maven repository:
+
+```bash
+mvn install:install-file -Dfile=jafar-processor/build/libs/jafar-processor-<version>.jar \
+    -DgroupId=io.btrace -DartifactId=jafar-processor -Dversion=X.Y.Z -Dpackaging=jar
+```
+
+Then add it and the parser to the processor path:
 
 ```xml
 <dependencies>
@@ -279,6 +295,11 @@ dependencies {
                     <path>
                         <groupId>io.btrace</groupId>
                         <artifactId>jafar-processor</artifactId>
+                        <version>X.Y.Z</version>
+                    </path>
+                    <path>
+                        <groupId>io.btrace</groupId>
+                        <artifactId>jafar-parser</artifactId>
                         <version>X.Y.Z</version>
                     </path>
                 </annotationProcessorPaths>

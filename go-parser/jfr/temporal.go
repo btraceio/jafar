@@ -19,13 +19,24 @@ const (
 // normalize converts a tick-based field value to nanoseconds. Values of fields
 // that are not tick-based are returned unchanged.
 func (c *chunkParser) normalize(owner *ClassType, fieldName string, value int64) int64 {
+	return c.applyTemporal(c.temporalKind(owner, fieldName), value)
+}
+
+// temporalKind returns the normalisation kind of a field, so that a caller
+// decoding many values of one field (an array) looks it up once.
+func (c *chunkParser) temporalKind(owner *ClassType, fieldName string) int {
 	if owner == nil || fieldName == "" || c.info == nil {
-		return value
+		return temporalNone
 	}
 	if owner.temporal == nil {
 		owner.temporal = buildTemporalKinds(owner)
 	}
-	switch owner.temporal[fieldName] {
+	return owner.temporal[fieldName]
+}
+
+// applyTemporal converts value according to a kind from temporalKind.
+func (c *chunkParser) applyTemporal(kind int, value int64) int64 {
+	switch kind {
 	case temporalTimestamp:
 		return c.info.AsEpochNanos(value)
 	case temporalTimespan:

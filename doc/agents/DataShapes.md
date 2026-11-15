@@ -48,9 +48,38 @@ The untyped parser delivers a string constant as a single-entry map, `{string=[B
   names, symbols and group-by keys reaching the model became `{string=<redacted>}`. The redaction
   looked like it was working. Fixed by unwrapping before the decision, so the decision is taken on
   the outer field's real name.
+- **A column name chosen for display was redacted too.** `jafar-shell` remembered the values of a
+  projected path (`show events/jdk.GarbageCollection/cause`) for `explain` under the table's
+  `value` header — and `value` is in the same default list, so the model received `<redacted>`
+  for every value, and a fluent answer anyway. They are now remembered under the projected path
+  (`cause`, `stackTrace/frames/0/lineNumber`), so the decision is again taken on the field's real
+  name; `ShellArtifactTest.projectedValuesReachExplainUnredacted` passes what the shell remembers
+  through the real `Redactor`.
+
+- **The unified shell printed the wrapper.** `jafar-shell`'s `printResult` handed JFR rows
+  straight to `TableFormatter` and its CSV/JSON writers, so `gc-analysis.jfrs` grouped by
+  `{name=G1New}` and `thread-profiling.jfrs` by `{string=java/lang/Object}`. jfr-shell never showed
+  it because its `TableRenderer.toCell` collapses a single-entry map — a rule that lived in a
+  renderer, so a second shell with its own renderer did not inherit it — and nor did jfr-shell's
+  own CSV and JSON writers, which printed `{name=G1New}` and `"name": {"name": "G1New"}`. The rule
+  now lives in `ConstantValues` (jfr-shell), used by jfr-shell's CSV/JSON output and by every
+  format of `jafar-shell` (`Shell.forDisplay`).
+
+### A single-entry map is not always a wrapper
+
+The converse of the above, and the first version of that fix got it wrong. The wrapper is a plain
+`java.util.HashMap`, so nothing about the value says "constant": `metadata/jdk.types.Symbol` has
+one field, its `fieldsByName` is `{string={name=string, type=java.lang.String, ...}}`, and
+collapsing every single-entry cell of a JFR result printed it as the inner map — the field's name
+gone, in `--format json` where a script would read it. `ConstantValues.holdsRecordingValues`
+decides by where the rows came from instead: `events/` and `constants/` hold recording values and
+are unwrapped; `metadata/` and `chunks/` are structure and are not. jfr-shell's table still
+collapses every single-entry cell, whatever the root; a table is for reading, not for parsing.
 
 `JfrAnalyses.unwrapValue` handles the `ArrayType`/`ComplexType` case; `Redactor` handles the
-single-entry-map case. If you are reading event values anywhere else, one of those two applies.
+single-entry-map case; `TuiTableRenderer.unwrap` handles both for display, and `ConstantValues`
+decides when display may use it. If you are reading event values anywhere else, one of those
+applies.
 
 ### A display list is not a data list
 
@@ -67,7 +96,7 @@ list silently empty.
 
 ### A declared type is not a present type
 
-`JFRSession.scanMetadata` reads the first chunk's metadata and stops, so `getAvailableTypes()`
+`JFRSession.scanMetadata` reads every chunk's metadata and skips its events, so `getAvailableTypes()`
 returns every type the JVM *registered* — including those that emitted nothing. A recording made
 with an agent that ships its own sampler lists an empty `jdk.ExecutionSample` beside a vendor type
 holding thousands of events.
@@ -87,6 +116,26 @@ unless you know that. `getEventTypeCounts()` is truthful only after a scan; for 
 
 Related: the numbers shown by `metadata --events-only` are **class IDs**, not counts.
 `jdk.ActiveRecording` displays as `1830` and has one event.
+
+### A checkpoint's pool is not that checkpoint's entries
+
+`CheckpointEvent.readConstantPools` adds every checkpoint's entries to **one pool per type per
+chunk** (`addOrGetConstantPool`). The pool a `ChunkParserListener` sees in `onCheckpoint` therefore
+holds everything read so far in the chunk, and it grows with each checkpoint. `JafarSources` drained
+and counted the whole pool at every checkpoint. Chunk 1 of `tck-test.jfr` has 152 checkpoints, so
+its 875 distinct `jdk.types.Symbol` ids came back as 28882 rows: `cp/jdk.types.Symbol` answered
+31390 instead of 3383, and `loadSummary` and `crossref`'s `cpTotal` summed the same growing sizes.
+The answer hid behind a concurrency bug that made it vary (see `ChunkParserListener` in
+[Architecture.md](Architecture.md#key-classes-to-understand)). Once the race was fixed, the count was
+stable but still wrong. Counting distinct ids per chunk is what showed the error.
+
+The opposite shortcut fails too: `getAvailableTypes` stopped at the first checkpoint it saw, which
+in chunk 1 holds 1 of the chunk's 29 types, so it reported 13 of the recording's 32 types.
+
+Read a chunk's pools once, when they are complete. `StreamingChunkParser` reads the whole checkpoint
+chain before the first event, so that is at the first event or at chunk end; the checkpoint whose
+`nextOffsetDelta` is 0 is also the last one read. `ConstantPoolChunkLocalityTest` and the TCK's
+constant pool checks pin the counts.
 
 ### A missing column is not an error
 
@@ -110,6 +159,155 @@ that matched no event rather than returning nothing. The general point stands fo
 **a path that resolves to null must be distinguishable from a value that is null.** Validate against
 the first row, as `applySortBy` does, or count what you consumed, as `aggregateGroupBy` does.
 
+### A type id is not a type
+
+A metadata class id names a type **within one chunk**. Chunks written by different producers — a
+JVM's own chunk and an agent's, concatenated — assign ids independently. `tck-test.jfr` has two
+chunks and 50 of its 290 ids name different types in each: id 125 is `jdk.CompilerConfiguration` in
+chunk 1 and `datadog.ProfilerCounter` in chunk 2; even `long` is `#11` in one and `#219` in the
+other.
+
+`UntypedDeserializerCache` is shared by every chunk of a parse and was keyed by that id. Whichever
+chunk generated a deserializer for id 125 first owned it, and the other chunk's events were decoded
+with the wrong layout — `IOException: Unexpected string constant id: 85` when the misread landed on
+a string, a plausible wrong map when it did not. Chunks parse on parallel threads, so *which* type
+won varied between runs: `Code generation failed for datadog.ProfilerCounter` appeared in two runs
+and in none of the next five. It looked flaky and was deterministic per ordering.
+
+The cache is now keyed by `UntypedCodeGenerator.cacheKey` — name, id and full reachable layout —
+and each chunk keeps its own id → deserializer map. Since then the cache has outgrown the parse: a
+`ParsingContext` hands one cache to every untyped parse made from it, so the same key now has to
+hold between *recordings*. It does, for the reason it holds between chunks — a chunk is
+self-contained, so two chunks of one file are no more related than two files — and
+`SharedUntypedDeserializerCacheTest` pins it with recordings that reuse an id, rename a field, or
+differ only in a `@Timestamp` annotation. The typed path was already safe: it chooses its
+cache by `MetadataFingerprint`. Anything else that outlives a chunk must not be keyed by a class id
+either.
+
+Nor by `MetadataClass.equals`: it compares id, name, supertype and fields, and `MetadataField.equals`
+compares only type id, constant-pool flag, dimension and declaring type — **not field names, not
+annotations**. `TemporalNormalizer` cached each class's tick-normalization table in a static map
+under that equality, so two chunks declaring the same `test.T {a: long}`, one with
+`@Timestamp("TICKS")` on `a` and one without, shared one table: whichever chunk was decoded first
+decided for both, and the other got raw ticks as epoch nanos or the reverse, on the generic path and
+the generated one (`TemporalAnnotationPerChunkTest`). The table now lives on the `MetadataClass`
+instance, which is per chunk. The generated path's structural key spells names out, length-prefixed,
+so a field name cannot pass for key syntax.
+
+### A build-time handler is not a runtime handler
+
+`jafar-processor` generates handlers without the recording's metadata, and its output was wrong on
+real recordings in several ways while every test passed - the existing tests only checked the
+generated source text. They were found by compiling, loading and running that output: the skip by
+the first such test, the other two by comparing build-time against runtime handlers event by event
+on a JVM recording with the same interfaces; the byte by reading the generator against the JDK's
+reader.
+
+- **A skip that consumed nothing.** Undeclared fields were skipped with
+  `TypeSkipper.skip(MetadataField, ...)`, which called `fieldType.skipDirect(stream)`. A primitive
+  class has no fields, so its skipper has no instructions: an undeclared `long startTime` consumed
+  nothing, and `seq` came back as `-665084514` (the low bits of `startTime`). It now uses the same
+  per-field instructions as skipping the owning type. Those instructions had a gap of their own:
+  inside array elements an array instruction was run as a no-op and its element count as an
+  instruction, so an array of an inline type with an array field was misskipped - and constant pool
+  entries after such an entry were indexed at the wrong offset, resolving to `null`
+  (`NestedArraySkipTest`).
+- **A storage guessed from the Java type.** A complex accessor was read as a pool reference and a
+  `String` accessor as an inline value, but in JVM recordings `StackTrace.frames` is inline and
+  `ExecutionSample.state` is a pooled `ThreadState`. Both were misread silently. The read is now
+  chosen from the metadata once per metadata class (`Plan` in `HandlerTemplate.java`): an inline
+  complex value is read in place by a new instance of the nested type's generated handler, and a
+  pooled simple type behind a `String` accessor is resolved through the field type's pool and
+  unwrapped. Two things to know when touching it: `MetadataField.getDimension()` is `-1`, not `0`,
+  for a non-array field (a `== 0` check rejected every `ThreadState`), and the pool entry of a
+  simple type comes back as a `String` when `parser-codegen` is on the classpath but as a
+  one-entry `Map` without it (`MutableConstantPool.get` falls back to `MapValueBuilder`) -
+  `jafar-processor`'s own tests run without it, the comparison below with it, so both are
+  covered. Shapes no read handles (a `float` accessor for an `int`, an inline value whose type has
+  no generated handler) still fail naming the field.
+- **One instance for every pooled entry.** A factory's `get` returns one reused handler per thread,
+  and the constant pool cached that instance for every entry: 935 of 1,261 samples named the wrong
+  thread, while every name was a real one. Pooled entries now come from `HandlerFactory.create`.
+- **A byte read as a varint.** A JFR `byte` is one raw byte (the JDK's `ParserFactory.ByteParser`
+  reads it with `readByte()`), but generated handlers used `readVarint()`, so any negative byte
+  also swallowed the next byte and shifted every field after it.
+
+Watch the comparison, not the values: each value looked right. The comparison that settles it:
+record with `java -XX:StartFlightRecording=filename=rec.jfr,settings=profile` running a small
+workload, read every `jdk.ExecutionSample`'s thread, state and frames (method and class names,
+line numbers) through the same interfaces with build-time and with runtime handlers, and diff the
+output. Delete the generated `META-INF/services/io.jafar.parser.api.HandlerFactory` for the
+runtime run, or the parser discovers the factories and both runs are build-time; print the class
+of one event to be sure which ran.
+
+### A chunk's time span is not its events' time span
+
+A chunk header gives a start and a duration, and it is tempting to read them as bounds on the
+`startTime` of the chunk's events. Only one of them is.
+
+> **Case file — the 14 heap samples a time filter lost.** Chunk skipping by start time first had
+> two rules: skip a chunk that ends before the range, and skip one that starts after it unless a
+> wanted type has a `duration` field (an event with a duration is written when it ends; a
+> `jdk.ThreadSleep` was measured starting 2.5 s before its chunk). The second rule rested on one
+> JDK 21 recording in which no event without a duration started before its chunk. `tck-test.jfr`,
+> written by the Datadog profiler, refuted it: `datadog.HeapLiveObject` has no `duration` field,
+> and its 14 events are stamped up to 36 minutes before the chunk they sit in, because the writer
+> emits them when the chunk is finished, with the time of the allocation.
+> `events/datadog.HeapLiveObject[startTime<=...] | count()` returned 0 instead of 14. It was caught
+> by comparing every event type's filtered count with and without skipping
+> (`TypePushdownTest.timeFilteredResultsEqualTheUnprunedReference`), not by any test written for
+> the rule. Only the first rule remains, and `UntypedTimeRangeTest.noEventStartsAfterItsChunkEnds`
+> checks its assumption on every recording the tests have.
+
+Two more things about the same header:
+
+- **Its duration is in nanoseconds, not ticks.** Across the 99 chunks of a JDK 21 recording with a
+  tick frequency of 2.1e9, the duration equalled the distance to the next chunk's `startNanos`
+  exactly, and 0.4762 of the distance in ticks. `ChunkInfoImpl` and the Go `ChunkInfo.Duration()`
+  converted it as ticks until `ChunkDurationUnitTest` and
+  `TestChunkDurationIsNanosecondsWhateverTheFrequency` pinned the unit; nothing had noticed,
+  because the checked-in recordings tick at 1e9, where the two readings are the same number.
+- **A property measured on one writer's recording is a property of that writer.** The JDK,
+  async-profiler and the Datadog profiler all write JFR, and they stamp events differently.
+
+### A path that parses is not a path that is read
+
+`JfrPathEvaluator.evaluate` reads the root and the first segment of
+`events/jdk.GarbageCollection/cause` — the event type — and returns whole events; the rest of the
+path is honoured only by `evaluateValues`. Nothing fails: the query parses, rows come back, and they
+even contain a `cause` column. jfr-shell's `show` picked the right method by counting segments;
+`jafar-shell` called `evaluate` for everything, so for `events/`, `metadata/`, `constants/` and
+`chunks/` a projected path printed every column of every row. Both shells now route through
+`ShowShape.of`, and `ShellArtifactTest.projectedPathsMatchJfrShell` compares their JSON.
+
+The same evaluator read `chunks/0/size` one way in `evaluate` (`0` is the chunk index) and another
+in `evaluateValues` (`0` is a field of every chunk), so the projection found no field `0` and
+returned an empty list — in jfr-shell too, where it had always printed `(no values)`. When two
+methods interpret one path, check that they agree segment by segment.
+
+### A fact about one chunk is not a fact about the recording
+
+Metadata is per chunk: two chunks of one recording need not declare the same types, and the ids of
+the types they share are chunk-local. Anything derived from metadata and kept "once per session" is
+therefore one chunk's answer applied to all of them, and chunks are parsed in parallel, so which
+chunk's answer it is depends on timing.
+
+`TypedJafarParserImpl` kept the set of types reachable from the registered handlers in one field
+of the chunk listener, computed by whichever chunk read its metadata first, and each chunk's
+constant-pool filter was a lambda that read that field. In `tck-test.jfr` only the first of the two
+chunks declares `jdk.GCHeapSummary`. When both chunks reached `onMetadata` together, the second
+could store its set (no `jdk.types.GCWhen`) after the first had stored its own, and the first chunk
+then skipped its `GCWhen` pool: `JFRGCHeapSummary.when()` returned `null` for all 1,892 events, with
+no error. It showed up as `SharedParsingContextStressTest` failing on CI and passing on the re-run
+of the same commit (`expected ... when=After GC ... but was ... when=null`, or the reverse when the
+reference parse was the one hit). Locally it failed once in 78 runs on an idle machine, 4 times in
+40 with the cores oversubscribed, and 5 times in 150 cold single parses under the same load. Even without the race only one chunk ever got a
+filter. The set is now a local of each chunk's `onMetadata`, and `TypedChunkTypeFilterTest` pins
+that every chunk has a filter answering from its own metadata.
+
+Two things to take from it. A lambda that reads a field is not a snapshot: capture a local. And
+when a test fails rarely, load the machine before concluding anything from a run of passes.
+
 ---
 
 ## Before you trust a shape
@@ -117,8 +315,13 @@ the first row, as `applySortBy` does, or count what you consumed, as `aggregateG
 - Print the value once, in the real path, with a real recording. Not the type — the value.
 - If it comes from metadata, ask whether it means *declared* or *present*.
 - If it is a count, ask what populated it and when.
-- If it is a string from a recording, assume it is wrapped until you have seen otherwise.
+- If it is a string from a recording, assume it is wrapped until you have seen otherwise — and if
+  it is a single-entry map from metadata, assume it is data.
 - If a structure has a display form and a data form, you want the data form, and the display form
   will not tell you that you took the wrong one.
 - If it is a column name, check it against a row before you sort or filter by it. Silence means the
   column was absent, not that the data was uninteresting.
+- If it is a metadata class id, or a `MetadataClass` compared with `equals`, it is only meaningful
+  inside its chunk; `equals` ignores field names and annotations. A failure that comes and
+  goes across runs of a multi-chunk parse is per-chunk state shared between chunks until shown
+  otherwise.

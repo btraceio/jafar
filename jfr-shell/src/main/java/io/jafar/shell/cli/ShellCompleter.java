@@ -23,6 +23,7 @@ import io.jafar.shell.cli.completion.completers.OptionCompleter;
 import io.jafar.shell.cli.completion.completers.PipelineOperatorCompleter;
 import io.jafar.shell.cli.completion.completers.RootCompleter;
 import io.jafar.shell.cli.completion.completers.VariableReferenceCompleter;
+import io.jafar.shell.core.Failures;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.llm.LlmSettings;
 import java.io.IOException;
@@ -49,7 +50,7 @@ public final class ShellCompleter implements Completer {
   private static final Path SCRIPTS_DIR =
       Paths.get(System.getProperty("user.home"), ".jfr-shell", "scripts");
 
-  private final SessionManager<JFRSession> sessions;
+  private final SessionManager<io.jafar.shell.core.Session> sessions;
   private final CommandDispatcher dispatcher;
   private final CompletionContextAnalyzer analyzer;
   private final MetadataService metadata;
@@ -57,7 +58,8 @@ public final class ShellCompleter implements Completer {
   private final org.jline.reader.impl.completer.FileNameCompleter fileCompleter =
       new org.jline.reader.impl.completer.FileNameCompleter();
 
-  public ShellCompleter(SessionManager<JFRSession> sessions, CommandDispatcher dispatcher) {
+  public ShellCompleter(
+      SessionManager<io.jafar.shell.core.Session> sessions, CommandDispatcher dispatcher) {
     this.sessions = sessions;
     this.dispatcher = dispatcher;
     this.analyzer = new CompletionContextAnalyzer();
@@ -66,7 +68,9 @@ public final class ShellCompleter implements Completer {
     // Register completers in priority order
     this.completers =
         List.of(
-            new CommandCompleter(),
+            // NULL/unknown dispatcher defaults to ENABLED: jfr-shell hosts (and every existing
+            // completer test constructing ShellCompleter(sessions, null)) keep connect/tail.
+            new CommandCompleter(dispatcher == null || dispatcher.supportsLiveStreaming()),
             new RootCompleter(),
             new ChunkIdCompleter(),
             new MetadataSubpropCompleter(),
@@ -90,8 +94,28 @@ public final class ShellCompleter implements Completer {
   private static final boolean DEBUG = Boolean.getBoolean("jfr.shell.completion.debug");
   private static final boolean TRACE = Boolean.getBoolean("jfr.shell.completion.trace");
 
+  /**
+   * Completes {@code line}. Completion can fail: chunk ids and constant-pool types are read from
+   * the recording on first use (file replaced or truncated since it was opened), and any completer
+   * can have a bug. JLine catches anything a completer throws, logs it through {@code
+   * java.util.logging} and offers nothing, so the failure would be invisible. With a {@code
+   * reader}, it is printed above the prompt instead and the typed line is left as it was. Without
+   * one (the TUI calls with {@code null}) it is rethrown for the caller to report.
+   */
   @Override
   public void complete(LineReader reader, ParsedLine line, List<Candidate> candidates) {
+    try {
+      completeLine(reader, line, candidates);
+    } catch (RuntimeException e) {
+      if (reader == null) {
+        throw e;
+      }
+      candidates.clear();
+      reader.printAbove("Completion failed: " + Failures.describe(e));
+    }
+  }
+
+  private void completeLine(LineReader reader, ParsedLine line, List<Candidate> candidates) {
     List<String> words = line.words();
     int wordIndex = line.wordIndex();
 
@@ -348,9 +372,12 @@ public final class ShellCompleter implements Completer {
         // Suggest type names after 'metadata class '
         if (sessions.getCurrent().isPresent()) {
           String cur = line.word();
-          for (String t : sessions.getCurrent().get().session.getAllMetadataTypes()) {
-            if (t.startsWith(cur)) {
-              candidates.add(new Candidate(t));
+          // Metadata type names exist only for file-backed JFR sessions
+          if (sessions.getCurrent().get().session instanceof JFRSession jfr) {
+            for (String t : jfr.getAllMetadataTypes()) {
+              if (t.startsWith(cur)) {
+                candidates.add(new Candidate(t));
+              }
             }
           }
         }
@@ -411,9 +438,12 @@ public final class ShellCompleter implements Completer {
     // Constant pool type completion
     if (sessions.getCurrent().isPresent()) {
       String cur = line.word();
-      for (String t : sessions.getCurrent().get().session.getAvailableConstantPoolTypes()) {
-        if (t.startsWith(cur)) {
-          candidates.add(new Candidate(t));
+      // Constant-pool types exist only for file-backed JFR sessions
+      if (sessions.getCurrent().get().session instanceof JFRSession jfr) {
+        for (String t : jfr.getAvailableConstantPoolTypes()) {
+          if (t.startsWith(cur)) {
+            candidates.add(new Candidate(t));
+          }
         }
       }
     }
@@ -469,6 +499,7 @@ public final class ShellCompleter implements Completer {
           .filter(name -> name.startsWith(partial))
           .forEach(name -> candidates.add(new Candidate(name)));
     } catch (IOException ignore) {
+      // unreadable scripts directory: no script-name candidates
     }
   }
 
@@ -586,13 +617,11 @@ public final class ShellCompleter implements Completer {
 
         // Try to find the variable and complete its fields
         completeMapFields(varName, fieldPath, currentWord, varStart, candidates);
-      } else if (dotIndex == 0) {
-        // User typed "${." - invalid, no suggestions
-      } else {
-        // User is typing ${varName (no dot yet)
-        // Suggest variable names
+      } else if (dotIndex != 0) {
+        // User is typing ${varName (no dot yet): suggest variable names
         completeVariableNamesInSubstitution(varRef, currentWord, varStart, candidates);
       }
+      // dotIndex == 0 ("${.") is invalid: no suggestions
     }
   }
 
@@ -921,6 +950,7 @@ public final class ShellCompleter implements Completer {
         candidates.add(new Candidate(value));
       }
     } catch (IOException | java.io.UncheckedIOException ignore) {
+      // unreadable directory: no file candidates
     }
   }
 }

@@ -153,13 +153,6 @@ SNAPSHOT, and must never be downgraded within its plane: if `anthropic` already 
 
 ## Troubleshooting
 
-### JitPack Build Fails
-
-- Check build logs: `https://jitpack.io/com/github/btraceio/jafar/v0.4.0`
-- Common issues:
-  - Missing JDK versions (should be auto-provisioned via Foojay resolver)
-  - Build timeout (increase complexity limit in jitpack.yml)
-
 ### Sonatype Publish Fails
 
 - Verify credentials are set in GitHub secrets

@@ -41,7 +41,7 @@ public final class MetadataElement extends AbstractMetadataElement {
    * @param element the subelement that was read
    */
   @Override
-  protected void onSubelement(int count, AbstractMetadataElement element) {
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {
     if (element.getKind() == MetadataElementKind.CLASS) {
       if (classes == null) {
         classes = new ArrayList<>(count);
@@ -49,7 +49,7 @@ public final class MetadataElement extends AbstractMetadataElement {
       MetadataClass clz = (MetadataClass) element;
       classes.add(clz);
     } else {
-      throw new IllegalStateException("Unexpected subelement: " + element.getKind());
+      throw unexpectedSubelement(element);
     }
   }
 

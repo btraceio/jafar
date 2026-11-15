@@ -1,6 +1,7 @@
 package io.jafar.shell.cli.completion;
 
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
@@ -17,15 +18,20 @@ import java.util.concurrent.ConcurrentHashMap;
  * keystroke.
  */
 public final class MetadataService {
-  private final SessionManager<JFRSession> sessions;
+  // Session-typed: a live (or other non-file) session may be current; every JFR-specific
+  // accessor below narrows with instanceof and degrades to empty/null for it.
+  private final SessionManager<Session> sessions;
 
   /** Cache of type name -> metadata map */
   private final Map<String, Map<String, Object>> metadataCache = new ConcurrentHashMap<>();
 
-  /** Cache key for recording path - invalidate cache when path changes */
-  private Path cachedRecordingPath;
+  /** Names known not to resolve in the current recording; avoids repeated full scans on misses. */
+  private volatile Set<String> missingMetadata = ConcurrentHashMap.newKeySet();
 
-  public MetadataService(SessionManager<JFRSession> sessions) {
+  /** Cache key for recording path - invalidate cache when path changes */
+  private volatile Path cachedRecordingPath;
+
+  public MetadataService(SessionManager<Session> sessions) {
     this.sessions = sessions;
   }
 
@@ -34,9 +40,12 @@ public final class MetadataService {
     return sessions.getCurrent().isPresent();
   }
 
-  /** Get the current recording path, or null if no session. */
+  /** Get the current recording path, or null if no (file) session. */
   public Path getRecordingPath() {
-    return sessions.getCurrent().map(entry -> entry.session.getRecordingPath()).orElse(null);
+    return sessions
+        .getCurrent()
+        .map(entry -> entry.session instanceof JFRSession jfr ? jfr.getRecordingPath() : null)
+        .orElse(null);
   }
 
   /** Get all available event type names from the current session. */
@@ -51,7 +60,11 @@ public final class MetadataService {
   public Set<String> getAllMetadataTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAllMetadataTypes())
+        .map(
+            entry ->
+                entry.session instanceof JFRSession jfr
+                    ? jfr.getAllMetadataTypes()
+                    : Set.<String>of())
         .orElse(Collections.emptySet());
   }
 
@@ -59,7 +72,11 @@ public final class MetadataService {
   public Set<String> getConstantPoolTypes() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableConstantPoolTypes())
+        .map(
+            entry ->
+                entry.session instanceof JFRSession jfr
+                    ? jfr.getAvailableConstantPoolTypes()
+                    : Set.<String>of())
         .orElse(Collections.emptySet());
   }
 
@@ -67,7 +84,11 @@ public final class MetadataService {
   public List<Integer> getChunkIds() {
     return sessions
         .getCurrent()
-        .map(entry -> entry.session.getAvailableChunkIds())
+        .map(
+            entry ->
+                entry.session instanceof JFRSession jfr
+                    ? jfr.getAvailableChunkIds()
+                    : List.<Integer>of())
         .orElse(Collections.emptyList());
   }
 
@@ -174,21 +195,39 @@ public final class MetadataService {
       cachedRecordingPath = currentPath;
     }
 
-    return metadataCache.computeIfAbsent(
-        typeName,
-        name -> {
-          try {
-            return MetadataProvider.loadClass(currentPath, name);
-          } catch (Exception e) {
-            // Return null for types that can't be loaded
-            return null;
-          }
-        });
+    Set<String> missing = missingMetadata;
+    if (missing.contains(typeName)) {
+      return null;
+    }
+    Map<String, Object> cached =
+        metadataCache.computeIfAbsent(
+            typeName,
+            name -> {
+              try {
+                return MetadataProvider.loadClass(currentPath, name);
+              } catch (Exception e) {
+                // Return null for types that can't be loaded
+                return null;
+              }
+            });
+    if (cached == null) {
+      // ConcurrentHashMap.computeIfAbsent does not record null results; remember the miss, but
+      // only if invalidateCache() has not swapped in a fresh set since we read it - otherwise
+      // the add would land in an orphaned set; skip it.
+      if (missing == missingMetadata) {
+        missing.add(typeName);
+      }
+    } else {
+      // A positive entry must not be shadowed by a stale miss.
+      missingMetadata.remove(typeName);
+    }
+    return cached;
   }
 
   /** Invalidate all cached metadata. Call this when switching sessions or recording files. */
   public void invalidateCache() {
     metadataCache.clear();
+    missingMetadata = ConcurrentHashMap.newKeySet();
     cachedRecordingPath = null;
   }
 

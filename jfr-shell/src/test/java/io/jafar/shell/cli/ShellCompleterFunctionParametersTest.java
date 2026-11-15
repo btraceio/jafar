@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -28,7 +29,7 @@ class ShellCompleterFunctionParametersTest {
     // Use real JFR file so metadata loading works
     Path jfr = resource("test-ap.jfr"); // Use test-ap.jfr which has JDK events
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(jfr, null);
     completer = new ShellCompleter(sessions, null);

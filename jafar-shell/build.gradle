@@ -6,9 +6,10 @@ plugins {
 
 // The shared helper that records which io.btrace modules this fat jar embeds in its manifest
 apply from: rootProject.file('gradle/embedded-modules.gradle')
+// Same tag-derived version as the jfr-shell module, which publishes this jar (see its build.gradle)
+apply from: rootProject.file('gradle/version-from-tag.gradle')
 
 group = 'io.btrace'
-version = project.version
 
 repositories {
     mavenCentral()
@@ -45,6 +46,15 @@ dependencies {
     implementation 'org.jline:jline:3.26.1'
     implementation 'org.slf4j:slf4j-api:2.0.12'
     runtimeOnly 'ch.qos.logback:logback-classic:1.5.3'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+// jfr-shell brings slf4j-simple; logback is this jar's provider, and two providers warn on every run
+configurations.runtimeClasspath {
+    exclude group: 'org.slf4j', module: 'slf4j-simple'
 }
 
 application {
@@ -58,8 +68,19 @@ shadowJar {
 
     // Record which io.btrace modules and versions this fat jar embeds (see gradle/embedded-modules.gradle)
     recordEmbeddedModules(manifest)
+
+    // Relocate dependencies to avoid conflicts with plugin JARs (same set as the jfr-shell jar)
+    relocate 'org.apache.maven.resolver', 'io.jafar.shaded.resolver'
+    relocate 'org.apache.http', 'io.jafar.shaded.http'
+    relocate 'com.google.gson', 'io.jafar.shaded.gson'
+    relocate 'dev.tamboui', 'io.jafar.shaded.tamboui'
+    relocate 'picocli', 'io.jafar.shaded.picocli'
+    relocate 'org.jline', 'io.jafar.shaded.jline'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    // ShellArtifactTest runs the jar users get, not the classes
+    dependsOn shadowJar
+    systemProperty 'jafar.shell.jar', shadowJar.archiveFile.get().asFile.absolutePath
 }

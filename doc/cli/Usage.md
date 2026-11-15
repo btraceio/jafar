@@ -40,17 +40,26 @@ jfr> show metadata/jdk.types.StackTrace --tree --depth 2
 jfr> show metadata/jdk.types.Method/fields/name --tree
 
 # Events example (values projection)
-jfr> events/jdk.FileRead/bytes --limit 5
+jfr> events/jdk.FileRead/bytesRead --limit 5
 ```
 
 ## Available Commands
 
 ### Session Management
 - `open <path> [--alias NAME]`: Open a recording file.
+- `connect`: List local JVMs (`[jfr]` marks one with a discoverable disk-backed JFR event repository).
+- `connect <pid> [--alias NAME] [--repository <dir>]`: Attach a live session to a running JVM's JFR event repository (local machine only, no attach API). While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`, `backend`) are not available — use `tail`.
+- `tail [filter] [--limit N] [--format table|json]`: Stream events from the live session until Ctrl-C, the target JVM exits, or the limit is reached. The filter is a JfrPath expression with per-event operators only (`filter`, `select`, transforms) — aggregations (`count()`, `groupBy()`, …) need the full row set and are rejected.
 - `sessions`: List all sessions; marks the current one.
 - `use <id|alias>` (or `session`): Switch current session.
 - `close [<id|alias>|--all]`: Close a session or all.
 - `info [<id|alias>]`: Show session information.
+
+Live-streaming caveats: the target needs a **disk-backed** recording (e.g.
+`-XX:StartFlightRecording=disk=true`); in-memory recordings only reach the on-disk repository at
+rotation/dump. Slow consumers never slow the target, but events can be lost on the target side
+when its repository wraps (old chunks are deleted); the drop count is visible in `info` and the
+tail status line. See [Live event streaming](#live-event-streaming) for a walkthrough.
 
 ### Querying and Browsing
 - `show <expr> [--limit N] [--format table|json] [--tree] [--depth N] [--list-match any|all|none]`: Evaluate a JfrPath expression. For list fields, `--list-match` sets default matching mode.
@@ -58,15 +67,22 @@ jfr> events/jdk.FileRead/bytes --limit 5
 - `metadata class <name> [--tree|--json] [--fields] [--annotations] [--depth N]`: Inspect a class.
 - `chunks [--summary] [--range N-M]`: List chunk information.
 - `chunk <index> show`: Show specific chunk details.
-- `constants [<type>] [--summary] [--range N-M]`: Browse constant pool entries.
+- `constants [<type>] [--summary] [--range N-M] [--limit N]`: Browse constant pool entries.
 - `constants/<type> | crossref()`: Crosscheck CP entries against event references.
 - `events/<type>[filter] [--limit N]`: Query events (shorthand for `show events`, both forms work).
 
+`metadata`, `metadata class`, `chunks`, `chunk`, `constants`/`cp` and `backend` work in `jafar-shell`
+too while the current session is a JFR recording; in a heap dump, pprof or OTLP session they say so
+and do nothing.
+
 ### Variables
+The variable, conditional and `script <path>` commands below exist in `jafar-shell` too, for every
+format it opens; see [Scripting in jafar-shell](Scripting.md#in-jafar-shell) for the differences.
+
 - `set [--global] <name> = <value>`: Set a variable (scalar, map, or lazy query).
 - `let [--global] <name> = <value>`: Alias for `set`.
-- `vars [--global|--session] [--info <name>]`: List variables or show detailed info.
-- `unset <name>`: Remove a variable.
+- `vars [--global|--session|--all]` / `vars --info <name>`: List variables or show detailed info.
+- `unset <name> [--global]`: Remove a variable.
 - `echo <text>`: Print text with `${var}` substitution (supports nested fields: `${var.field.subfield}`).
 - `invalidate <name>`: Clear cached lazy variable result.
 
@@ -106,6 +122,12 @@ JFR analysis tool with interactive and non-interactive modes
 Execute queries without entering the shell, suitable for scripting and CI/automation:
 
 ```bash
+# List local JVMs and their discoverable JFR event repositories
+jfr-shell ps
+
+# Stream live events from a running JVM until Ctrl-C (exit 0 on interrupt)
+jfr-shell tail <pid> ["events/<type>[filter] | filter(...)"] [--repository <dir>] [--limit N] [--format table|json]
+
 # Show command - Execute JfrPath queries
 jfr-shell show <jfr-file> "<expression>" [options]
   --limit, -l <N>           Limit number of results
@@ -137,10 +159,10 @@ jfr-shell constants <jfr-file> [options]
 jfr-shell show recording.jfr "events/jdk.ExecutionSample | count()"
 
 # Top 10 files by bytes, JSON output
-jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytes)" --format json
+jfr-shell show recording.jfr "events/jdk.FileRead | top(10, by=bytesRead)" --format json
 
 # Group execution samples by thread
-jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(thread/name)"
+jfr-shell show recording.jfr "events/jdk.ExecutionSample | groupBy(sampledThread/javaName)"
 
 # List event types only
 jfr-shell metadata recording.jfr --events-only
@@ -207,8 +229,8 @@ is aliased for convenience.
       - `events/jdk.ExecutionSample[stackTrace/truncated=true]`
       - `events/jdk.ExecutionSample[any:stackTrace/frames[matches(method/name/string, ".*Main.*")]]`
 - Examples:
-  - `events/jdk.FileRead[bytes>=1000] --limit 5`
-  - `events/jdk.ExecutionSample[thread/name~"main"] --limit 10`
+  - `events/jdk.FileRead[bytesRead>=1000] --limit 5`
+  - `events/jdk.ExecutionSample[sampledThread/javaName~"main"] --limit 10`
   - `show metadata/java.lang.Thread` (class overview)
   - `show metadata/jdk.types.Method/name` (single value)
 
@@ -239,28 +261,28 @@ Expressions can include arithmetic operators, string concatenation, string templ
 **Field Projection Examples:**
 ```bash
 # Simple field selection
-events/jdk.FileRead | select(path, bytes)
+events/jdk.FileRead | select(path, bytesRead)
 
 # Convert bytes to kilobytes
-events/jdk.FileRead | select(bytes / 1024 as kilobytes)
+events/jdk.FileRead | select(bytesRead / 1024 as kilobytes)
 
 # Build descriptive string (concatenation)
-events/jdk.FileRead | select(path + ' (' + bytes + ' bytes)' as description)
+events/jdk.FileRead | select(path + ' (' + bytesRead + ' bytes)' as description)
 
 # Build descriptive string (template - cleaner)
-events/jdk.FileRead | select("${path} (${bytes} bytes)" as description)
+events/jdk.FileRead | select("${path} (${bytesRead} bytes)" as description)
 
 # String template with arithmetic
-events/jdk.FileRead | select("${path}: ${bytes / 1024} KB" as summary)
+events/jdk.FileRead | select("${path}: ${bytesRead / 1024} KB" as summary)
 
 # Mixed fields and expressions
-events/jdk.FileRead | select(path, bytes / 1024 as kb, duration * 1000 as micros)
+events/jdk.FileRead | select(path, bytesRead / 1024 as kb, duration * 1000 as micros)
 
 # String functions
 events/jdk.FileRead | select(upper(path) as upperPath, length(path) as len)
 
-# Conditional expressions
-events/jdk.FileRead | select(if(bytes > 1000, 'large', 'small') as size)
+# Conditional expressions (true when non-zero; comparisons are not supported)
+events/jdk.FileRead | select(if(bytesRead, 'has data', 'empty') as status)
 
 # Complex expressions with coalesce
 events/jdk.FileRead | select(coalesce(path, altPath, 'unknown') as finalPath)
@@ -306,15 +328,14 @@ For complete operator reference and grammar details, see [JFRPath.md](JFRPath.md
 
 **Aggregation Examples:**
 - `events/jdk.FileRead | count()`
-- `events/jdk.FileRead/bytes | sum()`
-- `events/jdk.FileRead/bytes | stats()`
-- `events/jdk.FileRead/bytes | quantiles(0.5,0.9,0.99)`
-- `events/jdk.FileRead/bytes | sketch()`
-- `events/jdk.ExecutionSample/thread/name | groupBy(value)` — Count by thread name
-- `events/jdk.FileRead | groupBy(path, agg=sum, value=bytes)` — Total bytes by path
-- `events/jdk.ExecutionSample | groupBy(thread/name, sortBy=value)` — Sorted by count (descending)
-- `events/jdk.ExecutionSample | groupBy(thread/name, sortBy=key, asc=true)` — Sorted alphabetically
-- `events/jdk.FileRead | top(10, by=bytes)` — Top 10 files by bytes
+- `events/jdk.FileRead/bytesRead | sum()`
+- `events/jdk.FileRead/bytesRead | stats()`
+- `events/jdk.FileRead/bytesRead | quantiles(0.5,0.9,0.99)`
+- `events/jdk.FileRead/bytesRead | sketch()`
+- `events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)` — Total bytesRead by path
+- `events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=value)` — Sorted by count (descending)
+- `events/jdk.ExecutionSample | groupBy(sampledThread/javaName, sortBy=key, asc=true)` — Sorted alphabetically
+- `events/jdk.FileRead | top(10, by=bytesRead)` — Top 10 files by bytesRead
 - `show metadata/jdk.types.Method/name | count()`
 - `constants/jdk.types.Symbol | count()`
 
@@ -359,9 +380,49 @@ JFR Shell provides intelligent context-aware tab completion throughout the query
 
 Press Tab at any point to see context-appropriate suggestions.
 
+## Live Event Streaming
+
+Attach to a running JVM and watch its JFR events as they arrive (JEP-349 style, local machine,
+no attach API — the shell reads the target's on-disk event repository):
+
+```bash
+jfr-shell
+jfr> connect                 # list local JVMs; [jfr] = disk-backed JFR repository found
+jfr> connect 12345           # attach; the live session becomes current
+jfr> tail                    # stream all events until Ctrl-C
+jfr> tail "events/jdk.FileRead | filter(bytesRead > 0)" --limit 100
+jfr> info                    # live statistics: events seen, dropped, stream state
+jfr> close                   # detach (the target JVM is never modified)
+```
+
+One-shot (scripting/automation):
+
+```bash
+jfr-shell ps
+jfr-shell tail 12345 "events/jdk.ExecutionSample" --format json
+```
+
+Notes:
+
+- The target needs a **disk-backed** recording (`-XX:StartFlightRecording=disk=true`); an
+  in-memory recording only reaches the on-disk repository at rotation/dump.
+- Discovery scans the platform temp base (`/tmp` on Linux, the per-user temp dir on macOS,
+  `%TEMP%` on Windows). If the target uses `-XX:FlightRecorderOptions=repository=...` or a
+  custom location, pass it with `--repository <dir>` — supported by `connect <pid>` (interactive)
+  and the one-shot `jfr-shell tail <pid>` command only. The interactive `tail` streams from the
+  repository the live session attached to at `connect` time; it accepts only `--limit` and
+  `--format`. Explicitly passed repositories are hardened like discovery-found ones (same owner,
+  liveness and symlink checks).
+- While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`,
+  `backend`, LLM queries) are rejected with a pointer to `tail`; `sessions`/`use`/`close`/`info`
+  work unchanged. Per-event filters only — aggregations are Phase 2 (see the design doc,
+  `doc/design/jfr-event-streaming.md`).
+- Ctrl-C ends `tail` cleanly: the prompt stays alive (interactive) or the process exits 0
+  (one-shot).
+
 ## See Also
 
-- [JfrPath Reference](jfrpath.md) — Complete query language reference
+- [JfrPath Reference](JFRPath.md) — Complete query language reference
 - [JFR Shell Tutorial](tutorials/jfr-shell-tutorial.md) — Interactive tutorial
 - [HdumpPath Reference](hdumppath.md) — Heap dump query language (same shell, similar syntax)
 - [Heap Dump Quick Start](hdump-shell-quickstart.md) — Get started with heap dump analysis

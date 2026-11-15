@@ -1,0 +1,27 @@
+# Known escapes of the untyped-parser fuzz oracle (io.jafar.parser.fuzz.EscapeOracle).
+#
+# SHRINK-ONLY ALLOWLIST (I1, enforced like the ArchUnit freeze store — spec Q14):
+#   - no test or tool ever writes this file; an entry is added only by a visible hand edit
+#     in the diff, always as a '# reason:' comment line followed by the entry line;
+#   - an entry line is '<sha256-of-input> <delivered-throwable-FQCN>'. The "delivered"
+#     throwable is the outermost throwable of the cause chain the oracle saw; the full chain
+#     is printed in the oracle's failure message at pinning time, so copy it from there;
+#   - a listed input passes the oracle ONLY when it escapes with exactly that delivered
+#     throwable. A listed input that now delivers something else FAILS, and a listed input
+#     that no longer escapes at all FAILS with "stale known-escape <sha>: remove the entry"
+#     — removing a parser defect is therefore forced to shrink this list;
+#   - a hang has no throwable and can NEVER be listed;
+#   - an entry only ever corresponds to an input committed under
+#     src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/
+#     (the outcome tests of the case that pinned it enforce that).
+#
+# There is no third PR-body statement and no growth script for this list (D3): a crash or
+# escape found by fuzzing or adversarial recordings is either fixed in the parser - with the
+# Java/Go parity outcome recorded, as for any parser change - or pinned HERE with its reason.
+#
+# The list is empty. Its first three entries were the adversarial recordings adv-deep-metadata
+# (metadata nesting recursed into a StackOverflowError), adv-huge-length (a declared string
+# length was allocated before it was checked) and adv-string-table-size (an out-of-range string
+# index surfaced as IllegalArgumentException). The parser now rejects all three as malformed
+# with an IOException, so the oracle forced their removal ("stale known-escape"); their outcome
+# tests in AdversarialOutcomeTest assert the rejection and that no pin exists.

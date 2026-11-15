@@ -42,14 +42,14 @@ class CommandDispatcherTest {
   }
 
   ParsingContext ctx;
-  SessionManager<JFRSession> sm;
+  SessionManager<Session> sm;
   BufferIO io;
   CommandDispatcher dispatcher;
 
   @BeforeEach
   void setUp() {
     ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);

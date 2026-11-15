@@ -42,7 +42,7 @@ public final class GenericParser {
               })
           .run();
 
-      h.destroy(p);
+      h.close();
     }
     long uptime = parsingContext.uptime();
     System.out.println("===> Summed hash " + summer.sum());

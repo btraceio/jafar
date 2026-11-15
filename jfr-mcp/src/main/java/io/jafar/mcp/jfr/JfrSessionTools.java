@@ -165,7 +165,9 @@ public final class JfrSessionTools {
                 + "JfrPath forms: events/<eventType>, events/<eventType>[filter], events/<eventType> | pipeline. "
                 + "Common types: jdk.ExecutionSample, jdk.GCPhasePause, jdk.MonitorEnter, jdk.FileRead. "
                 + "Pipeline ops: count(), groupBy(field), top(n), select(f1,f2), stats(field). "
-                + "Examples: events/jdk.ExecutionSample | count(), events/jdk.GCPhasePause | top(10)",
+                + "Examples: events/jdk.ExecutionSample | count(), events/jdk.GCPhasePause | top(10). "
+                + "Constant pools: constants/jdk.types.StackTrace | crossref() counts the pool's "
+                + "entries that events reference and those none does, per referencing event type.",
             schema),
         (exchange, args) -> handleJfrQuery(args.arguments()));
   }
@@ -307,7 +309,6 @@ public final class JfrSessionTools {
         for (String eventType : filteredTypes) {
           counts.put(eventType, cachedCounts.getOrDefault(eventType, 0L));
         }
-        totalEvents = sessionInfo.session().getTotalEvents();
       }
 
       // Build result list sorted by count descending
@@ -326,8 +327,11 @@ public final class JfrSessionTools {
       response.put("sessionId", sessionInfo.id());
       response.put("recordingPath", sessionInfo.recordingPath().toString());
       response.put("totalTypes", eventList.size());
-      response.put("totalEvents", totalEvents);
+      response.put("totalEvents", scan ? totalEvents : null);
       response.put("scanned", scan);
+      if (!scan) {
+        response.put("countsNote", "Events were not counted. Pass scan=true for real counts.");
+      }
       response.put("eventTypes", eventList);
 
       if (filter != null && !filter.isBlank()) {

@@ -7,6 +7,7 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.ShellCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.integration.JLineTestEnvironment.ParseComparison;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -33,7 +34,7 @@ public class RealParserCompletionTests {
   private static ParsingContext parsingContext;
   private static JLineTestEnvironment testEnv;
 
-  private SessionManager<JFRSession> sessionManager;
+  private SessionManager<Session> sessionManager;
   private ShellCompleter completer;
   private MetadataService metadataService;
   private DefaultParser jlineParser;

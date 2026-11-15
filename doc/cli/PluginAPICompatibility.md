@@ -41,10 +41,16 @@ These changes are backward-compatible:
 
 ## Automated Enforcement
 
-japicmp runs on every build for non-SNAPSHOT versions:
-- Compares current API against previous release
-- Fails build on breaking changes (unless major version bump)
-- Generates HTML report: `jfr-shell/build/reports/japicmp.html`
+API compatibility is checked on every PR, not only at release time:
+
+- The `api-compat` CI job runs japicmp for each gated surface listed in `gradle/api-surfaces.txt`
+- Each surface's baseline is derived from the newest plane tag (`scripts/api-baseline.sh`), never
+  a hardcoded version
+- Reports (HTML and text) land under `build/reports/api-compat/`
+- The companion `api-break` job fails the PR when a report shows an incompatible change that is
+  neither accepted in `gradle/api-accepted-breaks.txt` nor covered by an `API-Break: <reason>`
+  statement in the PR body
+- See [Gates.md](../agents/Gates.md) for how to run the gate locally and for its escape hatch
 
 ## For Plugin Developers
 

@@ -17,6 +17,15 @@ import java.nio.file.Path;
  *
  * <p>Handler classes accumulate JIT optimizations with each use, typically achieving 2-3x
  * throughput improvement after warm-up when parsing recordings with compatible metadata.
+ *
+ * <p>Untyped parsers share too. When the generated reader is in use ({@code parser-codegen} on the
+ * classpath), every untyped parser made from one context, every {@code run()} of each, and every
+ * {@link #withParallelism(int)} view of the context use one cache of generated event deserializers:
+ * an event type is generated once per context and strategy, and reused whenever a later chunk or
+ * recording declares it with the same ids and layout. The number of cached deserializers is
+ * bounded; a context that has met more distinct layouts than the bound starts its cache afresh.
+ * Parsers opened without a context ({@code UntypedJafarParser.open(path)}) share nothing between
+ * parses.
  */
 public interface ParsingContext {
   /**
@@ -65,6 +74,46 @@ public interface ParsingContext {
    * @return a new {@link UntypedJafarParser} instance
    */
   UntypedJafarParser newUntypedParser(Path path, UntypedStrategy strategy);
+
+  /**
+   * Returns a context that shares this context's cached resources but whose parsers read chunks on
+   * {@code parallelism} threads instead of the default {@code max(availableProcessors - 2, 1)}.
+   *
+   * <p>With {@code withParallelism(1)} a parser delivers events strictly one at a time, in the
+   * order they appear in the file, chunk after chunk, and every handler call is complete before
+   * {@code run()} returns. Handlers then need no synchronization of their own. Handlers are still
+   * called on a parser-owned thread, not on the thread that called {@code run()}. With any larger
+   * value, chunks are parsed concurrently: handlers must be thread-safe, events keep file order
+   * only within one chunk, and there is no order between chunks.
+   *
+   * <p>This context is not changed; parsers already created from it keep their setting.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; contexts created by {@link #create()} support
+   * it.
+   *
+   * @param parallelism the number of chunk parsing threads, at least 1
+   * @return a context sharing this context's resources, with the given parallelism
+   * @throws IllegalArgumentException if {@code parallelism} is less than 1
+   * @throws UnsupportedOperationException if this implementation does not support it
+   */
+  default ParsingContext withParallelism(int parallelism) {
+    throw new UnsupportedOperationException(
+        getClass().getName() + " does not support withParallelism");
+  }
+
+  /**
+   * The number of chunk parsing threads requested with {@link #withParallelism(int)}.
+   *
+   * <p>Code that reads a recording with this context's settings but without one of its parsers uses
+   * this to size its own chunk pool.
+   *
+   * @return the requested number of chunk parsing threads, or {@code 0} when none was requested and
+   *     the default, {@code max(availableProcessors - 2, 1)}, applies
+   */
+  default int parallelism() {
+    return 0;
+  }
 
   /**
    * Returns the uptime of the parsing context in nanoseconds.

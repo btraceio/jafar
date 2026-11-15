@@ -167,7 +167,7 @@ public class JfrPathExpressionGenerator {
   /**
    * Generates chunks expressions.
    *
-   * <p>Examples: - "chunks" - "chunks/0" - "chunks/1"
+   * <p>Examples: - "chunks" - "chunks/1" - "chunks/2"
    *
    * @return arbitrary generating chunks expressions
    */

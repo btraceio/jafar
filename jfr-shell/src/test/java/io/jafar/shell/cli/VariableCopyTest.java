@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.VariableStore.MapValue;
@@ -53,14 +54,14 @@ class VariableCopyTest {
   }
 
   ParsingContext ctx;
-  SessionManager<JFRSession> sm;
+  SessionManager<Session> sm;
   BufferIO io;
   CommandDispatcher dispatcher;
 
   @BeforeEach
   void setUp() {
     ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession session = Mockito.mock(JFRSession.class);
           Mockito.when(session.getRecordingPath()).thenReturn(path);

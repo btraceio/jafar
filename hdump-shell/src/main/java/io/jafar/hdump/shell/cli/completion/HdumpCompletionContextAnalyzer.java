@@ -154,7 +154,6 @@ public final class HdumpCompletionContextAnalyzer {
   private CompletionContext analyzePathContext(ParsedLine line, String expression) {
     String fullLine = line.line();
     int cursor = line.cursor();
-    String currentWord = line.word();
 
     // Extract root type and remaining path
     int slashPos = expression.indexOf('/');

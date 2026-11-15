@@ -57,9 +57,11 @@ That's it! The handler receives every event as a Map, and you check the type nam
 Every event is represented as `Map<String, Object>` where:
 - Keys are field names (e.g., `"state"`, `"duration"`, `"eventThread"`)
 - Values can be:
-  - Primitive wrappers (`Long`, `Integer`, `Boolean`, etc.)
+  - Primitive wrappers: `Long` for JFR `int` and `long`, `Short`, `Character`, `Byte`,
+    `Boolean`, `Float`, `Double`
   - `String`
-  - `Instant` for timestamps
+  - `Long` epoch nanoseconds for `@Timestamp(TICKS)` fields and `Long` nanoseconds for
+    `@Timespan(TICKS)` fields (converted from ticks using the chunk's frequency)
   - `Map<String, Object>` for nested complex types
   - `ComplexType` for constant-pool references
   - `ArrayType` for array fields
@@ -79,6 +81,14 @@ The `Values` utility class provides safe field access:
 - `Values.get(map, "array", 0)` - access array elements
 - `Values.as(map, Class, "field")` - get typed value with Optional
 - Handles null values gracefully
+- `Values.resolvedDeep(map)` - copy with every wrapper unwrapped; a reference to a JFR simple type
+  (e.g. `jdk.types.ThreadState`) stays a one-entry map such as `{name=RUNNABLE}`
+- `Values.resolvedDeepCollapsed(map)` - the same, but simple-type references become their value
+  (`RUNNABLE`), as in the typed API. A genuine one-field struct keeps its map. Decided by the
+  recording's metadata via `ComplexType.isSimpleType()`
+
+`UntypedStrategy` is accepted by `newUntypedParser(path, strategy)` but is currently a hint with no
+effect: every strategy yields the same events (see the `UntypedStrategy` Javadoc).
 
 ## Accessing Event Fields
 
@@ -91,7 +101,7 @@ parser.handle((type, value, ctl) -> {
     if ("jdk.FileRead".equals(type.getName())) {
         // Direct map access
         String path = (String) value.get("path");
-        Long bytes = (Long) value.get("bytes");
+        Long bytes = (Long) value.get("bytesRead");
 
         // Or use Values helper (null-safe)
         Object pathObj = Values.get(value, "path");
@@ -111,7 +121,7 @@ parser.handle((type, value, ctl) -> {
     if ("jdk.FileRead".equals(type.getName())) {
         // Type-safe access
         String path = Values.as(value, String.class, "path").orElse("unknown");
-        long bytes = Values.as(value, Long.class, "bytes").orElse(0L);
+        long bytes = Values.as(value, Long.class, "bytesRead").orElse(0L);
 
         System.out.printf("Read %d bytes from %s%n", bytes, path);
     }
@@ -232,14 +242,18 @@ parser.handle((type, value, ctl) -> {
 
 ### ArrayType Wrapper
 
-Array fields use the `ArrayType` wrapper:
+Array fields use the `ArrayType` wrapper. You see the wrapper when you read the field from its map
+directly; `Values.get` unwraps it and returns the backing Java array (see
+[Iterating Arrays](#iterating-arrays)):
 
 ```java
 import io.jafar.parser.api.ArrayType;
 
 parser.handle((type, value, ctl) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
-        Object framesObj = Values.get(value, "stackTrace", "frames");
+        Object stackTrace = Values.get(value, "stackTrace"); // a Map
+        Object framesObj =
+            stackTrace instanceof Map ? ((Map<?, ?>) stackTrace).get("frames") : null;
 
         if (framesObj instanceof ArrayType) {
             ArrayType arrayType = (ArrayType) framesObj;
@@ -287,23 +301,23 @@ Process all array elements:
 ```java
 parser.handle((type, value, ctl) -> {
     if ("jdk.ExecutionSample".equals(type.getName())) {
-        Object framesObj = Values.get(value, "stackTrace", "frames");
+        // Values.get returns the backing array, not the ArrayType wrapper
+        Object array = Values.get(value, "stackTrace", "frames");
 
-        if (framesObj instanceof ArrayType) {
-            Object array = ((ArrayType) framesObj).getArray();
+        if (array instanceof Object[]) {
+            Object[] frames = (Object[]) array;
 
-            if (array instanceof Object[]) {
-                Object[] frames = (Object[]) array;
+            for (Object frameObj : frames) {
+                if (frameObj instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> frame = (Map<String, Object>) frameObj;
 
-                for (Object frameObj : frames) {
-                    if (frameObj instanceof Map) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> frame = (Map<String, Object>) frameObj;
-
-                        Object methodName = Values.get(frame, "method", "name", "string");
-                        System.out.println("  Method: " + methodName);
-                    } else if (frameObj instanceof ComplexType) {
-                        Map<String, Object> frame = ((ComplexType) frameObj).getValue();
+                    Object methodName = Values.get(frame, "method", "name", "string");
+                    System.out.println("  Method: " + methodName);
+                } else if (frameObj instanceof ComplexType) {
+                    // getValue() is null when the reference points at no constant-pool entry
+                    Map<String, Object> frame = ((ComplexType) frameObj).getValue();
+                    if (frame != null) {
                         Object methodName = Values.get(frame, "method", "name", "string");
                         System.out.println("  Method: " + methodName);
                     }
@@ -320,34 +334,94 @@ Handle primitive array types:
 
 ```java
 parser.handle((type, value, ctl) -> {
-    Object arrayObj = Values.get(value, "someField");
+    // Values.get returns the backing array, not the ArrayType wrapper
+    Object array = Values.get(value, "someField");
 
-    if (arrayObj instanceof ArrayType) {
-        Object array = ((ArrayType) arrayObj).getArray();
-
-        if (array instanceof long[]) {
-            long[] longs = (long[]) array;
-            for (long l : longs) {
-                System.out.println("Value: " + l);
-            }
-        } else if (array instanceof int[]) {
-            int[] ints = (int[]) array;
-            for (int i : ints) {
-                System.out.println("Value: " + i);
-            }
-        } else if (array instanceof byte[]) {
-            byte[] bytes = (byte[]) array;
-            System.out.println("Byte array length: " + bytes.length);
+    if (array instanceof long[]) {
+        // JFR 'int' and 'long' arrays both decode to long[]
+        long[] longs = (long[]) array;
+        for (long l : longs) {
+            System.out.println("Value: " + l);
         }
+    } else if (array instanceof byte[]) {
+        byte[] bytes = (byte[]) array;
+        System.out.println("Byte array length: " + bytes.length);
     }
 });
 ```
 
+The backing array type for each JFR element type:
+
+| JFR element type | `getArray()` returns |
+|---|---|
+| `int`, `long` | `long[]` |
+| `short` | `short[]` |
+| `char` | `char[]` |
+| `byte` | `byte[]` |
+| `boolean` | `boolean[]` |
+| `float` | `float[]` |
+| `double` | `double[]` |
+| `java.lang.String`, complex and constant-pool types | `Object[]` |
+
+`int` arrays are `long[]` for the same reason scalar `int` fields are `Long`: the untyped API
+represents every JFR `int` as a `long`. `@Timestamp(TICKS)` and `@Timespan(TICKS)` elements are
+converted to epoch nanoseconds and nanosecond durations, which do not fit in an `int`.
+
 ## Type Filtering
+
+### Filtering Before Decoding
+
+Give the parser a type filter and it skips every other event without decoding it:
+
+```java
+parser.handle(
+    TypeFilter.named("jdk.FileRead"),
+    (type, value, ctl) -> {
+        Object path = Values.get(value, "path");
+        System.out.println("File read: " + path);
+    });
+```
+
+This is the fast way to read a few event types out of a large recording. A handler registered
+without a filter (the forms below) makes the parser decode every event, whatever other handlers
+are registered.
+
+- The filter is asked once per chunk and event type, not once per event. It runs on the chunk's
+  thread, so it must be thread-safe and must give the same answer for the same type every time.
+- An event that is not decoded cannot fail to decode. A corrupted event of a type no handler wants
+  is not reported to `onDecodeError` and does not fail the parse.
+- The handler is called once per event even if you register it twice, with or without a filter.
+
+### Skipping Chunks by Start Time
+
+When you only want events from some point in time on, say so, and the parser skips whole chunks:
+
+```java
+TimeRange lastMinute = TimeRange.since(endNanos - 60_000_000_000L);
+parser.handle(
+    TypeFilter.named("jdk.ExecutionSample"),
+    lastMinute,
+    (type, value, ctl) -> {
+        long startTime = (Long) value.get("startTime");
+        if (startTime >= lastMinute.fromEpochNanos()) {
+            // ...
+        }
+    });
+```
+
+- **The range is a hint, not a filter.** From the chunks that are read, the handler gets every
+  event of the accepted types, so it must still check `startTime`. No event that starts in the
+  range is withheld.
+- **Only the lower bound skips chunks.** A chunk that ends before the range begins is skipped. A
+  chunk that starts after the range ends is not: an event is written when it is committed and can
+  start long before its chunk. `TimeRange.until(t)` is accepted and skips nothing.
+- A chunk that was never finished is always read, and a handler registered without a range keeps
+  every chunk.
+- Times are epoch nanoseconds, the unit of an event's `startTime`.
 
 ### Single Type Handler
 
-Process only specific event types:
+Checking the type inside the handler also works, but every event has been decoded by then:
 
 ```java
 parser.handle((type, value, ctl) -> {
@@ -504,6 +578,12 @@ try (UntypedJafarParser parser = ctx.newUntypedParser(Paths.get("recording2.jfr"
 System.out.println("Total uptime: " + ctx.uptime() + "ns");
 ```
 
+Parsers made from the same context reuse each other's generated event deserializers: the second
+parse of a recording, or of another recording written by the same JVM build and agents, generates
+none. Recordings from different producers usually share nothing, because the cache key includes
+the type ids the producer assigned. `UntypedJafarParser.open(path)` takes no context and reuses
+nothing between parses.
+
 ### Early Termination
 
 Stop parsing when done:
@@ -520,9 +600,15 @@ parser.handle((type, value, ctl) -> {
 });
 ```
 
-### Converting Ticks
+`abort()` stops the whole parse, not only the current chunk, and the handlers not yet called for
+that event are skipped. Chunks are parsed in parallel, so `count` can end slightly above 1000 -
+at most one extra event per other parsing thread - so cap on your own count if you need an exact
+number.
 
-Convert JFR tick values to time units:
+### Reading Durations and Timestamps
+
+`@Timespan(TICKS)` and `@Timestamp(TICKS)` fields are already converted: the map holds nanoseconds
+and epoch nanoseconds. Do not convert them again:
 
 ```java
 parser.handle((type, value, ctl) -> {
@@ -530,8 +616,7 @@ parser.handle((type, value, ctl) -> {
         Object durationObj = Values.get(value, "duration");
 
         if (durationObj instanceof Number) {
-            long ticks = ((Number) durationObj).longValue();
-            long nanos = ctl.chunkInfo().convertTicks(ticks, TimeUnit.NANOSECONDS);
+            long nanos = ((Number) durationObj).longValue();
             double ms = nanos / 1_000_000.0;
 
             System.out.printf("Duration: %.2f ms%n", ms);
@@ -539,6 +624,74 @@ parser.handle((type, value, ctl) -> {
     }
 });
 ```
+
+### Undecodable Events
+
+If an event's payload cannot be decoded (a corrupted or non-conforming recording), `run()` fails
+by default with an `IOException`. Its cause chain contains an
+`io.jafar.parser.api.EventDecodingException` whose message names the event type, the chunk and the
+event's position in it, for example
+`Cannot decode event of type jdk.ExecutionSample (id 101) in chunk 1 at position 271 (size 29)`.
+The same details are available from `getTypeName()`, `getTypeId()`, `getChunkIndex()`,
+`getPosition()` and `getSize()`, and `getCause()` is the decoder's reason.
+
+Event handlers never receive the bad event, not even partially. Events decoded before the failure
+have already been delivered. Chunks are parsed in parallel, so events from other chunks may have
+been delivered too.
+
+```java
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.run();
+} catch (IOException e) {
+    for (Throwable c = e; c != null; c = c.getCause()) {
+        System.err.println(c);  // includes "Cannot decode event of type ..."
+    }
+}
+```
+
+To read such a recording on a best-effort basis instead, register a decode error handler. Return
+`true` to skip the event and continue with the next one, `false` to fail the parse. If the handler
+throws, the parse fails with that exception. It is called from the threads parsing the chunks, so
+it must be thread-safe:
+
+```java
+AtomicLong skipped = new AtomicLong();
+try (UntypedJafarParser p = JafarParser.newUntypedParser(path)) {
+    p.handle((type, value, ctl) -> { /* ... */ });
+    p.onDecodeError(failure -> {
+        System.err.println("skipped: " + failure.getMessage());
+        return skipped.incrementAndGet() <= 100;  // give up after 100 bad events
+    });
+    p.run();
+}
+```
+
+Skipping recovers cleanly from a bad event *payload*: parsing resumes at the next event, located by
+the size the chunk declares for each event. A reference to a pooled string that does not exist is
+such a payload error too; it is never read as `null`.
+
+A corrupted *constant pool* entry is different, and always fails the parse, even with a decode error
+handler. Pool entries are not length-prefixed, so past an entry that cannot be read the rest of the
+checkpoint cannot be located, and no later reference in the chunk could be trusted. The
+`IOException` names the pool and the entry, for example
+`Constant pool java.lang.String, index 19: Unexpected string constant id: 127`. A pool whose type
+the chunk metadata does not declare fails the same way, since its entries cannot be skipped either:
+`Constant pool of type 77 (1 entries): the type is not declared in the chunk metadata`. So an event
+handler never sees a partially indexed pool.
+
+A reference that does not resolve in an intact chunk reads as `null` for every pooled field except
+a string, as in the JDK's own reader. That includes the indices writers use for an absent value: 0,
+which HotSpot writes (an event recorded without a stack trace, for example), and `Long.MIN_VALUE`,
+which the JMC writer (`org.openjdk.jmc.flightrecorder.writer`, used by dd-trace-java) writes for a
+null value. A pool entry that cannot be decoded when it is resolved, such as one whose string field
+refers to a string entry that does not exist, makes `getValue()` (and so `Values.get` and
+`Values.resolvedDeep`) throw, the same exception every time.
+
+> The Go parser offers the same choice through `Options.OnError`. There, ignoring the error is the
+> default; in Java, failing is. A corrupted constant pool entry is also reported through `OnError`
+> there: the entries indexed before it stay usable, and references to the rest are reported one by
+> one. See [go-parser/README.md](../../go-parser/README.md#error-handling).
 
 ## Performance Considerations
 
@@ -609,7 +762,7 @@ Map<String, AtomicLong> fileStats = new ConcurrentHashMap<>();
 parser.handle((type, value, ctl) -> {
     if ("jdk.FileRead".equals(type.getName())) {
         String path = (String) value.get("path");
-        Long bytes = (Long) value.get("bytes");
+        Long bytes = (Long) value.get("bytesRead");
 
         if (path != null && bytes != null) {
             fileStats.computeIfAbsent(path, k -> new AtomicLong())
@@ -625,7 +778,11 @@ The parser already parallelizes chunk processing across available cores, so hand
 
 ### 5. Filter Early
 
-Skip unnecessary work:
+Best: register the handler with a type filter, so unwanted events are never decoded (see
+[Filtering Before Decoding](#filtering-before-decoding)). On a generated 125 MB recording,
+reading a type that makes up 0.01% of the events took 71 ms with a filter and 583 ms without.
+
+When the decision needs more than the type, reject as early as you can inside the handler:
 
 ```java
 parser.handle((type, value, ctl) -> {
@@ -687,7 +844,7 @@ public class IOAnalyzer {
                                        .orElse("unknown");
 
                     // Extract bytes
-                    long bytes = Values.as(value, Long.class, "bytes")
+                    long bytes = Values.as(value, Long.class, "bytesRead")
                                       .orElse(0L);
 
                     // Count by file
@@ -702,8 +859,9 @@ public class IOAnalyzer {
                     // Extract address and port
                     String address = Values.as(value, String.class, "address")
                                           .orElse("unknown");
-                    Integer port = Values.as(value, Integer.class, "port")
-                                        .orElse(0);
+                    // JFR int fields surface as Long in the untyped API
+                    Long port = Values.as(value, Long.class, "port")
+                                     .orElse(0L);
 
                     String endpoint = address + ":" + port;
 

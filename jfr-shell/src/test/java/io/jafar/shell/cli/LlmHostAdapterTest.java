@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.util.Optional;
@@ -31,7 +32,7 @@ class LlmHostAdapterTest {
   @BeforeEach
   void setUp() {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
@@ -40,7 +41,7 @@ class LlmHostAdapterTest {
           when(s.getAvailableTypes()).thenReturn(java.util.Set.of("jdk.ExecutionSample"));
           return s;
         };
-    SessionManager<JFRSession> sessions = new SessionManager<>(factory, ctx);
+    SessionManager<Session> sessions = new SessionManager<>(factory, ctx);
     CommandDispatcherTest.BufferIO io = new CommandDispatcherTest.BufferIO();
     // Three-arg constructor: no JfrSelector, exactly as io.jafar.shell.Shell builds it.
     dispatcher = new CommandDispatcher(sessions, io, r -> {});

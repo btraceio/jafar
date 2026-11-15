@@ -13,9 +13,9 @@ Chain groupBy() | top(10, by=count) to find the most frequent values
 sortBy(field) orders results; add asc=true for ascending order
 top(N) returns the first N rows — combine with by=field for top-N analysis
 Use select(f1, f2) to project only the fields you need
-select() supports aliases: select(bytes/1024 as kb)
+select() supports aliases: select(bytesRead/1024 as kb)
 select() supports arithmetic: select(a + b as total, x * 100 as pct)
-select() supports string templates: select("${path} (${bytes}B)" as info)
+select() supports string templates: select("${path} (${bytesRead}B)" as info)
 Use if(cond, trueVal, falseVal) inside select for conditional fields
 coalesce(a, b, c) returns the first non-null value — useful in select
 upper(), lower(), substring(), length() are available in select expressions
@@ -23,7 +23,7 @@ toMap(keyField, valueField) converts tabular results to a key-value map
 timerange() shows min/max timestamps with wall-clock conversion
 
 # ── Filters ──
-Filter events with predicates in brackets: events/jdk.FileRead[bytes>1024]
+Filter events with predicates in brackets: events/jdk.FileRead[bytesRead>1024]
 Combine filter predicates with 'and', 'or', 'not' and parentheses
 Use ~ or =~ for regex matching in filters: [name~".*Pool.*"]
 contains(field, "str") checks for substring matches in filters

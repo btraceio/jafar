@@ -1,0 +1,60 @@
+plugins {
+    id 'java-library'
+}
+
+// Per-plane tag-derived version (see gradle/version-from-tag.gradle), re-applied per subproject
+// as everywhere else. Shared test tooling (allocation meter and budgets, golden files): this
+// module is deliberately NOT published — it never applies the maven-publish plugin and is a
+// testImplementation-only dependency of the modules that use it.
+apply from: rootProject.file('gradle/version-from-tag.gradle')
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+// Java 8: the meter is compiled against the same floor as parser-core's test8 cell, so it can be
+// used from both the JDK 21 and JDK 8 allocation tests (D9).
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+
+dependencies {
+    // `api`, not `testImplementation`: the budget/golden tests in the consuming modules use
+    // Assertions/Assumptions (AllocationBudgets, GoldenFile) through this artifact, so a plain
+    // `testImplementation project(':test-support')` must suffice for them.
+    api 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    // JfrCanonicalDump renders untyped parser event maps. compileOnly, so test-support never
+    // forces the parser onto a consumer's runtime classpath: the modules that use the dump
+    // (parser-core's golden and differential tests) already depend on the parser themselves.
+    // test-support is exempt from the arch boundary rules (the test-* module convention), so
+    // this may reach parser-core's internal_api, which the canonical dump needs (constant pools,
+    // chunk callbacks).
+    compileOnly project(':parser-core')
+    testImplementation project(':parser-core')
+    // The JMC writer, for the recording-writing dump test: the same 9.1.0 test-recordings uses,
+    // so the harness writes recordings exactly like the repo's own generator. Its class files
+    // need a JVM newer than this module's Java 8 floor — and the plan's 8.2.1 does not run on
+    // a Java 8 JVM either (despite its pom targeting 8): LEB128ByteArrayWriter.export calls
+    // ByteBuffer.position(int) with the Java 9+ covariant return, a NoSuchMethodError on 8. The
+    // test source set therefore compiles and runs on JDK 21 (below); main stays on the Java 8
+    // floor so the JDK-8 allocation cells keep using AllocationMeter and friends.
+    testImplementation 'org.openjdk.jmc:flightrecorder.writer:9.1.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+// The dump test's JMC writer needs a newer JVM than main's Java 8 floor (see the dependency
+// comment); only the test source set moves up, main keeps the floor.
+def dumpTestJdk = JavaLanguageVersion.of(21)
+
+tasks.named('compileTestJava') {
+    javaCompiler = javaToolchains.compilerFor { languageVersion = dumpTestJdk }
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    javaLauncher = javaToolchains.launcherFor { languageVersion = dumpTestJdk }
+}

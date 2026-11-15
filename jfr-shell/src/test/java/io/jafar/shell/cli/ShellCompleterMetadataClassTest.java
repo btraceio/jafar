@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -19,14 +20,14 @@ class ShellCompleterMetadataClassTest {
   @Test
   void suggestsClassSubcommandAndTypesAndFlags() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           when(s.getRecordingPath()).thenReturn(path);
           when(s.getAllMetadataTypes()).thenReturn(Set.of("jdk.types.Method", "java.lang.Thread"));
           return s;
         };
-    SessionManager<JFRSession> sm = new SessionManager<>(factory, ctx);
+    SessionManager<Session> sm = new SessionManager<>(factory, ctx);
     sm.open(Path.of("/tmp/example.jfr"), null);
 
     ShellCompleter completer = new ShellCompleter(sm, null);

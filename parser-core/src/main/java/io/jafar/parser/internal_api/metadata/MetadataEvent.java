@@ -1,6 +1,7 @@
 package io.jafar.parser.internal_api.metadata;
 
 import io.jafar.parser.AbstractEvent;
+import io.jafar.parser.ParsingUtils;
 import io.jafar.parser.internal_api.MutableMetadataLookup;
 import io.jafar.parser.internal_api.RecordingStream;
 import java.io.IOException;
@@ -40,6 +41,12 @@ public final class MetadataEvent extends AbstractEvent {
 
   private final boolean forceConstantPools;
 
+  /** Upper bound on metadata element nesting; see {@link #readElement(RecordingStream)}. */
+  static final int MAX_ELEMENT_DEPTH = 64;
+
+  /** Current nesting depth of {@link #readElement(RecordingStream)}. */
+  private int depth;
+
   /**
    * Constructs a new MetadataEvent from the recording stream.
    *
@@ -63,7 +70,15 @@ public final class MetadataEvent extends AbstractEvent {
     this.forceConstantPools = forceConstantPools;
 
     readStringTable(stream);
-    root = (MetadataRoot) readElement(stream);
+    AbstractMetadataElement top = readElement(stream);
+    if (!(top instanceof MetadataRoot)) {
+      throw new IOException(
+          "Metadata event: the top element is "
+              + top.getKind()
+              + ", expected "
+              + MetadataElementKind.ROOT);
+    }
+    root = (MetadataRoot) top;
   }
 
   /**
@@ -73,7 +88,13 @@ public final class MetadataEvent extends AbstractEvent {
    * @throws IOException if an I/O error occurs during reading
    */
   private void readStringTable(RecordingStream stream) throws IOException {
-    int stringCnt = (int) stream.readVarint();
+    long declared = stream.readVarint();
+    // Every string takes at least its one-byte encoding id, so a count beyond the bytes that are
+    // left cannot be honest - and must not size the table.
+    if (declared < 0 || declared > stream.available()) {
+      throw new IOException("Metadata event: implausible string table size " + declared);
+    }
+    int stringCnt = (int) declared;
     String[] stringConstants = new String[stringCnt];
     for (int stringIdx = 0; stringIdx < stringCnt; stringIdx++) {
       stringConstants[stringIdx] = stream.readUTF8();
@@ -90,10 +111,23 @@ public final class MetadataEvent extends AbstractEvent {
    * @throws IOException if an I/O error occurs during reading
    */
   AbstractMetadataElement readElement(RecordingStream stream) throws IOException {
+    // Elements nest by recursion (an element's constructor reads its children through here), so the
+    // nesting depth of the recording is the depth of this thread's stack. Real metadata is five
+    // levels deep; the Go parser uses the same bound.
+    if (depth >= MAX_ELEMENT_DEPTH) {
+      throw new IOException("Metadata element nesting exceeds " + MAX_ELEMENT_DEPTH + " levels");
+    }
+    depth++;
     try {
       // get the element name
       int stringPtr = (int) stream.readVarint();
-      String typeId = stream.getContext().getMetadataLookup().getString(stringPtr);
+      String typeId =
+          ParsingUtils.metadataString(stream.getContext().getMetadataLookup(), stringPtr);
+      if (typeId == null) {
+        // The string table may hold null strings (encoding 0); one cannot name an element.
+        throw new IOException(
+            "Metadata element whose name is a null string (index " + stringPtr + ")");
+      }
       AbstractMetadataElement element = null;
       switch (typeId) {
         case "class":
@@ -143,8 +177,14 @@ public final class MetadataEvent extends AbstractEvent {
 
       return element;
     } catch (Throwable t) {
-      log.error("Failed to read metadata element", t);
+      // Logged once, by the outermost element: every enclosing element rethrows the same
+      // exception, and logging it at each level printed one full stack trace per nesting level.
+      if (depth == 1) {
+        log.error("Failed to read metadata element", t);
+      }
       throw t;
+    } finally {
+      depth--;
     }
   }
 

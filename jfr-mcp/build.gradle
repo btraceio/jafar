@@ -224,8 +224,10 @@ def fastutilClosurePatterns() {
             'fastutil-core expected on the runtime classpath to trim the embedded copy')
     }
     def jdepsPath = new File(System.getProperty('java.home'), 'bin/jdeps')
+    // -filter:none because jdeps hides same-package references by default, which dropped classes
+    // only reachable from within their own package (Long2ObjectOpenHashMap$1 broke hdump_query).
     def proc = new ProcessBuilder(
-        [jdepsPath.path, '-verbose:class', '--multi-release', '21']
+        [jdepsPath.path, '-verbose:class', '-filter:none', '--multi-release', '21']
             + classpathFiles.collect { it.path })
         .redirectErrorStream(false)
         .start()
@@ -370,8 +372,8 @@ shadowJar {
         exclude(dependency('org.apache.httpcomponents:.*'))
         exclude(dependency('org.apache.commons:commons-logging'))
         // The embedded fastutil-core copy is replaced by the jdeps-trimmed subset (trimFastutil):
-        // the static closure of what the embedded code references (~100 classes) instead of the
-        // 16,204 the core jar ships. See the trim task for why this is exact, not a heuristic.
+        // the static closure of what the embedded code references (~760 classes) instead of the
+        // 3,396 the core jar ships. See the trim task for why this is exact, not a heuristic.
         exclude(dependency('it.unimi.dsi:fastutil-core'))
     }
 

@@ -1,0 +1,11 @@
+# golden v1 — regenerate: ./gradlew :pprof-parser:test --tests '*PprofGoldenDumpTest' -Pjafar.golden.update --rerun
+fixture=minimal.pb.gz
+fixture-sha256=b3deefb8743f743b98fcf7913ecc29c3d7cb7f2c08ea467cfffa7742e0b8d549
+lines=12
+digest=1ea6199bdc6faf3d2ad00d385b9aec5eea79e860606963ecc80bae2c6af9be89
+count.function=1
+count.location=1
+count.profile=1
+count.sample=1
+count.string=7
+count.value-type=1

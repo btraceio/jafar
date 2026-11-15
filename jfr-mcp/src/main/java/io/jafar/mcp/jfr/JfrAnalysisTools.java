@@ -28,13 +28,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tools.jackson.databind.ObjectMapper;
 
 /** MCP tool implementations for higher-level JFR analyses. */
 public final class JfrAnalysisTools {
 
   private static final Logger LOG = LoggerFactory.getLogger(JfrAnalysisTools.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   /**
    * The analyses themselves, which no longer live here.
@@ -753,11 +751,11 @@ public final class JfrAnalysisTools {
             },
             "startTime": {
               "type": "integer",
-              "description": "Start time in nanoseconds from recording start (optional)"
+              "description": "Start of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "endTime": {
               "type": "integer",
-              "description": "End time in nanoseconds from recording start (optional)"
+              "description": "End of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "resources": {
               "type": "array",
@@ -801,11 +799,11 @@ public final class JfrAnalysisTools {
             },
             "startTime": {
               "type": "integer",
-              "description": "Start time in nanoseconds from recording start (optional)"
+              "description": "Start of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "endTime": {
               "type": "integer",
-              "description": "End time in nanoseconds from recording start (optional)"
+              "description": "End of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "topThreads": {
               "type": "integer",

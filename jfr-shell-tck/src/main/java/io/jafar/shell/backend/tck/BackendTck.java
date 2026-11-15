@@ -12,10 +12,14 @@ import io.jafar.shell.backend.MetadataSource;
 import io.jafar.shell.backend.UnsupportedCapabilityException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -47,7 +51,9 @@ import org.junit.jupiter.api.TestInstance;
  *   <li>Event source functionality (if supported)
  *   <li>Metadata source functionality (if supported)
  *   <li>Chunk source functionality (if supported)
- *   <li>Constant pool source functionality (if supported)
+ *   <li>Constant pool source functionality (if supported), and that its operations agree: the
+ *       available types, the summary, the entry listing and {@code crossref} describe the same
+ *       pools, on every run
  * </ul>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -299,6 +305,141 @@ public abstract class BackendTck {
     assertNull(details, "Should return null for non-existent class");
   }
 
+  @Test
+  void metadataSourceLoadAllClassesHasNoDuplicateEntries() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    Path recording = getTestRecording();
+
+    List<Map<String, Object>> classes = source.loadAllClasses(recording);
+
+    Set<String> seen = new HashSet<>();
+    for (Map<String, Object> clazz : classes) {
+      String key = String.valueOf(clazz.get("id")) + " " + clazz.get("name");
+      assertTrue(
+          seen.add(key),
+          () ->
+              "Duplicate metadata class entry in loadAllClasses(): id="
+                  + clazz.get("id")
+                  + ", name="
+                  + clazz.get("name")
+                  + " (multi-chunk recordings repeat the metadata in each chunk; backends must de-duplicate)");
+    }
+  }
+
+  /**
+   * Writes a copy of {@code source} with its bytes repeated twice. JFR chunk metadata is repeated
+   * across chunks of multi-chunk recordings, so a recording with its own bytes appended simulates a
+   * recording whose chunks repeat identical class definitions.
+   */
+  private static Path doubleRecording(Path source) throws java.io.IOException {
+    byte[] bytes = java.nio.file.Files.readAllBytes(source);
+    Path doubled = java.nio.file.Files.createTempFile("tck-doubled", ".jfr");
+    java.nio.file.Files.write(doubled, bytes);
+    try (java.io.OutputStream out =
+        java.nio.file.Files.newOutputStream(doubled, java.nio.file.StandardOpenOption.APPEND)) {
+      out.write(bytes);
+    }
+    doubled.toFile().deleteOnExit();
+    return doubled;
+  }
+
+  @Test
+  void metadataSourceLoadAllClassesHasNoDuplicatesAcrossRepeatedChunks() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    // The built-in recording is a valid multi-chunk recording whose chunks repeat the same class
+    // definitions when duplicated; the doubled copy exercises multi-chunk de-duplication.
+    Path doubled = null;
+    try {
+      doubled = doubleRecording(getTestRecording());
+    } catch (java.io.IOException e) {
+      org.junit.jupiter.api.Assumptions.abort(
+          "Could not prepare a doubled recording: " + e.getMessage());
+      return;
+    }
+    try {
+      List<Map<String, Object>> classes = source.loadAllClasses(doubled);
+
+      Set<String> seen = new HashSet<>();
+      for (Map<String, Object> clazz : classes) {
+        String key = String.valueOf(clazz.get("id")) + " " + clazz.get("name");
+        assertTrue(
+            seen.add(key),
+            () ->
+                "Duplicate metadata class entry in loadAllClasses() on a repeated-content "
+                    + "recording: id="
+                    + clazz.get("id")
+                    + ", name="
+                    + clazz.get("name"));
+      }
+
+      List<String> first = classKeys(source.loadAllClasses(doubled));
+      List<String> second = classKeys(source.loadAllClasses(doubled));
+      assertEquals(
+          first,
+          second,
+          "loadAllClasses() returned a different result across calls on the doubled recording");
+    } finally {
+      if (doubled != null) {
+        java.nio.file.Files.deleteIfExists(doubled);
+      }
+    }
+  }
+
+  @Test
+  void metadataSourceLoadAllClassesIsDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    Path recording = getTestRecording();
+
+    List<String> first = classKeys(source.loadAllClasses(recording));
+    List<String> second = classKeys(source.loadAllClasses(recording));
+
+    assertEquals(
+        first, second, "loadAllClasses() returned a different result across calls (order/content)");
+  }
+
+  @Test
+  void metadataSourceLoadClassIsDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    Path recording = getTestRecording();
+
+    List<Map<String, Object>> classes = source.loadAllClasses(recording);
+    if (classes.isEmpty()) {
+      return;
+    }
+    String typeName = (String) classes.get(0).get("name");
+
+    Map<String, Object> first = source.loadClass(recording, typeName);
+    Map<String, Object> second = source.loadClass(recording, typeName);
+
+    assertNotNull(first, "loadClass should return a result for: " + typeName);
+    assertEquals(
+        first, second, "loadClass() returned different results for the same type across calls");
+  }
+
+  private static List<String> classKeys(List<Map<String, Object>> classes) {
+    List<String> keys = new ArrayList<>(classes.size());
+    for (Map<String, Object> clazz : classes) {
+      keys.add(String.valueOf(clazz.get("id")) + " " + clazz.get("name"));
+    }
+    return keys;
+  }
+
   // ==================== Chunk Source Tests ====================
 
   @Test
@@ -331,10 +472,14 @@ public abstract class BackendTck {
     ChunkSource source = backend.createChunkSource();
     Path recording = getTestRecording();
 
-    Map<String, Object> chunk = source.loadChunk(recording, 0);
+    // A chunk is addressed by the index loadAllChunks reports, not by list position.
+    Map<String, Object> first = source.loadAllChunks(recording).get(0);
+    Map<String, Object> chunk =
+        source.loadChunk(recording, ((Number) first.get("index")).intValue());
 
     assertNotNull(chunk, "First chunk should exist in test recording");
     assertTrue(chunk.containsKey("size"), "Chunk should have 'size' field");
+    assertEquals(first, chunk, "loadChunk(index) should return the row listed with that index");
   }
 
   @Test
@@ -417,5 +562,198 @@ public abstract class BackendTck {
 
     assertNotNull(entries, "Constant pool entries should not be null");
     // May be empty for some types
+  }
+
+  // ==================== Constant Pool Consistency Tests ====================
+  //
+  // The constant pool operations describe the same pools, so their answers must agree. Pool ids are
+  // chunk-local: an entry is one id in one chunk, and counts are per chunk, summed. The built-in
+  // recording has two chunks, which a backend may parse in parallel.
+
+  @Test
+  void constantPoolAvailableTypesMatchSummary() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    Set<String> types = new TreeSet<>(source.getAvailableTypes(recording));
+    Set<String> summarized = new TreeSet<>(summaryByName(source, recording).keySet());
+
+    assertEquals(
+        summarized, types, "getAvailableTypes() must name every pool loadSummary() counts");
+  }
+
+  @Test
+  void constantPoolEntriesMatchSummaryTotals() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    // The largest pools; every loadEntries() call reads the whole recording.
+    for (String type : largestPools(summaryByName(source, recording), 5)) {
+      long total = summaryByName(source, recording).get(type);
+      List<Map<String, Object>> entries = source.loadEntries(recording, type);
+      assertEquals(
+          total,
+          entries.size(),
+          "loadEntries(" + type + ") must list each entry loadSummary() counts, once");
+    }
+  }
+
+  @Test
+  void constantPoolSummaryIsDeterministic() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    Map<String, Long> first = summaryByName(source, recording);
+    for (int run = 1; run < 3; run++) {
+      assertEquals(first, summaryByName(source, recording), "loadSummary() run " + run);
+    }
+  }
+
+  @Test
+  void constantPoolCrossrefMatchesSummary() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+    Map<String, Long> summary = summaryByName(source, recording);
+    List<String> largest = largestPools(summary, 1);
+    if (largest.isEmpty()) {
+      return; // No constant pools in this recording
+    }
+    String type = largest.get(0);
+
+    Map<String, Object> result;
+    try {
+      result = source.crossref(recording, type);
+    } catch (UnsupportedOperationException e) {
+      return; // crossref is optional (ConstantPoolSource's default throws)
+    }
+    long total = ((Number) result.get("cpTotal")).longValue();
+    long referenced = ((Number) result.get("cpReferenced")).longValue();
+    long unused = ((Number) result.get("cpUnused")).longValue();
+    String ctx = "crossref(" + type + "): " + result;
+    assertEquals(summary.get(type).longValue(), total, "cpTotal must equal loadSummary(); " + ctx);
+    assertTrue(referenced >= 0 && referenced <= total, ctx);
+    assertEquals(total - referenced, unused, ctx);
+  }
+
+  @Test
+  void constantPoolEntriesAreDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    for (String type : largestPools(summaryByName(source, recording), 3)) {
+      List<Map<String, Object>> first = source.loadEntries(recording, type);
+      List<Map<String, Object>> second = source.loadEntries(recording, type);
+      assertEquals(
+          entryIds(first),
+          entryIds(second),
+          "loadEntries(" + type + ") returned different entries or order across calls");
+    }
+  }
+
+  @Test
+  void constantPoolAvailableTypesIsStableAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    Set<String> first = source.getAvailableTypes(recording);
+    Set<String> second = source.getAvailableTypes(recording);
+    assertEquals(first, second, "getAvailableTypes() returned a different result across calls");
+  }
+
+  @Test
+  void constantPoolCrossrefIsDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    String type =
+        summaryByName(source, recording).entrySet().stream()
+            .max(Map.Entry.comparingByValue())
+            .map(Map.Entry::getKey)
+            .orElse(null);
+    if (type == null) {
+      return; // No constant pools in this recording
+    }
+
+    Map<String, Object> first;
+    Map<String, Object> second;
+    try {
+      first = source.crossref(recording, type);
+      second = source.crossref(recording, type);
+    } catch (UnsupportedOperationException e) {
+      return; // crossref is optional (ConstantPoolSource's default throws)
+    }
+    assertEquals(
+        first.get("cpTotal"), second.get("cpTotal"), "crossref cpTotal changed across calls");
+    assertEquals(
+        first.get("cpReferenced"),
+        second.get("cpReferenced"),
+        "crossref cpReferenced changed across calls");
+    assertEquals(
+        first.get("cpUnused"), second.get("cpUnused"), "crossref cpUnused changed across calls");
+    assertEquals(
+        first.get("eventCounts"),
+        second.get("eventCounts"),
+        "crossref eventCounts changed across calls");
+    assertEquals(
+        first.get("idsByEventType"),
+        second.get("idsByEventType"),
+        "crossref idsByEventType changed across calls");
+    assertEquals(
+        first.get("totalRefsByEventType"),
+        second.get("totalRefsByEventType"),
+        "crossref totalRefsByEventType changed across calls");
+  }
+
+  private static List<String> entryIds(List<Map<String, Object>> entries) {
+    List<String> ids = new ArrayList<>(entries.size());
+    for (Map<String, Object> entry : entries) {
+      ids.add(String.valueOf(entry.get("id")));
+    }
+    return ids;
+  }
+
+  /** {@code loadSummary()} as pool type to total size; fails on a repeated type. */
+  private static Map<String, Long> summaryByName(ConstantPoolSource source, Path recording)
+      throws Exception {
+    Map<String, Long> byName = new TreeMap<>();
+    for (Map<String, Object> row : source.loadSummary(recording)) {
+      String name = (String) row.get("name");
+      long size = ((Number) row.get("totalSize")).longValue();
+      assertNull(byName.put(name, size), "loadSummary() lists " + name + " more than once");
+    }
+    return byName;
+  }
+
+  /** The {@code n} largest pools, ties by name, so the choice is the same on every run. */
+  private static List<String> largestPools(Map<String, Long> summary, int n) {
+    return summary.entrySet().stream()
+        .filter(e -> e.getValue() > 0)
+        .sorted(
+            Map.Entry.<String, Long>comparingByValue(Comparator.reverseOrder())
+                .thenComparing(Map.Entry.comparingByKey()))
+        .limit(n)
+        .map(Map.Entry::getKey)
+        .toList();
   }
 }

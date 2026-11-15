@@ -115,7 +115,7 @@ public final class ObjectIndexReader implements AutoCloseable {
     }
     entryCount = (int) entryCountLong;
 
-    int flags = buffer.getInt(); // Reserved for future use
+    buffer.getInt(); // Reserved for future use
   }
 
   /**

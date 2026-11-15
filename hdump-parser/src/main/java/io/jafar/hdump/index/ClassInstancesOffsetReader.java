@@ -84,7 +84,7 @@ public final class ClassInstancesOffsetReader implements AutoCloseable {
     }
     classCount = (int) classCountLong;
 
-    int flags = buffer.getInt(); // Reserved for future use
+    buffer.getInt(); // Reserved for future use
   }
 
   /**

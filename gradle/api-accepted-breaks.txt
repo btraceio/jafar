@@ -1,0 +1,29 @@
+# api-accepted-breaks.txt — the accepted API breaks, the ratchet baseline of
+# the API-evolution gate (step 1 of the generated-code safety harness).
+#
+# Shrink-only (D5): entries are DELETED when a baseline tag moves past the
+# break — scripts/api-break-check.sh then fails with "delete stale accepted
+# entries" until the stale entry is removed. Entries are ADDED only to accept
+# a new break, and an entry that is new since the PR base counts as growth:
+# the gate demands an
+#     API-Break: <non-empty reason>
+# statement in the PR body for it. An accepted entry that matches nothing
+# fails even with a statement.
+#
+# Format: '#' comment lines; exactly one entry per line; every entry is
+# preceded by a '# reason:' line. Entries are byte-identical to the lines
+# scripts/api-break-check.sh prints in its failure listing:
+#     <surface>|<nearest preceding class header>|<member line>
+# as extracted from build/reports/api-compat/<surface>.txt, produced by
+# scripts/api-baseline.sh && ./gradlew apiCompat.
+#
+# The day-one list below is the minimal set of incompatible changes the
+# branch base (b160129a) already carries against its derived baselines
+# (measured by the step-1 base run): three members of the pprof Sample API.
+# The step-1 PR body carries an API-Break: statement for it (D5).
+# reason: pre-gate change — ec635ff7 "pprof: single-phase decode with unboxed sample arrays (#123)" removed the List-based Sample constructor (git log v0.29.0..b160129a -- pprof-parser/src/main/java/io/jafar/pprof/api/PprofProfile.java)
+pprof|***! MODIFIED CLASS: PUBLIC STATIC FINAL io.jafar.pprof.api.PprofProfile$Sample  (not serializable)|---! REMOVED CONSTRUCTOR: PUBLIC(-) PprofProfile$Sample(java.util.List<java.lang.Long>, java.util.List<java.lang.Long>, java.util.List<io.jafar.pprof.api.PprofProfile$Label>)
+# reason: pre-gate change — ec635ff7 switched the accessor from List<Long> to unboxed long[] (git log v0.29.0..b160129a -- pprof-parser/src/main/java/io/jafar/pprof/api/PprofProfile.java)
+pprof|***! MODIFIED CLASS: PUBLIC STATIC FINAL io.jafar.pprof.api.PprofProfile$Sample  (not serializable)|***! MODIFIED METHOD: PUBLIC long[](<- <java.lang.Long>) (<-java.util.List(<- <java.lang.Long>)) locationIds()
+# reason: pre-gate change — ec635ff7 switched the accessor from List<Long> to unboxed long[] (git log v0.29.0..b160129a -- pprof-parser/src/main/java/io/jafar/pprof/api/PprofProfile.java)
+pprof|***! MODIFIED CLASS: PUBLIC STATIC FINAL io.jafar.pprof.api.PprofProfile$Sample  (not serializable)|***! MODIFIED METHOD: PUBLIC long[](<- <java.lang.Long>) (<-java.util.List(<- <java.lang.Long>)) values()

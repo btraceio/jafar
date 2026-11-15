@@ -1,0 +1,1 @@
+Method <io.jafar.hdump.api.HeapDumpParser.parse(java.nio.file.Path, io.jafar.hdump.api.HeapDumpParser$ParserOptions, io.jafar.hdump.api.HeapDumpParser$ProgressCallback)> calls method <io.jafar.hdump.impl.HeapDumpImpl.parse(java.nio.file.Path, io.jafar.hdump.api.HeapDumpParser$ParserOptions, io.jafar.hdump.api.HeapDumpParser$ProgressCallback)> in (HeapDumpParser.java:100)
