@@ -647,6 +647,92 @@ public abstract class BackendTck {
     assertEquals(total - referenced, unused, ctx);
   }
 
+  @Test
+  void constantPoolEntriesAreDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    for (String type : largestPools(summaryByName(source, recording), 3)) {
+      List<Map<String, Object>> first = source.loadEntries(recording, type);
+      List<Map<String, Object>> second = source.loadEntries(recording, type);
+      assertEquals(
+          entryIds(first),
+          entryIds(second),
+          "loadEntries(" + type + ") returned different entries or order across calls");
+    }
+  }
+
+  @Test
+  void constantPoolAvailableTypesIsStableAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    Set<String> first = source.getAvailableTypes(recording);
+    Set<String> second = source.getAvailableTypes(recording);
+    assertEquals(first, second, "getAvailableTypes() returned a different result across calls");
+  }
+
+  @Test
+  void constantPoolCrossrefIsDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.CONSTANT_POOLS)) {
+      return;
+    }
+    ConstantPoolSource source = backend.createConstantPoolSource();
+    Path recording = getTestRecording();
+
+    String type =
+        summaryByName(source, recording).entrySet().stream()
+            .max(Map.Entry.comparingByValue())
+            .map(Map.Entry::getKey)
+            .orElse(null);
+    if (type == null) {
+      return; // No constant pools in this recording
+    }
+
+    Map<String, Object> first;
+    Map<String, Object> second;
+    try {
+      first = source.crossref(recording, type);
+      second = source.crossref(recording, type);
+    } catch (UnsupportedOperationException e) {
+      return; // crossref is optional (ConstantPoolSource's default throws)
+    }
+    assertEquals(
+        first.get("cpTotal"), second.get("cpTotal"), "crossref cpTotal changed across calls");
+    assertEquals(
+        first.get("cpReferenced"),
+        second.get("cpReferenced"),
+        "crossref cpReferenced changed across calls");
+    assertEquals(
+        first.get("cpUnused"), second.get("cpUnused"), "crossref cpUnused changed across calls");
+    assertEquals(
+        first.get("eventCounts"),
+        second.get("eventCounts"),
+        "crossref eventCounts changed across calls");
+    assertEquals(
+        first.get("idsByEventType"),
+        second.get("idsByEventType"),
+        "crossref idsByEventType changed across calls");
+    assertEquals(
+        first.get("totalRefsByEventType"),
+        second.get("totalRefsByEventType"),
+        "crossref totalRefsByEventType changed across calls");
+  }
+
+  private static List<String> entryIds(List<Map<String, Object>> entries) {
+    List<String> ids = new ArrayList<>(entries.size());
+    for (Map<String, Object> entry : entries) {
+      ids.add(String.valueOf(entry.get("id")));
+    }
+    return ids;
+  }
+
   /** {@code loadSummary()} as pool type to total size; fails on a repeated type. */
   private static Map<String, Long> summaryByName(ConstantPoolSource source, Path recording)
       throws Exception {

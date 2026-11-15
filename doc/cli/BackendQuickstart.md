@@ -244,8 +244,8 @@ Loaded backend: Mini Backend (id=mini)
 Capabilities: [EVENT_STREAMING, METADATA_CLASSES, STREAMING_PARSE, UNTYPED_HANDLERS]
 
 === TCK Results ===
-Tests run: 31
-Passed: 31
+Tests run: 34
+Passed: 34
 Failed: 0
 Skipped: 0
 ```
