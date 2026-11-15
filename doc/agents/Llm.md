@@ -127,6 +127,9 @@ Architecture, and the reasons it is shaped this way:
   account. The same holds one layer down: tests construct `LlmConfig` with an explicit
   settings-file supplier *and* environment lookup (`new LlmConfig(vars, Optional::empty, name ->
   null)`), so the developer's `llm.properties` and `JAFAR_LLM_*` exports cannot reach an assertion.
+  One live-config path remains in the shell: the `analyze`/`as-query` display cap and confirm gate
+  are built from the host's live config, so the jfr-shell tests pin `llm.max-rows` and
+  `llm.confirm` as shell variables — the layer that outranks both env and the settings file.
   `build.gradle` additionally scrubs test JVMs, but the tests do not rely on it — an IDE run has no
   scrub.
 - **`CommandDispatcher` has two query paths and the LLM host adapter must know both.** With a

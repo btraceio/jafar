@@ -119,4 +119,25 @@ class LlmSettingsFileTest {
     assertEquals(LlmConfig.Source.DEFAULT, config.sourceOf("llm.backend", "NO_SUCH_VAR"));
     assertTrue(config.settingsFile().isEmpty());
   }
+
+  @Test
+  void theEnvironmentWinsOverTheFile() throws Exception {
+    Map<String, String> mapped = Map.of("JAFAR_LLM_BACKEND", "openai");
+    LlmSettingsFile file = LlmSettingsFile.of(write("llm.backend=ollama\n"));
+    LlmConfig config =
+        new LlmConfig(
+            Map.<String, String>of()::get, () -> Optional.of(file), name -> mapped.get(name));
+
+    assertEquals("openai", config.backendId());
+    assertEquals(LlmConfig.Source.ENVIRONMENT, config.sourceOf("llm.backend", "JAFAR_LLM_BACKEND"));
+  }
+
+  @Test
+  void aNullEnvironmentResolvesNothing() {
+    LlmConfig config = new LlmConfig(Map.<String, String>of()::get, Optional::empty, null);
+
+    assertNull(config.model());
+    assertEquals("auto", config.backendId());
+    assertEquals(LlmConfig.Source.DEFAULT, config.sourceOf("llm.backend", "JAFAR_LLM_BACKEND"));
+  }
 }

@@ -104,7 +104,8 @@ public final class LlmConfig {
    * <p>This seam lets integrations and tests control both external inputs — the settings file and
    * the process environment — without mutating process-wide state. Tests pass {@code name -> null}
    * for no environment, or a map-backed lookup to assert on specific variables. A {@code null}
-   * {@code env} means "no environment at all", never the process one.
+   * {@code env} means "no environment at all", never the process one. {@code settingsFile} must not
+   * be {@code null}: it is used lazily on first resolve, not validated eagerly.
    */
   public LlmConfig(
       Function<String, String> lookup,

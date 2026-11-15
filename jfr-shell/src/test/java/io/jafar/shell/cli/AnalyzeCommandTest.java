@@ -125,6 +125,9 @@ class AnalyzeCommandTest {
 
   private static LlmCommands commands(Host host, ScriptedBackend backend) {
     LlmCommands commands = new LlmCommands(host);
+    // analyze() reads llm.confirm from a live config; a machine exporting JAFAR_LLM_CONFIRM=true
+    // would break these tests. putIfAbsent so the confirm tests' own setting stands.
+    host.settings.putIfAbsent("llm.confirm", "false");
     commands.pinService(
         new LlmService(backend, new LlmConfig(host.settings::get, Optional::empty, name -> null)));
     return commands;

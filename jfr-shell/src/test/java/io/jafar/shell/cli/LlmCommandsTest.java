@@ -35,6 +35,10 @@ class LlmCommandsTest {
     FakeHost() {
       // Never resolve a real backend from a unit test. See the class comment.
       settings.put("llm.backend", "test-nonexistent");
+      // The backend lookup is pinned so tests get "No LLM backend is installed.", but
+      // LlmService.create checks llm.enabled first and the host default must not be read from the
+      // machine environment or the user's settings file.
+      settings.put("llm.enabled", "true");
     }
 
     @Override
