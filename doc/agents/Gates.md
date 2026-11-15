@@ -517,6 +517,33 @@ fresh-context reference exactly — bucketed by chunk ordinal, written only by
 the chunk's own pool thread — with no sleeps and no timing assertions;
 `@Timeout(10, MINUTES)` is a hang guard only.
 
+What the parses share: the typed ones, the context's `TypedParserContextFactory`
+and the process-wide `GlobalHandlerCache`; the untyped ones, the context's one
+`UntypedDeserializerCache` (`ParsingContextImpl.untypedContextFactory`). The
+stress test does not check that the cache is one instance — a parse with a
+cache of its own produces the same events. `SharedUntypedDeserializerCacheTest`
+does: it reads the cache instance off each chunk context and asserts a second
+parse generates nothing.
+
+> **Case file — the shared cache that was not shared.** Until that test
+> existed, `untypedContextFactory` returned a new factory, with a new cache,
+> on every `run()`. The stress test, this section and three Javadocs described
+> a cache shared through the `ParsingContext`; what the untyped half stressed
+> was the sharing between the chunk threads of one parse. Nothing was red: the
+> assertion compares events, and events are the same either way. Against that
+> code 7 of the new test's 12 cases fail, each on
+> `both parses must carry the context's one cache`. **When a test's name says
+> "shared", assert the identity of the shared thing.**
+
+**A standing failure at `=16` (R8).** The stress test can fail on a *typed*
+parse: `round 3 parse 4 (typed): chunk 1 differs … expected … when=After GC …
+but was … when=null` — seen once in 7 runs at `=16` on a 4-core host. It is
+not the untyped cache: 8 concurrent typed-only parses of `tck-test.jfr`, 150
+rounds, with no untyped parse in the JVM, returned `when() == null` for every
+`jdk.GCHeapSummary` event of a whole parse (1,892 at a time) in 4 of 5 runs
+on the code before the cache became per-context, mostly when each parse had
+a `ParsingContext` of its own. The cause is not known and it is not fixed.
+
 **The recorded fire cases (R5).** Both recorded races are probabilistic; each
 was re-run until it failed, then reverted (sha-verified against the
 pre-mutation file):
@@ -537,6 +564,10 @@ pre-mutation file):
   mutation runs). The `=1` outcome of that specific mutation was not
   separately recorded (R8): with pool = 1 each parse's chunks are
   serialized, so the same blindness as the first case is expected.
+  This was recorded while each untyped parse still had its own cache (see the
+  case file above), so the race it caught was between the chunk threads of
+  one parse; the mutation has not been re-run since the cache became one per
+  context (R8).
 
 **Times.** Measured warm, as separate invocations, in the step-5 task
 reports: the determinism nets 10 s at `=1` / 6 s at `=16`; the abort + golden

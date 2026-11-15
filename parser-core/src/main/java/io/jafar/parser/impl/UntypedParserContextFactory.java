@@ -9,12 +9,18 @@ import io.jafar.parser.internal_api.UntypedDeserializerCache;
  * Factory for creating untyped parser contexts.
  *
  * <p>This class implements ParserContextFactory to create untyped parser contexts that are suitable
- * for parsing JFR recordings without type safety. The factory maintains a shared deserializer cache
- * across all contexts to enable reuse of generated deserializers.
+ * for parsing JFR recordings without type safety. Every context a factory creates carries the same
+ * {@link UntypedDeserializerCache}, so the chunks of a parse reuse each other's generated
+ * deserializers.
+ *
+ * <p>How far that cache reaches depends on where the factory came from. A factory constructed
+ * directly owns a new cache: it is shared by the parses run with that factory instance and by
+ * nothing else. A factory from {@code ParsingContextImpl.untypedContextFactory} carries the cache
+ * of its {@code ParsingContext}, shared by every untyped parse made from that context.
  */
 public final class UntypedParserContextFactory implements ParserContextFactory {
-  /** The deserializer cache shared across all contexts. */
-  private final UntypedDeserializerCache deserializerCache = new UntypedDeserializerCache.Impl();
+  /** The deserializer cache shared across all contexts this factory creates. */
+  private final UntypedDeserializerCache deserializerCache;
 
   /** The optimization strategy for event deserialization. */
   private final UntypedStrategy strategy;
@@ -22,8 +28,8 @@ public final class UntypedParserContextFactory implements ParserContextFactory {
   /**
    * Public constructor for UntypedParserContextFactory with default SPARSE_ACCESS strategy.
    *
-   * <p>This factory creates untyped parser contexts for JFR parsing with a shared deserializer
-   * cache.
+   * <p>This factory creates untyped parser contexts for JFR parsing with a deserializer cache of
+   * its own.
    */
   public UntypedParserContextFactory() {
     this(UntypedStrategy.SPARSE_ACCESS);
@@ -32,13 +38,28 @@ public final class UntypedParserContextFactory implements ParserContextFactory {
   /**
    * Public constructor for UntypedParserContextFactory with specified strategy.
    *
-   * <p>This factory creates untyped parser contexts for JFR parsing with a shared deserializer
-   * cache and specified optimization strategy.
+   * <p>This factory creates untyped parser contexts for JFR parsing with a deserializer cache of
+   * its own and specified optimization strategy.
    *
    * @param strategy the optimization strategy for event deserialization
    */
   public UntypedParserContextFactory(UntypedStrategy strategy) {
+    this(strategy, new UntypedDeserializerCache.Impl());
+  }
+
+  /**
+   * A factory whose contexts carry {@code deserializerCache}, which the caller may share with other
+   * factories. Safe for any mix of recordings and strategies: the cache is keyed by {@code
+   * UntypedCodeGenerator.cacheKey}, which covers the strategy and everything the generated code
+   * depends on.
+   *
+   * @param strategy the optimization strategy for event deserialization
+   * @param deserializerCache the cache to hand to every context
+   */
+  UntypedParserContextFactory(
+      UntypedStrategy strategy, UntypedDeserializerCache deserializerCache) {
     this.strategy = strategy != null ? strategy : UntypedStrategy.SPARSE_ACCESS;
+    this.deserializerCache = deserializerCache;
   }
 
   /**

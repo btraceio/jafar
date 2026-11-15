@@ -23,6 +23,12 @@ import java.util.function.Function;
  * chunks written by different producers assign the same id to different types (in {@code
  * tck-test.jfr}, id 125 is {@code jdk.CompilerConfiguration} in chunk 1 and {@code
  * datadog.ProfilerCounter} in chunk 2); keying by id handed one type's deserializer to the other.
+ *
+ * <p>Lifetime: a {@code ParsingContext} created by {@code ParsingContext.create()} owns one cache,
+ * handed to every untyped parse made from it, so the cache is also shared by different recordings
+ * and by parses running concurrently. A parse made without such a context ({@code
+ * UntypedJafarParser.open(path)}, or a directly constructed {@code UntypedParserContextFactory})
+ * has a cache of its own.
  */
 @Internal
 public interface UntypedDeserializerCache extends ConcurrentMap<String, UntypedEventDeserializer> {

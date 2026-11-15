@@ -17,6 +17,15 @@ import java.nio.file.Path;
  *
  * <p>Handler classes accumulate JIT optimizations with each use, typically achieving 2-3x
  * throughput improvement after warm-up when parsing recordings with compatible metadata.
+ *
+ * <p>Untyped parsers share too. When the generated reader is in use ({@code parser-codegen} on the
+ * classpath), every untyped parser made from one context, every {@code run()} of each, and every
+ * {@link #withParallelism(int)} view of the context use one cache of generated event deserializers:
+ * an event type is generated once per context and strategy, and reused whenever a later chunk or
+ * recording declares it with the same ids and layout. The number of cached deserializers is
+ * bounded; a context that has met more distinct layouts than the bound starts its cache afresh.
+ * Parsers opened without a context ({@code UntypedJafarParser.open(path)}) share nothing between
+ * parses.
  */
 public interface ParsingContext {
   /**
