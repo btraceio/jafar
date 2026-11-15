@@ -30,7 +30,7 @@ public enum JfrCorpus {
 
   /**
    * Recording written by {@code test-recordings}; regenerated, never committed. Value-deterministic
-   * across JDK builds, but byte-reproducible only per JDK build (see {@code
+   * across JDK builds, but not byte-reproducible across them either (see {@code
    * test-recordings/README.md}); the golden gate pins its parsed values, not its bytes.
    */
   TEST_AP("parser-core/src/test/resources/test-ap.jfr", true),

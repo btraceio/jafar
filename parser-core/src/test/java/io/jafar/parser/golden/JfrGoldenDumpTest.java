@@ -24,13 +24,13 @@ import org.junit.jupiter.params.provider.EnumSource;
  *
  * <p>The golden holds the line count, a digest over the sorted dump lines and the per-event-type
  * counts, plus the fixture sha256 for the committed TCK recording; the two generated fixtures
- * record no fixture sha, because their bytes are reproducible only on the JDK build that produced
- * them (measured across Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 — see {@code
- * test-recordings/README.md} — so a pinned sha survives only on the JDK build that wrote the
- * golden, wherever that is, and says nothing about parser correctness). The digest, which is
- * JDK-independent, remains the gate; the full dump is materialized only on a mismatch, into {@code
- * build/golden-actual}, next to the new golden, for the review diff (Risk 4: the tck deep-resolved
- * dump is ~454 MB, measured 453,889,122 bytes; a green run never builds it).
+ * record no fixture sha, because their bytes are not reproducible across JDK builds (measured
+ * across Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 — see {@code test-recordings/README.md} —
+ * so a pinned sha survives only on the JDK builds that write byte-identical fixtures, and says
+ * nothing about parser correctness). The digest, which is JDK-independent, remains the gate; the
+ * full dump is materialized only on a mismatch, into {@code build/golden-actual}, next to the new
+ * golden, for the review diff (Risk 4: the tck deep-resolved dump is ~454 MB, measured 453,889,122
+ * bytes; a green run never builds it).
  *
  * <p>A change to any parsed value — a seeded decode-path change, a swapped wrapped-constant
  * handling — fails here naming the fixture and the regeneration command (AC-4.2, the DataShapes

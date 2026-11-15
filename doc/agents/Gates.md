@@ -360,7 +360,7 @@ case table and the file-naming rule.
   and commented in the test, but the fixture-sha rule cannot guard that
   golden against builder changes.
 - The two generated JFR fixtures (`test-ap.jfr`, `test-jfr.jfr`) also pin
-  a null fixture sha: the generator is deterministic only per JDK build —
+  a null fixture sha: the generator is not byte-reproducible across JDK builds —
   measured: Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 all write different bytes
   for identical input (same digest, different layout; hashes and method in
   [test-recordings/README.md](../../test-recordings/README.md)), so a pinned sha

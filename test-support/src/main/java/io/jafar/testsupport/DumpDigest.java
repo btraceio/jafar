@@ -14,9 +14,9 @@ import java.util.TreeMap;
  * The value identity of one dump — everything the golden file records, and nothing more.
  *
  * <p>Only per-line hashes are kept, never the lines themselves, so a digest of even the largest
- * fixture (tck-test.jfr deep-resolves to ~480 MB of dump lines) stays a few dozen bytes in memory
- * (Risk 4). The full dump is materialized on disk only when a golden mismatches, for the review
- * diff.
+ * fixture (tck-test.jfr deep-resolves to ~454 MB of dump lines, 453,889,122 bytes measured) stays a
+ * few dozen bytes in memory (Risk 4). The full dump is materialized on disk only when a golden
+ * mismatches, for the review diff.
  *
  * <p>The {@link #digestOf(List)} rule — sha256 over the sorted per-line sha256 values — lives here
  * and nowhere else (R7): every producer (JFR canonical dump, the hdump/pprof/otlp dumps, the
