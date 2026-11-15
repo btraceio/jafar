@@ -37,8 +37,9 @@ class LlmCommandsTest {
       settings.put("llm.backend", "test-nonexistent");
       // The backend lookup is pinned so tests get "No LLM backend is installed.", but
       // LlmService.create checks llm.enabled first and the host default must not be read from the
-      // machine environment or the user's settings file.
+      // machine environment or the user's settings file. llm.confirm likewise gates analyze().
       settings.put("llm.enabled", "true");
+      settings.put("llm.confirm", "false");
     }
 
     @Override
