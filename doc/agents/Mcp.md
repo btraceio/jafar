@@ -30,6 +30,14 @@ MCP resources: `jafar://sessions`, `jafar://help/jfrpath`, `jafar://help/hdumppa
 de-duplicate and merge — see `Findings.merge`. When adding a tool that makes a judgement, emit
 findings in this shape rather than inventing another one.
 
+**`startTime` and `endTime` of `jfr_use` and `jfr_tsa` are nanoseconds from the recording's
+start.** `JfrAnalyses.resolveTimeWindow` adds them to the start of the earliest chunk before
+filtering, and takes a value at or after that start as an epoch timestamp already. The result's
+`timeWindow` echoes the arguments and reports `recordingStartEpochNanos`, `startTimeEpochNanos` and
+`endTimeEpochNanos`. Until this was written the arguments were compared with event start times
+unconverted, and the tests only checked that `timeWindow` echoed them, not that anything was
+selected.
+
 See [jfr-mcp/README.md](../../jfr-mcp/README.md) and [doc/mcp/Tutorial.md](../../doc/mcp/Tutorial.md) for full documentation.
 
 ## Claude Code Plugin (`btraceio/agent-plugins`, a separate repository)

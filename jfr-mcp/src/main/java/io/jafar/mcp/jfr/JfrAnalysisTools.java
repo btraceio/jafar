@@ -753,11 +753,11 @@ public final class JfrAnalysisTools {
             },
             "startTime": {
               "type": "integer",
-              "description": "Start time in nanoseconds from recording start (optional)"
+              "description": "Start of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "endTime": {
               "type": "integer",
-              "description": "End time in nanoseconds from recording start (optional)"
+              "description": "End of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "resources": {
               "type": "array",
@@ -801,11 +801,11 @@ public final class JfrAnalysisTools {
             },
             "startTime": {
               "type": "integer",
-              "description": "Start time in nanoseconds from recording start (optional)"
+              "description": "Start of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "endTime": {
               "type": "integer",
-              "description": "End time in nanoseconds from recording start (optional)"
+              "description": "End of the time window, in nanoseconds from the recording's start; an epoch-nanosecond timestamp, as in an event's startTime, is also accepted (optional)"
             },
             "topThreads": {
               "type": "integer",

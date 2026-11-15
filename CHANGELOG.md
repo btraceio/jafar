@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frequency of 2.1e9, a chunk that lasted 119.3 ms was reported as 56.8 ms. Both now return the
   header value. `jfr2pprof` sums these durations for the profile's duration, which was short by
   the same factor on such recordings
+- **The time window of `jfr_use` and `jfr_tsa` selected nothing.** `startTime` and `endTime` are
+  nanoseconds from the recording's start, and were compared with event start times, which are
+  nanoseconds since the epoch, without converting: a `startTime` excluded nothing and an `endTime`
+  excluded every event. They are now added to the recording's start. An epoch-nanosecond value,
+  as in an event's `startTime`, is accepted too, and the result's `timeWindow` reports
+  `recordingStartEpochNanos`, `startTimeEpochNanos` and `endTimeEpochNanos`, so the reading is
+  visible
 - **JfrPath results were short and differed from run to run on multi-chunk recordings.** Chunks are
   parsed in parallel and every query's consumer updated plain shared state from the chunk threads:
   `events/T | count()` returned 316,700 to 317,233 for 320,000 events of a 32-chunk recording, and
