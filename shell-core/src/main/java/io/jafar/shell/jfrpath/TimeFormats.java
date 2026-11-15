@@ -45,6 +45,36 @@ final class TimeFormats {
     return DateTimeFormatter.ofPattern(format);
   }
 
+  /**
+   * The epoch nanoseconds a time argument of {@code before()}, {@code after()} or {@code between()}
+   * stands for: a number is taken as is, anything else is parsed as a date-time.
+   *
+   * <p>One definition for the filter that tests each event ({@link MatchEngine}) and for the bounds
+   * that let the parser skip chunks ({@link StartTimeBounds}); if they disagreed, a skipped chunk
+   * could hold an event the filter would have accepted.
+   */
+  static long timeArgument(Object arg) {
+    return arg instanceof Number n ? n.longValue() : parseEpochNanos(String.valueOf(arg));
+  }
+
+  /**
+   * The day {@code on()} means: epoch nanoseconds of its first instant, and of the first instant of
+   * the next day, in the system zone. A time is on the day when it is at or after the first and
+   * before the second.
+   */
+  static long[] dayBounds(String dateStr) {
+    LocalDate date;
+    try {
+      date = LocalDate.parse(dateStr);
+    } catch (DateTimeParseException e) {
+      throw new IllegalArgumentException("on() requires date in yyyy-MM-dd format: " + dateStr);
+    }
+    return new long[] {
+      date.atStartOfDay(SYSTEM_ZONE).toInstant().getEpochSecond() * 1_000_000_000L,
+      date.plusDays(1).atStartOfDay(SYSTEM_ZONE).toInstant().getEpochSecond() * 1_000_000_000L
+    };
+  }
+
   static long parseEpochNanos(String s) {
     // ISO instant with timezone offset, e.g. "2024-08-13T16:24:00Z"
     try {

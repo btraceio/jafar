@@ -235,6 +235,36 @@ output. Delete the generated `META-INF/services/io.jafar.parser.api.HandlerFacto
 runtime run, or the parser discovers the factories and both runs are build-time; print the class
 of one event to be sure which ran.
 
+### A chunk's time span is not its events' time span
+
+A chunk header gives a start and a duration, and it is tempting to read them as bounds on the
+`startTime` of the chunk's events. Only one of them is.
+
+> **Case file — the 14 heap samples a time filter lost.** Chunk skipping by start time first had
+> two rules: skip a chunk that ends before the range, and skip one that starts after it unless a
+> wanted type has a `duration` field (an event with a duration is written when it ends; a
+> `jdk.ThreadSleep` was measured starting 2.5 s before its chunk). The second rule rested on one
+> JDK 21 recording in which no event without a duration started before its chunk. `tck-test.jfr`,
+> written by the Datadog profiler, refuted it: `datadog.HeapLiveObject` has no `duration` field,
+> and its 14 events are stamped up to 36 minutes before the chunk they sit in, because the writer
+> emits them when the chunk is finished, with the time of the allocation.
+> `events/datadog.HeapLiveObject[startTime<=...] | count()` returned 0 instead of 14. It was caught
+> by comparing every event type's filtered count with and without skipping
+> (`TypePushdownTest.timeFilteredResultsEqualTheUnprunedReference`), not by any test written for
+> the rule. Only the first rule remains, and `UntypedTimeRangeTest.noEventStartsAfterItsChunkEnds`
+> checks its assumption on every recording the tests have.
+
+Two more things about the same header:
+
+- **Its duration is in nanoseconds, not ticks.** Across the 99 chunks of a JDK 21 recording with a
+  tick frequency of 2.1e9, the duration equalled the distance to the next chunk's `startNanos`
+  exactly, and 0.4762 of the distance in ticks. `ChunkInfoImpl` and the Go `ChunkInfo.Duration()`
+  converted it as ticks until `ChunkDurationUnitTest` and
+  `TestChunkDurationIsNanosecondsWhateverTheFrequency` pinned the unit; nothing had noticed,
+  because the checked-in recordings tick at 1e9, where the two readings are the same number.
+- **A property measured on one writer's recording is a property of that writer.** The JDK,
+  async-profiler and the Datadog profiler all write JFR, and they stamp events differently.
+
 ### A path that parses is not a path that is read
 
 `JfrPathEvaluator.evaluate` reads the root and the first segment of

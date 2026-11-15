@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the range is always read
 - **Go parser: `Options.StartTime` and `Options.OnChunkSkipped`** - the same chunk skipping, with
   the same rule
+- **JfrPath skips chunks by a query's start-time filter.** `after(startTime, ...)`,
+  `between(startTime, ...)`, `on(startTime, ...)` and `startTime>=...` in a query's brackets
+  become a range for the parser, including the time windows of `jfr_use` and `jfr_tsa`. Results
+  are unchanged; `before(...)` and `startTime<=...` alone skip nothing
+- **JfrPath decodes only the event types a query names.** `events/T | ...` used to decode every
+  event of every type and compare the type name afterwards; it now registers a type filter with
+  the parser. Results are unchanged
 - **`ParsingContext.withParallelism(int)`** - a context sharing the original's caches whose parsers
   read chunks on the given number of threads. `withParallelism(1)` delivers events one at a time, in
   file order, so handlers need no synchronization. The default stays
@@ -69,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frequency of 2.1e9, a chunk that lasted 119.3 ms was reported as 56.8 ms. Both now return the
   header value. `jfr2pprof` sums these durations for the profile's duration, which was short by
   the same factor on such recordings
+- **JfrPath results were short and differed from run to run on multi-chunk recordings.** Chunks are
+  parsed in parallel and every query's consumer updated plain shared state from the chunk threads:
+  `events/T | count()` returned 316,700 to 317,233 for 320,000 events of a 32-chunk recording, and
+  `sum`, `stats`, `groupBy`, plain row listings, projections, decorations and flame graphs shared
+  the defect. The consumers now guard their state (#204)
 - **A corrupted or truncated JFR recording is rejected with an `IOException` that says what is
   wrong with it.** The Java parser followed sizes, counts and offsets from the file without
   checking them, so a damaged recording failed with whatever the JDK threw on the way

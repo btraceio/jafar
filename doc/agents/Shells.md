@@ -56,6 +56,35 @@ jfr> set hot = events/jdk.ExecutionSample | groupBy(sampledThread/javaName)
 jfr> echo "Top thread: ${hot[0].key}"
 ```
 
+## Event consumers run on chunk threads
+
+The parser reads chunks in parallel and calls the event handler on each chunk's thread, so a
+JfrPath operator's consumer is called from several threads at once and must guard the state it
+shares; the case file is in [Verification.md](Verification.md). Operators read events through
+`JfrPathEvaluator.forEachMatching`, which checks the predicates on the chunk thread and then calls
+the consumer, still concurrently. `ParallelEventSourceTest` delivers from eight threads at once and
+`JfrPathConcurrentAggregationTest` from a 16-chunk recording.
+
+Rows come back in no particular order across chunks; sort if order matters.
+
+`forEachMatching` is also where a query's event types reach the parser:
+`EventSource.streamEvents(recording, types, consumer)` registers a type filter, so events of other
+types are never decoded. An operator that calls the two-argument `streamEvents` decodes the whole
+recording; `TypePushdownTest.everyEventOperatorNamesItsTypesToTheSource` fails for one that does.
+`countAllEventTypes` is the one legitimate caller.
+
+The same call carries the query's start-time range. `StartTimeBounds.of(predicates)` turns the
+bracket filter into a `TimeRange`, and the parser skips the chunks that end before it. The range
+must never be narrower than the filter, so `StartTimeBounds` ignores whatever it does not
+recognise, and it converts times with the `TimeFormats` methods `MatchEngine` uses
+(`timeArgument`, `dayBounds`): one definition, or a skipped chunk could hold an event the filter
+would have accepted. The filter still runs on every event that is read.
+
+**Event queries do not go through the backend plugin.** `JfrPathEvaluator` reads events with its
+own `DefaultEventSource`, which opens the Jafar untyped parser directly. `JfrBackend.createEventSource`
+is called by `BackendTck` only, so `--backend jdk` changes metadata, chunk and constant-pool
+queries but not `events/...` ones.
+
 ## Scripting is shared: one implementation, four front ends
 
 Variables, map literals, `merge()`, `if`/`elif`/`else`/`endif`, `${var}` substitution, scoping,

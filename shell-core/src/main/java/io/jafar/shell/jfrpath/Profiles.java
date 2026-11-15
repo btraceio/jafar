@@ -25,10 +25,6 @@ final class Profiles {
     this.eval = eval;
   }
 
-  private boolean matchesAll(Map<String, Object> map, List<Predicate> predicates) {
-    return MatchEngine.matchesAll(map, predicates, eval.defaultListMatchMode);
-  }
-
   List<Map<String, Object>> aggregateFlameGraph(JFRSession session, Query query, String direction)
       throws Exception {
     if (query.root != Root.EVENTS || query.eventTypes.isEmpty()) {
@@ -40,12 +36,11 @@ final class Profiles {
     Map<String, String> interner = new HashMap<>();
     if (query.isMultiType) {
       Set<String> typeSet = new HashSet<>(query.eventTypes);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!typeSet.contains(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          typeSet,
+          query.predicates,
+          map -> {
             List<String> frames = extractFramesForProfile(map, direction);
             if (!frames.isEmpty()) {
               // Called from several chunk-parsing threads: the tree and the interner are shared.
@@ -57,12 +52,11 @@ final class Profiles {
           });
     } else {
       String eventType = query.eventTypes.get(0);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          List.of(eventType),
+          query.predicates,
+          map -> {
             List<String> frames = extractFramesForProfile(map, direction);
             if (!frames.isEmpty()) {
               // Called from several chunk-parsing threads: the tree and the interner are shared.
@@ -269,12 +263,11 @@ final class Profiles {
     long[] stats = {0, Long.MAX_VALUE, Long.MIN_VALUE}; // count, min, max
     if (query.isMultiType) {
       Set<String> typeSet = new HashSet<>(query.eventTypes);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!typeSet.contains(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          typeSet,
+          query.predicates,
+          map -> {
             if (!hasStackTraceFrames(map)) return;
             Object st = map.get("startTime");
             long ts = st instanceof Number n ? n.longValue() : 0L;
@@ -286,12 +279,11 @@ final class Profiles {
           });
     } else {
       String eventType = query.eventTypes.get(0);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          List.of(eventType),
+          query.predicates,
+          map -> {
             if (!hasStackTraceFrames(map)) return;
             Object st = map.get("startTime");
             long ts = st instanceof Number n ? n.longValue() : 0L;
@@ -342,12 +334,11 @@ final class Profiles {
     long tc = totalCount;
     if (query.isMultiType) {
       Set<String> typeSet = new HashSet<>(query.eventTypes);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!typeSet.contains(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          typeSet,
+          query.predicates,
+          map -> {
             List<String> frames = extractFramesForProfile(map, direction);
             if (frames.isEmpty()) return;
             Object st = map.get("startTime");
@@ -384,12 +375,11 @@ final class Profiles {
           });
     } else {
       String eventType = query.eventTypes.get(0);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          List.of(eventType),
+          query.predicates,
+          map -> {
             List<String> frames = extractFramesForProfile(map, direction);
             if (frames.isEmpty()) return;
             Object st = map.get("startTime");
