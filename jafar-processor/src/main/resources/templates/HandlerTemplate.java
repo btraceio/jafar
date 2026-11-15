@@ -15,8 +15,6 @@ import java.util.List;
  */
 public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
 
-{{STATIC_TYPE_ID_FIELDS}}
-
   // Instance fields for event data
   private ConstantPools constantPools;
 
@@ -33,12 +31,11 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
 {{INSTANCE_FIELDS}}
 
   /**
-   * Binds type IDs from the recording metadata.
-   * Must be called before using handlers with a new recording.
+   * Does nothing; kept because {@code HandlerFactory.bind} calls it. Type ids are chunk-local, so
+   * nothing can be bound once for a recording: each read takes them from the {@link Plan} of the
+   * metadata class it is given.
    */
-  public static void bind(MetadataLookup metadata) {
-{{BIND_BODY}}
-  }
+  public static void bind(MetadataLookup metadata) {}
 
   /**
    * Reads event data from the stream.
