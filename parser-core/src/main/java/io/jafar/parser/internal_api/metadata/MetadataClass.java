@@ -91,6 +91,9 @@ public final class MetadataClass extends AbstractMetadataElement {
   /** The deserializer associated with this class. */
   private volatile Deserializer<?> deserializer;
 
+  // Read and written through TYPE_SKIPPER_UPDATER, which references the field by name —
+  // invisible to unused-field analysis, visible to the updater at runtime.
+  @SuppressWarnings("PMD.UnusedPrivateField")
   private volatile TypeSkipper typeSkipper;
 
   /** The build-time generated factory associated with this class. */
@@ -449,18 +452,6 @@ public final class MetadataClass extends AbstractMetadataElement {
       }
     }
     return read(stream);
-  }
-
-  private static boolean isPrimitive(String typeName) {
-    return typeName.equals("byte")
-        || typeName.equals("short")
-        || typeName.equals("char")
-        || typeName.equals("int")
-        || typeName.equals("long")
-        || typeName.equals("float")
-        || typeName.equals("double")
-        || typeName.equals("boolean")
-        || typeName.equals("java.lang.String");
   }
 
   @Override

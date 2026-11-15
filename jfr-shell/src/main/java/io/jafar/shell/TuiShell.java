@@ -112,6 +112,7 @@ public final class TuiShell implements AutoCloseable {
     try {
       components.dispatcher.dispatch("open " + filePath);
     } catch (Exception ignore) {
+      // best-effort auto-open: failures are reported by the open command itself
     }
   }
 
@@ -126,10 +127,12 @@ public final class TuiShell implements AutoCloseable {
     try {
       components.dispatcher.getGlobalStore().clear();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     try {
       sessions.closeAll();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     commandExecutor.shutdownNow();
 
@@ -137,6 +140,7 @@ public final class TuiShell implements AutoCloseable {
       try {
         module.shutdown();
       } catch (Exception ignore) {
+        // one module failing to shut down must not stop the others
       }
     }
 

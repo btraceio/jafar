@@ -40,7 +40,8 @@ executed (R4); the wall-time column records what those runs measured.
 | Formatting (Spotless) | Every Java file is formatted; runs on every Gradle build | `./gradlew spotlessCheck` | `./gradlew spotlessApply` rewrites the files — no baseline to regenerate | none | inside every Gradle invocation in `tests` | 9.5 s warm, local (measured) |
 | Named failing set (R6) | Test failures are compared by name, never by count — a constant count can hide a swap | `scripts/failing-set.sh \| diff <before-dump> -` (dump before the change, diff after) | none — the standing set is dumped per run; compare dumps with `diff` | none | `aggregate-test-report` | the script is sub-second; the cost is the test suite's, not its own |
 | API compatibility (japicmp per plane) | Every gated surface in `gradle/api-surfaces.txt` (parser, shell, mcp, hdump, pprof, otlp, llm-spi) is compared against the released bytes of its plane's baseline; incompatible changes beyond the accepted ratchet need a statement | `scripts/api-baseline.sh && ./gradlew apiCompat && scripts/api-break-check.sh --reports build/reports/api-compat --base origin/main` | shrink `gradle/api-accepted-breaks.txt`: entries are deleted when a baseline tag moves past the break; adding one is growth and needs the statement | `API-Break: <non-empty reason>` in the PR body | `api-compat` (comparison, every trigger) + `api-break` (statement, pull_request only) | 12.6 s warm with cached baselines, full chain (measured); ~26 s cold — 12.5 s baseline materialization + 13 s `apiCompat` (measured); CI numbers land with the PR that adds the jobs |
-| Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, and parser implementation code declares no mutable static field | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
+| Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, parser implementation code declares no mutable static field, `api` packages never expose implementation types in public or protected signatures, nothing outside `pprof-parser`/`otlp-parser` depends on their internals, the six ServiceLoader SPI types remain interfaces, and SPI packages never depend on their implementations | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
+| Clean code (PMD) | Every Java module's main sources pass the curated ruleset `config/pmd/ruleset.xml`: no empty catch blocks, no empty control statements, no constructors calling overridable methods, no dead locals/fields/methods. A member that is invisible to the analysis on purpose (reflection-driven, updater-driven, a template-method ctor) suppresses at the member with `@SuppressWarnings("PMD.<Rule>")` and a comment saying why | `./gradlew pmdMain` | none — the ruleset ships green by policy; a rule that fires on the tree does not ship, and a finding is fixed or suppressed with its reason, never waved through | the in-code `@SuppressWarnings("PMD.<Rule>")` plus reason comment | `tests` (both matrix cells, inside every Gradle `check`) | 59 s all modules cold (measured); 14–28 s single module warm |
 | Allocation budgets | Every public parse entry point (untyped JFR, typed JFR, hdump, pprof, otlp) allocates, per fixed fixture, at most the bytes recorded in `gradle/allocation-budgets.properties` on its own JDK cell — chunk-pool decode threads included | `./gradlew :parser-core:allocationTest :parser-codegen:allocationTest :hdump-parser:test :pprof-parser:test :otlp-parser:test :parser-core:allocationTest8 :parser-codegen:allocationTest8` | edit `gradle/allocation-budgets.properties` (re-measure per the recipe in its comments); lowering a value is free, a raise needs the statement | `Alloc-Budget: <non-empty reason>` in the PR body | `tests` (both matrix cells) + `alloc-budget` (statement, pull_request only) | the four allocation tasks ~4 s each warm (measured; ~17 s combined); hdump/pprof/otlp add no task — their budget tests run inside the modules' existing `test` suites |
 | Golden value dumps | Every corpus fixture — JFR: the committed two-chunk `tck-test.jfr` plus the two generated recordings; hdump, pprof, otlp: their deterministic builders' fixtures — is rendered to a sorted, value-complete canonical dump and compared against a committed digest plus per-type counts; the JFR digests cover events, constants and metadata | `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' --rerun`; `./gradlew :hdump-parser:cleanTest :pprof-parser:cleanTest :hdump-parser:test --tests '*Golden*' :pprof-parser:test --tests '*Golden*' --no-build-cache`; `./gradlew :otlp-parser:cleanTest :otlp-parser:test --tests '*Golden*' --no-build-cache` (the `cleanTest` + `--no-build-cache` pairs work around the same `--rerun` cache lie the allocation gate records) | `-Pjafar.golden.update --rerun` per fixture: `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :hdump-parser:test --tests '*HdumpGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :pprof-parser:test --tests '*PprofGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :otlp-parser:test --tests '*OtlpGoldenDumpTest' -Pjafar.golden.update --rerun` | none — an intended value change regenerates the golden and the diff *is* the review; a real recording that replaced a generated fixture is refused, never compared (the D1 skip below) | `tests` (JDK 21 cell, inside `./gradlew build`) | JFR suite 3.7–4.1 s warm (measured); hdump+pprof ~1.8 s combined, otlp ~1.8 s (measured) |
 | Jazzer regression corpus | The committed inputs under `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/` replay through the `@FuzzTest` target inside ordinary `:parser-core:test`; the cause-chain oracle fails on any `Error` anywhere in the chain and on any root cause that is neither `io.jafar.*` nor `IOException`, and bounds each input's runtime (the hang oracle) | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` | none — the corpus is the committed seeds; a new input is a hand-minimized crash file from a fuzz session, committed like any other change | the known-escapes allowlist below — a pinned escape, never a PR-body statement | `tests` (JDK 21 cell, inside `:parser-core:test`) | ~6 s warm (measured) |
@@ -85,7 +86,7 @@ rather than a code path.
 ## Architecture boundaries (ArchUnit freeze)
 
 **The rules.** The `arch-tests` module
-(`arch-tests/src/test/java/io/jafar/arch/`) runs five frozen ArchUnit rules,
+(`arch-tests/src/test/java/io/jafar/arch/`) runs nine frozen ArchUnit rules,
 in plain words:
 
 - **(a)** only the parser plane (`parser-core`, `parser-codegen`) may depend
@@ -101,7 +102,26 @@ in plain words:
   modules (shells, plugins, MCP, processors, tools) — the dependency direction
   is shells → shell-core → parser, never the reverse;
 - **(e)** classes in the parser modules' non-api packages declare no field
-  that is `static` and not `final` (synthetic fields are ignored).
+  that is `static` and not `final` (synthetic fields are ignored);
+- **(f)** within `parser-core`, `hdump-parser`, `pprof-parser` and
+  `otlp-parser`, classes in an `..api..` package never expose that module's
+  implementation types in public or protected *signatures* — parameters,
+  returns, throws, fields, supertypes, generic arguments included. Rule (c)
+  governs dependencies; this sharpens the api-facing half: an api factory may
+  construct an impl class behind the api type (`HeapDumpParser.parse` builds a
+  `HeapDumpImpl` behind `HeapDump`), but a signature may not leak one;
+- **(g)** only `pprof-parser` may depend on `io.jafar.pprof.internal..`, and
+  only `otlp-parser` on `io.jafar.otlp.internal..` — the pprof/otlp analogue
+  of rule (b);
+- **(h)** the ServiceLoader SPI types (`JfrBackend`, `ShellModule`,
+  `LlmBackend`, `HandlerFactory`, `DeserializerFactory`,
+  `UntypedEventStreamFactory`) remain interfaces — converting any of them
+  breaks every external implementation at once;
+- **(i)** the ServiceLoader SPIs never know their implementations: classes in
+  `io.jafar.shell.backend..` outside `..backend.impl..` never depend on
+  `io.jafar.shell.backend.impl..`, and classes in
+  `io.jafar.shell.core.llm..` never depend on `io.jafar.shell.llm..` —
+  backends are discovered, never hard-wired.
 
 **Membership comes from class dirs.** Every covered module's *compiled*
 classes are imported from `<module>/build/classes/java/main`, and module
@@ -139,6 +159,37 @@ failing and a passing check.
 - The store also freezes transitive bytecode dependencies (generic type
   arguments flowing through public signatures) that source-text reach-in
 counts do not include; all are frozen, so the ratchet still holds.
+
+## Clean code (PMD)
+
+**What it checks.** Every Java module's *main* sources are analyzed by PMD with the curated
+ruleset `config/pmd/ruleset.xml`, wired into `check` (so `./gradlew build` runs it) as a manual
+`pmdMain` task per module: no empty catch blocks, no empty control statements, no constructors
+calling overridable methods, no dead locals/fields/methods. A member that is deliberately
+invisible to that analysis — invoked reflectively by tests, written through an
+`AtomicReferenceFieldUpdater` by field name, or a template-method constructor dispatching to
+an overridable hook — suppresses at the member with `@SuppressWarnings("PMD.<Rule>")` and a
+comment saying why; the two living examples are `JafarMcpServer` (test-reflective legacy
+handlers) and `MetadataClass.typeSkipper` (updater-driven).
+
+**Ships green by policy.** A rule that fires on the current tree does not ship; a finding is
+fixed or suppressed with its reason, never waved through. When deleting dead code, keep the
+side effects: an "unused" local in a parser is often a stream-advancing read — drop the
+variable, keep the call.
+
+**Why not the Gradle `pmd` plugin.** The plugin registers a `pmd<SourceSet>` task for every
+source set and wires them into `check`, and those tasks depend on their source set's compile
+tasks. parser-core's MR-JAR source sets (`java9`/`java13`/`java21`) have auto-created compile
+tasks with no `--release` option that nothing in the tree executes (they fail on a JDK 8
+toolchain); the plugin would drag them into every build. One manual task per module, main
+sources only, keeps the graph exactly as it was.
+
+**R8 — what this gate does not see.**
+
+- Test sources: local shortcuts are allowed there, and keeping the gate on main sources
+  keeps the graph clean (above).
+- Reflection and updater patterns: invisible to static analysis; the suppression comment
+  is the honest record that a human confirmed the use.
 
 ## Allocation budgets
 

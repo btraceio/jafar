@@ -233,7 +233,7 @@ public final class PprofPathEvaluator {
   private static List<Map<String, Object>> applyOp(
       List<Map<String, Object>> rows, SamplesPath.PipelineOp op, PprofProfile.Profile profile) {
     return switch (op) {
-      case SamplesPath.CountOp c -> List.of(Map.of("count", rows.size()));
+      case SamplesPath.CountOp _ -> List.of(Map.of("count", rows.size()));
       case SamplesPath.TopOp top -> applyTop(rows, top, profile);
       case SamplesPath.GroupByOp gb -> applyGroupBy(rows, gb);
       case SamplesPath.StatsOp s -> applyStats(rows, s.valueField());

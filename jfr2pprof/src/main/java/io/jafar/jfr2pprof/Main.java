@@ -18,7 +18,6 @@ public final class Main {
   static int run(String[] args) {
     String configPath = null, outputPath = null, jfrPath = null;
     boolean noGzip = false;
-    String periodType = null;
 
     for (int i = 0; i < args.length; i++) {
       switch (args[i]) {
@@ -32,8 +31,8 @@ public final class Main {
         }
         case "--no-gzip" -> noGzip = true;
         case "--period-type" -> {
+          // accepted for compatibility; the value is not used
           if (++i >= args.length) return usage();
-          periodType = args[i];
         }
         default -> {
           if (args[i].startsWith("--")) return usage();

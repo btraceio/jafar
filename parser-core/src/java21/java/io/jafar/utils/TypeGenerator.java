@@ -329,11 +329,6 @@ public final class TypeGenerator {
     return "jdk.jfr.SettingControl".equals(superType);
   }
 
-  private static String getSimpleName(String name) {
-    int idx = name.lastIndexOf('.');
-    return idx == -1 ? name : name.substring(idx + 1);
-  }
-
   /**
    * Converts a fully qualified type name to a class name including namespace. For example:
    * "jdk.ExecutionSample" -> "JFRJdkExecutionSample"

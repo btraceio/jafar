@@ -71,7 +71,7 @@ public final class InboundCountReader implements AutoCloseable {
     }
     entryCount = (int) entryCountLong;
 
-    int flags = buffer.getInt(); // Reserved for future use
+    buffer.getInt(); // Reserved for future use
   }
 
   /**

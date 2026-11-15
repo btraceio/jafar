@@ -235,6 +235,7 @@ final class PathValues {
           try {
             tokens.add(Integer.parseInt(inside));
           } catch (Exception ignore) {
+            // not a numeric token; skip it
           }
         }
         i = e + 1;
@@ -262,11 +263,13 @@ final class PathValues {
       try {
         from = Integer.parseInt(a);
       } catch (Exception ignore) {
+        // unparseable lower bound: keep default
       }
     if (!bb.isEmpty())
       try {
         to = Integer.parseInt(bb);
       } catch (Exception ignore) {
+        // unparseable upper bound: keep default
       }
     return new Slice(from, to);
   }

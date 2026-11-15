@@ -13,7 +13,10 @@ repositories {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        // 25, not 21: the rule (i) fire fixture compiles against io.jafar.shell.backend.impl
+        // (jfr-shell-jafar), a JVM-25 module — Gradle's JVM-version attributes reject it from a
+        // 21 toolchain. ArchUnit 1.5.1 builds and tests with JDK 25 itself, so nothing is lost.
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
@@ -29,8 +32,12 @@ dependencies {
     // The T8 rule fixtures resolve real parser-core classes
     testImplementation project(':parser-core')
     // Fixture dependency targets of the fire tests (ArchRuleFireTest): rule (b) needs an
-    // io.jafar.hdump.impl class and rule (d) a consumer (tools) class as field types.
+    // io.jafar.hdump.impl class, rule (d) a consumer (tools) class, rule (g) an
+    // io.jafar.pprof.internal class and rule (i) an io.jafar.shell.backend.impl class as field
+    // types.
     testImplementation project(':hdump-parser')
+    testImplementation project(':pprof-parser')
+    testImplementation project(':jfr-shell-jafar')
     testImplementation project(':tools')
 }
 

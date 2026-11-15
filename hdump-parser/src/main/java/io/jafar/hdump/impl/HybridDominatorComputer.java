@@ -224,8 +224,9 @@ public final class HybridDominatorComputer {
         "Filtered subgraph: {} objects, {} GC roots", subgraphObjects.size(), subgraphRoots.size());
 
     // Compute exact dominators for subgraph
-    Map<Long, List<Long>> dominatorChildren =
-        DominatorTreeComputer.computeFull(dump, subgraphObjects, subgraphRoots, progressCallback);
+    // The returned children map is not needed here; the call reports progress and marks
+    // exactness via the subgraph computation below.
+    DominatorTreeComputer.computeFull(dump, subgraphObjects, subgraphRoots, progressCallback);
 
     // Mark these objects as having exact retained sizes
     for (HeapObjectImpl obj : subgraphObjects.values()) {

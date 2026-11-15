@@ -13,7 +13,6 @@ import org.jline.reader.Candidate;
  */
 public final class FilterOperatorCompleter implements ContextCompleter {
 
-  private static final String[] SHORT_OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "~"};
   private static final String[] WORD_OPERATORS = {
     "==", "!=", ">", ">=", "<", "<=", "~", "contains", "startsWith", "endsWith", "matches"
   };
@@ -55,13 +54,6 @@ public final class FilterOperatorCompleter implements ContextCompleter {
 
     // The prefix is from word start to cursor
     return fullLine.substring(wordStart, cursor);
-  }
-
-  private boolean isShortOperator(String op) {
-    for (String s : SHORT_OPERATORS) {
-      if (s.equals(op)) return true;
-    }
-    return false;
   }
 
   private String getOperatorDescription(String op) {

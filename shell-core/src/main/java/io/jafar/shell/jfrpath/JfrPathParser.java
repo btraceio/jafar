@@ -1373,8 +1373,6 @@ public final class JfrPathParser {
   }
 
   private JfrPath.SelectItem parseSelectItem() {
-    int start = pos;
-
     // Try to detect if this is an expression or simple field path
     boolean isExpression = detectExpression();
 
@@ -1615,9 +1613,6 @@ public final class JfrPathParser {
   }
 
   private JfrPath.Expr parseStringLiteralOrTemplate() {
-    char quote = (char) peek();
-    int startPos = pos;
-
     // First pass: parse the string and check if it contains ${...}
     String rawString = parseStringLiteral();
 

@@ -21,7 +21,6 @@ import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import io.jafar.parser.internal_api.metadata.MetadataField;
-import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -500,13 +499,5 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     }
 
     return referencedTypes;
-  }
-
-  private static CustomByteBuffer openJfrStream(Path jfrFile) {
-    try {
-      return CustomByteBuffer.map(jfrFile, Integer.MAX_VALUE);
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
   }
 }

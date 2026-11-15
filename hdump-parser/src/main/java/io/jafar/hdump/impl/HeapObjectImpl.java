@@ -17,7 +17,6 @@ final class HeapObjectImpl implements HeapObject {
   private final long id;
   private final HeapClassImpl heapClass;
   private final long dataPosition; // Position in file where instance data starts
-  private final int dataSize;
   private final HeapDumpImpl dump;
 
   private int shallowSize;
@@ -45,7 +44,6 @@ final class HeapObjectImpl implements HeapObject {
     this.id = id;
     this.heapClass = heapClass;
     this.dataPosition = dataPosition;
-    this.dataSize = dataSize;
     this.dump = dump;
   }
 

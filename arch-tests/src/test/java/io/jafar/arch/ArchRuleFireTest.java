@@ -6,13 +6,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.tngtech.archunit.ArchConfiguration;
+import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
+import io.jafar.arch.fixture.NotAnInterfaceSpiFixture;
+import io.jafar.arch.fixture.PprofInternalReachInFixture;
 import io.jafar.arch.fixture.ReachIntoConsumersFixture;
 import io.jafar.arch.fixture.ReachIntoHdumpImplFixture;
 import io.jafar.arch.fixture.ReachIntoParserImplFixture;
+import io.jafar.parser.api.archfixture.ApiSignatureLeakFixture;
 import io.jafar.parser.api.archfixture.ApiToImplFixture;
 import io.jafar.parser.impl.archfixture.StaticCounterFixture;
+import io.jafar.shell.backend.archfixture.BackendSpiReachingIntoImplFixture;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -95,6 +100,83 @@ class ArchRuleFireTest {
   void ruleEFiresOnMutableStaticFieldInParserImpl() throws IOException {
     ModuleClasses modules = loadWithFixture("parser-core", StaticCounterFixture.class);
     assertFires(ArchitectureRules.ruleE(modules), "e:", StaticCounterFixture.class, modules);
+  }
+
+  @Test
+  void ruleFFiresOnApiSignatureExposingImpl() throws IOException {
+    ModuleClasses modules = loadWithFixture("parser-core", ApiSignatureLeakFixture.class);
+    boolean fired = false;
+    for (ArchRule rule : ArchitectureRules.ruleF(modules)) {
+      try {
+        rule.check(modules.classes());
+      } catch (AssertionError failure) {
+        // Unfrozen, like the rule (c) fire test: the parser-core variant also fails on its
+        // pre-existing signature leaks (the ones ArchitectureRulesTest freezes); only a failure
+        // naming the fixture proves that rule (f) fires.
+        if (failure.getMessage().contains(ApiSignatureLeakFixture.class.getSimpleName())) {
+          fired = true;
+        }
+      }
+    }
+    assertTrue(fired, "expected a rule (f) to fire on " + ApiSignatureLeakFixture.class.getName());
+  }
+
+  @Test
+  void ruleGFiresOnConsumerReachingIntoPprofInternal() throws IOException {
+    ModuleClasses modules = loadWithFixture("jfr-shell", PprofInternalReachInFixture.class);
+    boolean fired = false;
+    for (ArchRule rule : ArchitectureRules.ruleG(modules)) {
+      try {
+        rule.check(modules.classes());
+      } catch (AssertionError failure) {
+        if (failure.getMessage().contains(PprofInternalReachInFixture.class.getSimpleName())) {
+          fired = true;
+        }
+      }
+    }
+    assertTrue(
+        fired, "expected a rule (g) to fire on " + PprofInternalReachInFixture.class.getName());
+  }
+
+  @Test
+  void ruleHFiresOnSpiTypeThatIsNotAnInterface() {
+    // A fixture cannot make a real SPI interface a class, so the parameterized rule (h) factory
+    // is aimed at a plain fixture class instead; over the real classes the factory list holds the
+    // six real SPI types (ArchitectureRulesTest).
+    ArchRule rule =
+        ArchitectureRules.spiTypesRemainInterfaces(
+            List.of(NotAnInterfaceSpiFixture.class.getName()));
+    AssertionError failure =
+        assertThrows(
+            AssertionError.class,
+            () ->
+                rule.check(new ClassFileImporter().importClasses(NotAnInterfaceSpiFixture.class)));
+    assertTrue(
+        failure.getMessage().contains("h:"),
+        "expected the failure to name the rule 'h:', got: " + failure.getMessage());
+    assertTrue(
+        failure.getMessage().contains(NotAnInterfaceSpiFixture.class.getSimpleName()),
+        "expected the failure to name the fixture, got: " + failure.getMessage());
+  }
+
+  @Test
+  void ruleIFiresOnBackendSpiReachingIntoImpl() throws IOException {
+    ModuleClasses modules = loadWithFixture("shell-core", BackendSpiReachingIntoImplFixture.class);
+    boolean fired = false;
+    for (ArchRule rule : ArchitectureRules.ruleI()) {
+      try {
+        rule.check(modules.classes());
+      } catch (AssertionError failure) {
+        if (failure
+            .getMessage()
+            .contains(BackendSpiReachingIntoImplFixture.class.getSimpleName())) {
+          fired = true;
+        }
+      }
+    }
+    assertTrue(
+        fired,
+        "expected a rule (i) to fire on " + BackendSpiReachingIntoImplFixture.class.getName());
   }
 
   /**

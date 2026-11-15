@@ -382,7 +382,6 @@ public final class JfrAnalyses {
   public Map<String, Object> exceptions(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
-    String sessionId = (String) args.get("sessionId");
     int minCount = args.get("minCount") instanceof Number n ? n.intValue() : 1;
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
 
@@ -615,7 +614,6 @@ public final class JfrAnalyses {
   public Map<String, Object> hotmethods(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
-    String sessionId = (String) args.get("sessionId");
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 20;
     boolean includeNative = args.get("includeNative") instanceof Boolean b ? b : true;
 
@@ -753,7 +751,6 @@ public final class JfrAnalyses {
 
   public Map<String, Object> use(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
-    String sessionId = (String) args.get("sessionId");
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     boolean includeInsights = args.get("includeInsights") instanceof Boolean b ? b : true;
@@ -1513,18 +1510,6 @@ public final class JfrAnalyses {
             recommendations.add("Moderate queue saturation - monitor executor capacity");
           }
         }
-
-        // Warn if Datadog profiler but no queue events
-        String eventType = null;
-        if (threadsRes.containsKey("utilization")) {
-          // Try to detect if Datadog profiler is being used
-          // This is a heuristic - we check if we have any Datadog-specific data
-          if (threadsSat != null && !threadsSat.containsKey("queueSaturation")) {
-            // Check if we might be using Datadog profiler
-            // For now, we skip this warning as we can't reliably detect profiler type
-            // without additional context
-          }
-        }
       }
     }
 
@@ -1577,7 +1562,6 @@ public final class JfrAnalyses {
 
   public Map<String, Object> tsa(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
-    String sessionId = (String) args.get("sessionId");
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     int topThreads = args.get("topThreads") instanceof Number n ? n.intValue() : 10;
@@ -2213,7 +2197,6 @@ public final class JfrAnalyses {
 
   public Map<String, Object> diagnose(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
-    String sessionId = (String) args.get("sessionId");
     Boolean includeAnalysis = args.get("includeAnalysis") instanceof Boolean b ? b : true;
     String depth = args.get("depth") instanceof String d ? d : "full";
     boolean runDeepAnalysis = !"quick".equalsIgnoreCase(depth);

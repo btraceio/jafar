@@ -22,13 +22,7 @@ import java.util.Map;
  */
 public final class JafarPrompts {
 
-  private final SessionRegistry jfrSessions;
-  private final HeapSessionRegistry heapSessions;
-
-  public JafarPrompts(SessionRegistry jfrSessions, HeapSessionRegistry heapSessions) {
-    this.jfrSessions = jfrSessions;
-    this.heapSessions = heapSessions;
-  }
+  public JafarPrompts(SessionRegistry jfrSessions, HeapSessionRegistry heapSessions) {}
 
   /** All prompt specifications offered by the server. */
   public List<McpServerFeatures.SyncPromptSpecification> createPromptSpecifications() {
