@@ -47,6 +47,21 @@ Each backend declares a set of capabilities. JFR Shell adapts its features based
 | `UNTYPED_HANDLERS` | Map-based event access | ✓ | ✓ |
 | `CONTEXT_REUSE` | Share parsing context across sessions | ✓ | ✗ |
 
+The JDK backend reads event metadata across every chunk and follows nested field descriptors,
+including threads, classes, stack traces, frames, and methods. These types appear in the TUI
+metadata browser and in the fields supplied to `ask` and `as-query` in both shells. For example,
+with a recording open and the JDK backend selected:
+
+```text
+metadata class java.lang.Thread --fields
+metadata class jdk.types.StackTrace --fields
+```
+
+Array fields such as stack-trace frames retain their array dimension. Names follow the public JDK
+API: symbol-backed strings appear as `java.lang.String`, rather than separate raw symbol types.
+Types unreachable from event field descriptors, raw constant pools, and chunk headers are not
+exposed by this backend. A type's presence in metadata does not mean it emitted events.
+
 ## Writing a Custom Backend
 
 ### Prerequisites

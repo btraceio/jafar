@@ -10,6 +10,7 @@ import io.jafar.shell.backend.MetadataSource;
 import io.jafar.shell.backend.UnsupportedCapabilityException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -17,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import jdk.jfr.AnnotationElement;
 import jdk.jfr.EventType;
 import jdk.jfr.ValueDescriptor;
 import jdk.jfr.consumer.RecordedEvent;
@@ -31,7 +34,7 @@ import jdk.jfr.consumer.RecordingFile;
  *
  * <ul>
  *   <li>EVENT_STREAMING - Full support via RecordingFile
- *   <li>METADATA_CLASSES - Event types only (no internal types like jdk.types.Symbol)
+ *   <li>METADATA_CLASSES - Event types and recursively reachable field types
  *   <li>STREAMING_PARSE - Streaming event iteration
  *   <li>UNTYPED_HANDLERS - Events converted to Map format
  * </ul>
@@ -168,15 +171,13 @@ public final class JdkJfrBackend implements JfrBackend {
     }
   }
 
-  /** JDK metadata source using RecordingFile.readEventTypes(). */
+  /** JDK metadata source using event types and their recursive field descriptors. */
   private static final class JdkMetadataSource implements MetadataSource {
     @Override
     public Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
-      try (RecordingFile rf = new RecordingFile(recording)) {
-        for (EventType eventType : rf.readEventTypes()) {
-          if (eventType.getName().equals(typeName)) {
-            return convertEventType(eventType);
-          }
+      for (Map<String, Object> type : loadAllClasses(recording)) {
+        if (typeName.equals(type.get("name"))) {
+          return type;
         }
       }
       return null;
@@ -203,13 +204,35 @@ public final class JdkJfrBackend implements JfrBackend {
 
     @Override
     public List<Map<String, Object>> loadAllClasses(Path recording) throws Exception {
-      List<Map<String, Object>> result = new ArrayList<>();
+      Map<String, Map<String, Object>> byName = new LinkedHashMap<>();
       try (RecordingFile rf = new RecordingFile(recording)) {
         for (EventType eventType : rf.readEventTypes()) {
-          result.add(convertEventType(eventType));
+          // readEventTypes covers every chunk and can return repeated names. Preserve one
+          // deterministic view, and index nested types before following their cyclic references.
+          byName.putIfAbsent(eventType.getName(), convertEventType(eventType));
+          collectFieldTypes(eventType.getFields(), byName);
         }
       }
-      return result;
+      return new ArrayList<>(byName.values());
+    }
+
+    private static void collectFieldTypes(
+        List<ValueDescriptor> fields, Map<String, Map<String, Object>> byName) {
+      for (ValueDescriptor field : fields) {
+        String name = field.getTypeName();
+        if (byName.containsKey(name)) continue;
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("id", field.getTypeId());
+        meta.put("name", name);
+        meta.put("superType", null);
+        meta.put(
+            "primitive",
+            Set.of("boolean", "byte", "char", "short", "int", "long", "float", "double")
+                .contains(name));
+        addFields(meta, field.getFields());
+        byName.put(name, meta);
+        collectFieldTypes(field.getFields(), byName);
+      }
     }
 
     private static Map<String, Object> convertEventType(EventType eventType) {
@@ -230,8 +253,9 @@ public final class JdkJfrBackend implements JfrBackend {
       for (var ann : eventType.getAnnotationElements()) {
         String typeName = ann.getTypeName();
         String simple = typeName.substring(typeName.lastIndexOf('.') + 1);
-        classAnn.add("@" + simple);
-        classAnnFull.add(typeName);
+        String value = annotationSuffix(ann);
+        classAnn.add("@" + simple + value);
+        classAnnFull.add(typeName + value);
       }
       meta.put("classAnnotations", classAnn);
       meta.put("classAnnotationsFull", classAnnFull);
@@ -254,16 +278,20 @@ public final class JdkJfrBackend implements JfrBackend {
       meta.put("settingsByName", settingsByName);
       meta.put("settings", settingsDisplay);
 
-      // Fields
+      addFields(meta, eventType.getFields());
+      return meta;
+    }
+
+    private static void addFields(Map<String, Object> meta, List<ValueDescriptor> fields) {
       Map<String, Map<String, Object>> fieldsByName = new LinkedHashMap<>();
       List<String> fieldsDisplay = new ArrayList<>();
-      for (ValueDescriptor field : eventType.getFields()) {
+      for (ValueDescriptor field : fields) {
         Map<String, Object> fm = new HashMap<>();
         String fName = field.getName();
         String fType = field.getTypeName();
         fm.put("name", fName);
         fm.put("type", fType);
-        fm.put("dimension", 0); // JDK API doesn't expose array dimension directly
+        fm.put("dimension", field.isArray() ? 1 : 0);
         fm.put("hasConstantPool", false); // Not available via JDK API
         fm.put("label", field.getLabel());
         fm.put("description", field.getDescription());
@@ -274,8 +302,9 @@ public final class JdkJfrBackend implements JfrBackend {
         for (var a : field.getAnnotationElements()) {
           String typeName = a.getTypeName();
           String simple = typeName.substring(typeName.lastIndexOf('.') + 1);
-          ann.add("@" + simple);
-          annFull.add(typeName);
+          String value = annotationSuffix(a);
+          ann.add("@" + simple + value);
+          annFull.add(typeName + value);
         }
         fm.put("annotations", ann);
         fm.put("annotationsFull", annFull);
@@ -287,8 +316,19 @@ public final class JdkJfrBackend implements JfrBackend {
       meta.put("fieldsByName", fieldsByName);
       meta.put("fields", fieldsDisplay);
       meta.put("fieldCount", fieldsDisplay.size());
+    }
 
-      return meta;
+    private static String annotationSuffix(AnnotationElement annotation) {
+      if (annotation.getValues().isEmpty()) return "";
+      return "("
+          + annotation.getValues().stream()
+              .map(
+                  value ->
+                      value instanceof Object[] array
+                          ? Arrays.deepToString(array)
+                          : String.valueOf(value))
+              .collect(Collectors.joining(", "))
+          + ")";
     }
   }
 }

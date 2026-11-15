@@ -28,6 +28,12 @@ printf 'open rec.jfr\nas-query --dry-run which threads used the most CPU?\nexit\
 > host while it answered "No query evaluator available for this session" in the real shell.
 > The fake host was never the thing that was broken.
 
+> **Case file — filtered metadata, stale selection.** Loading a later-chunk type directly through
+> the TUI adapter passed, but searching for `test.metadata.Late` in the built TUI and pressing
+> Enter still opened `java.lang.Class`: the sidebar filter hid the old selection without moving
+> it to a matching row. The metadata E2E now types the sidebar search and both Enter keys through
+> the real key handler before asserting the late type's fields and annotations.
+
 **Corollary:** offering something in completion, documenting it, or printing a confirmation are not
 evidence that it works. Confirmation messages lie — see R3.
 
@@ -214,6 +220,16 @@ way — by looking at a value rather than at control flow.
 > and descriptions. Dumping what the stub received showed every `fields:` line missing, because the
 > code read the display list rather than the structured one.
 
+> **Case file — metadata depends on the backend's shape.** The JDK backend supplies `label` and
+> `description` directly, while Jafar supplies rendered `@Label(...)` / `@Description(...)`
+> annotations. Reading only the latter sent `test.metadata.Late` to the model without its
+> `Late metadata event` label. `JdkMetadataEndToEndTest` catches this in the HTTP request body;
+> it also checks the subsequent nested fields and the exact `count` result sent back to the model.
+> A separate assertion in the real browser caught bare `@Label` / `@Description` strings with
+> their values discarded; annotation rendering must retain those values for the TUI too.
+> The unified shell must delegate to the same enrichment: its host's default methods otherwise
+> silently reduce both metadata requests to bare names.
+
 When a model is the consumer, this is the only way: it will use whatever it is given and produce a
 fluent answer either way. A plausible answer drawn from redacted data is indistinguishable from a
 good one unless you looked.
@@ -340,6 +356,14 @@ same command tells you in a second.
 
 ## Test fixtures
 
+`./gradlew :jfr-shell:jdkMetadataTest` generates two complete JFR chunks with distinct custom event
+types, asserts the later type is absent from the first chunk, and concatenates them. Its isolated
+runtime has only the JDK recording backend (and asserts the Jafar plugin is absent), with separate
+home/config/plugin directories. It drives the real TUI browser and Enter-key handler, then captures
+LLM HTTP requests using a loopback stub, including subprocess runs of the shaded JFR shell and the
+unified shell's thin JAR. It requires no downloaded recording or provider account. This is not a
+terminal screenshot test or a live model-quality evaluation.
+
 The recordings in this tree are stripped and several do not parse
 (`IllegalArgumentException: newPosition > limit`). To verify behaviour end to end, record a real one:
 
@@ -348,3 +372,8 @@ java -XX:StartFlightRecording=duration=10s,filename=/tmp/spin.jfr,settings=profi
 ```
 
 `./get_resources.sh` downloads the full set from Dropbox where the network allows it.
+Allow for the download sizes and their copies (see [Build.md](Build.md)): a metadata E2E validation
+run exhausted disk space partway through the 1.7 GB `test-jfr.jfr` download, after fetching the
+170 MiB `test-ap.jfr`. Curl reported `Failure writing output to destination` and left a partial
+target that the script would skip on retry. Generated, structurally asserted fixtures avoid that
+cost when the test needs metadata shape rather than a particular workload.

@@ -350,7 +350,7 @@ public class CommandDispatcher {
    * recording — which would make {@code ask} cost grow with file size, the one thing this design
    * exists to avoid.
    */
-  private List<PromptBuilder.TypeEntry> describedTypes() {
+  public List<PromptBuilder.TypeEntry> describedTypes() {
     var cur = sessions.current();
     if (cur.isEmpty()) {
       return List.of();
@@ -503,7 +503,7 @@ public class CommandDispatcher {
    * fields, which is where {@code javaName} comes from. Going deeper is not free and has not been
    * needed — the model can ask again if it is.
    */
-  private List<PromptBuilder.TypeEntry> describeFields(List<String> typeNames) {
+  public List<PromptBuilder.TypeEntry> describeFields(List<String> typeNames) {
     JFRSession jfr = currentJfrSession();
     if (jfr == null || typeNames == null || typeNames.isEmpty()) {
       return List.of();
@@ -573,10 +573,12 @@ public class CommandDispatcher {
   }
 
   private static String labelOf(Map<String, Object> clazz) {
+    if (clazz.get("label") instanceof String label) return label;
     return annotationValue(clazz, "@Label(");
   }
 
   private static String descriptionOf(Map<String, Object> clazz) {
+    if (clazz.get("description") instanceof String description) return description;
     return annotationValue(clazz, "@Description(");
   }
 
@@ -1667,6 +1669,8 @@ public class CommandDispatcher {
     if ("metadata".equals(sub) || "types".equals(sub)) {
       io.println("Usage: metadata [--search <glob>|--regex <pattern>] [--refresh]");
       io.println("Lists available metadata types (all classes) in the current session.");
+      io.println(
+          "The JDK backend includes all chunks and nested field types exposed by the JDK API.");
       io.println("Options:");
       io.println("  --search <glob>   Glob match on full type name (e.g., 'jdk.*')");
       io.println("  --regex  <pat>    Regex match on full type name");

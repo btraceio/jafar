@@ -10,6 +10,7 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.core.Session;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -84,10 +85,36 @@ public final class JFRSession implements Session {
   }
 
   /**
-   * Scan the recording file to collect metadata and populate available event types. Uses
-   * StreamingChunkParser directly to efficiently get metadata and abort immediately.
+   * Scan the recording file to collect metadata and populate available event types. The JDK backend
+   * supplies its complete descriptor inventory; the Jafar path uses metadata callbacks.
    */
   private void scanMetadata() throws IOException {
+    var backend = BackendRegistry.getInstance().getCurrent();
+    if ("jdk".equals(backend.getId())) {
+      // Use the selected backend's all-chunk inventory, including nested descriptor types.
+      // Running Jafar's metadata callbacks here both bypasses selection and mutates these
+      // collections concurrently on multi-chunk recordings.
+      try {
+        for (Map<String, Object> type :
+            backend.createMetadataSource().loadAllClasses(recordingPath)) {
+          String name = (String) type.get("name");
+          allMetadataTypes.add(name);
+          metadataTypeIds.put(name, ((Number) type.get("id")).longValue());
+          if (Boolean.TRUE.equals(type.get("primitive"))) {
+            primitiveMetadataTypes.add(name);
+          } else {
+            nonPrimitiveMetadataTypes.add(name);
+            metadataTypes.add(name);
+          }
+          if ("jdk.jfr.Event".equals(type.get("superType"))) {
+            eventTypeCounts.putIfAbsent(name, 0L);
+          }
+        }
+      } catch (Exception e) {
+        throw new IOException("Failed to scan metadata with backend jdk: " + recordingPath, e);
+      }
+      return;
+    }
     try (StreamingChunkParser parser =
         new StreamingChunkParser(new UntypedParserContextFactory())) {
       parser.parse(
@@ -130,6 +157,7 @@ public final class JFRSession implements Session {
     allMetadataTypes.clear();
     nonPrimitiveMetadataTypes.clear();
     primitiveMetadataTypes.clear();
+    metadataTypeIds.clear();
     cachedChunkIds = null;
     scanMetadata();
   }

@@ -67,8 +67,8 @@ list silently empty.
 
 ### A declared type is not a present type
 
-`JFRSession.scanMetadata` reads the first chunk's metadata and stops, so `getAvailableTypes()`
-returns every type the JVM *registered* — including those that emitted nothing. A recording made
+`JFRSession.getAvailableTypes()` describes types the JVM *registered* — including those that
+emitted nothing. The JDK backend reads declarations across all chunks. A recording made
 with an agent that ships its own sampler lists an empty `jdk.ExecutionSample` beside a vendor type
 holding thousands of events.
 

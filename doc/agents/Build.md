@@ -8,6 +8,11 @@ See [Verification.md](Verification.md) for how to know a change actually works.
 - Java 8+ (parser and tools modules: `parser-core`, `tools`, `demo`)
 - Binary test recordings are fetched via `./get_resources.sh` (downloads from Dropbox), not Git LFS — see below
 
+Check free space before fetching recordings: observed downloads include a 170 MiB `test-ap.jfr`
+and a roughly 1.7 GB `test-jfr.jfr`, before copies into parser test resources. The current downloader
+writes directly to its destination and skips files that already exist, so remove a partial file
+after a failed download before retrying; file existence alone does not establish a valid recording.
+
 ## Essential Commands
 ```bash
 # Fetch binary test resources (required before first build)

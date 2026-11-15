@@ -42,8 +42,8 @@ Architecture, and the reasons it is shaped this way:
   scanning the recording. Type names and descriptions are attacker-controllable in a recording you
   did not produce, so they stay inside the `RECORDING_DATA` fence even though they now sit in the
   system prompt.
-- **Event counts decide which types are offered at all.** `scanMetadata` reads only the first
-  chunk's metadata, so `getAvailableTypes` is everything the JVM *declared* — including types that
+- **Event counts decide which types are offered at all.** `getAvailableTypes` describes what the
+  JVM *declared* (across all chunks with the JDK backend) — including types that
   emitted nothing. A recording from an agent with its own sampler carries an empty
   `jdk.ExecutionSample` beside a vendor type with thousands of events, and a model given only names
   picks the familiar one. `CommandDispatcher.eventCounts` counts once via

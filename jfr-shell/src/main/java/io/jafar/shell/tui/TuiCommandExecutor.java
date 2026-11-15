@@ -995,6 +995,9 @@ public final class TuiCommandExecutor {
     ctx.sidebarSearchQuery = query;
     if (query.isEmpty() || ctx.sidebarTypes == null) {
       ctx.sidebarFilteredIndices = null;
+      if (ctx.sidebarTypes != null && !ctx.sidebarTypes.isEmpty() && ctx.sidebarSelectedIndex < 0) {
+        ctx.sidebarSelectedIndex = 0;
+      }
       return;
     }
     String lower = query.toLowerCase();
@@ -1007,6 +1010,9 @@ public final class TuiCommandExecutor {
     }
     ctx.sidebarFilteredIndices = indices;
     ctx.sidebarScrollOffset = 0;
+    if (!indices.contains(ctx.sidebarSelectedIndex)) {
+      ctx.sidebarSelectedIndex = indices.isEmpty() ? -1 : indices.get(0);
+    }
   }
 
   void enterSearchMode() {
