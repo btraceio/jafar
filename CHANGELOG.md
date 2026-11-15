@@ -63,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **A chunk's duration was converted as ticks; it is nanoseconds.** `Control.ChunkInfo.duration()`
+  and the Go parser's `ChunkInfo.Duration()` multiplied the header's duration by the tick length.
+  That is the same number only at 1e9 ticks per second: on a JDK 21 recording with a tick
+  frequency of 2.1e9, a chunk that lasted 119.3 ms was reported as 56.8 ms. Both now return the
+  header value. `jfr2pprof` sums these durations for the profile's duration, which was short by
+  the same factor on such recordings
 - **A corrupted or truncated JFR recording is rejected with an `IOException` that says what is
   wrong with it.** The Java parser followed sizes, counts and offsets from the file without
   checking them, so a damaged recording failed with whatever the JDK threw on the way

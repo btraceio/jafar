@@ -22,7 +22,8 @@ final class ChunkInfoImpl implements Control.ChunkInfo {
     this.startTime = Instant.ofEpochSecond(0, header.startNanos);
     this.startTicks = header.startTicks;
     this.nanosPerTick = 1_000_000_000d / header.frequency;
-    this.duration = Duration.of(Math.round(header.duration * nanosPerTick), ChronoUnit.NANOS);
+    // Nanoseconds as written, not ticks: only the tick conversions depend on the frequency.
+    this.duration = Duration.ofNanos(header.duration);
     this.size = header.size;
     this.id = CHUNK_COUNTER.incrementAndGet();
   }
