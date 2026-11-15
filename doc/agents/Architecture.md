@@ -32,49 +32,31 @@ documented gaps are in [Gates.md](Gates.md).
 
 ## Architectural invariants
 
-The patterns the whole repository is built on. The `arch-rules` module asserts them over compiled
-classes (ArchUnit, run by every `build` and by `./gradlew :arch-rules:test`); break one and the gate
-fails. Run them locally in your dev loop — CI is the final gate, not the first place you learn.
+The boundary rules live in the `arch-tests` module as frozen ArchUnit rules and are catalogued in
+[Gates.md](Gates.md#architecture-boundaries-archunit-freeze): the (a)–(i) plain-words list, the
+committed freeze store and the fire tests that prove each rule fires. The load-bearing ones, in one
+line each:
 
-### A1. `api` packages do not leak implementation types
+- **(c)/(f)** — a module's `api` package is its public surface: no dependencies on its
+  implementation packages, and no implementation types in public or protected signatures
+  (generic arguments included). Factories may construct impl classes *in method bodies* —
+  `HeapDumpParser.parse` builds a `HeapDumpImpl` behind `HeapDump` — but signatures may not leak
+  them.
+- **(a)/(b)/(g)** — `impl`/`internal`/`index` packages are module-private.
+  `io.jafar.parser.internal_api` is the parser plane's shared internal contract; extending its
+  consumer list is an architecture decision, not a convenience import.
+- **(h)/(i)** — every extension point is a ServiceLoader-discovered SPI
+  (`JfrBackend`, `ShellModule`, `LlmBackend`, `HandlerFactory`, `DeserializerFactory`,
+  `UntypedEventStreamFactory`): the types stay interfaces, and the SPI packages never know their
+  implementations. An integration that special-cases a concrete backend defeats the plugin
+  architecture the shells are built on.
+- The published API surfaces are guarded by japicmp against the last release
+  ([Gates.md](Gates.md#api-evolution)); changing an SPI is a release decision — evolve compatibly
+  or deprecate first. The jfr-shell-tck is the behavioural net for backends.
 
-A module's `api` package (`io.jafar.<module>.api`) is its public surface. Types from `impl`,
-`internal`, `internal_api` and `index` may be *constructed inside method bodies* — the
-factory-in-api pattern: `HeapDumpParser.parse` builds a `HeapDumpImpl` behind the `HeapDump`
-interface — but must never appear in public or protected signatures (parameters, returns, throws,
-fields, supertypes; generic arguments included). Enforced by `ApiSurfacePurityTest`.
-
-### A2. Internal packages are contracts, not walls — but the contract lists its members
-
-`io.jafar.parser.internal_api` is deliberately shared by parser-core/parser-codegen, shell-core,
-the Jafar shell backend, tools, jfr2pprof — and (unchecked here) the separate demo build. A
-module's other `impl`/`internal`/`index` packages are nobody else's business. Do not "fix" an
-internal_api import as a layering violation: it is the shared internal contract, and *extending
-its consumer list is an architecture decision*, not a convenience import. Enforced by
-`InternalApiContractTest`.
-
-### A3. Extension goes through ServiceLoader-discovered SPIs, never hard-wiring
-
-`JfrBackend`, `ShellModule`, `LlmBackend`, `HandlerFactory`, `DeserializerFactory`,
-`UntypedEventStreamFactory` are the SPI surface. Backends and modules are *discovered* — the SPI
-packages must not depend on their implementations, and an integration that special-cases a
-concrete backend is wrong: it defeats the plugin architecture the shells are built on. Enforced by
-`SpiRulesTest` (the interfaces stay interfaces; SPI packages stay impl-free).
-
-### A4. SPI interfaces are published contracts
-
-`shell-core`'s public API is guarded by `japicmp` against the last released baseline (see its
-`build.gradle`): third-party backend plugins compile against it. Changing an SPI is a release
-decision — evolve compatibly or deprecate first. The jfr-shell-tck is the behavioural net for
-backends.
-
-### A5. parser-core's `api` is the documented exception
-
-parser-core predates the strict layering: its `api` shares the `internal_api` metadata model on
-purpose (`JafarRecordedEvent.type()` returns `MetadataClass`; `ParserContext` is a documented
-hybrid — "used internally and exposed via events"). For parser-core, A1 forbids only `impl` types
-in signatures; `internal_api` is allowed there. This is the encoded reality, not an aspiration:
-new modules (hdump, pprof, otlp) follow A1 in full.
+Existing reach-ins are grandfathered in the committed freeze store (shrink-only: a new one fails
+the build, a deliberate grandfathering is a visible hand edit). Run `./gradlew :arch-tests:test`
+locally in the dev loop — CI is the final gate, not the first place you learn.
 
 ### Clean code
 

@@ -12,13 +12,13 @@ Verification.md shipped green, so a passing build is the floor, not the ceiling.
 
 ## Gates that ride every build
 
-Spotless formatting, the architectural invariants (`:arch-rules:test`, see
-[Architecture.md](../../../doc/agents/Architecture.md)) and PMD clean-code analysis (`pmdMain`)
+Spotless formatting, the architectural invariants (`:arch-tests:test`, see
+[Gates.md](../../../doc/agents/Gates.md)) and PMD clean-code analysis (`pmdMain`)
 all run as part of `check`/`build` — locally and in CI. Before claiming done, run the narrow gate
 for the module you touched plus these:
 
 ```bash
-./gradlew :arch-rules:test        # package-boundary and SPI invariants (A1-A5)
+./gradlew :arch-tests:test        # module-boundary, api-signature and SPI rules ((a)–(i))
 ./gradlew pmdMain                 # clean-code rules (config/pmd/ruleset.xml)
 ./gradlew spotlessCheck           # formatting
 ```

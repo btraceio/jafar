@@ -74,7 +74,6 @@ Key components:
 | Module layout, parser APIs, coding style, composite build | [doc/agents/Architecture.md](doc/agents/Architecture.md) |
 | **Structures that lie** — the recurring wrong-shape bug class | [doc/agents/DataShapes.md](doc/agents/DataShapes.md) |
 | Shells, JfrPath, tab completion, backend plugins | [doc/agents/Shells.md](doc/agents/Shells.md) |
-| **Architectural invariants, clean-code rules** (A1–A5; enforced by `arch-rules` + PMD) | [doc/agents/Architecture.md](doc/agents/Architecture.md) |
 | On-demand procedures (skills) | `.agents/skills/` — `babysit-pr` (steward a PR), `verify-change` (R1/R5/R6 before claiming done), `pr-writing` (commits, PR bodies, parity statement), `release-steward` (cut a release, watch the publish). `.claude/skills` is a symlink for Claude Code |
 | MCP server, tools, findings contract | [doc/agents/Mcp.md](doc/agents/Mcp.md) |
 | `ask` / `as-query` / `explain` / `llm` and the LLM SPI | [doc/agents/Llm.md](doc/agents/Llm.md) |
@@ -103,7 +102,6 @@ Key components:
 - Both are optional at runtime: the SPI lives in `shell-core` with no new dependencies, and backends
   are discovered via `ServiceLoader`
 - **hdump-parser/**: HPROF heap dump parser (indexed and two-pass modes, dominator tree, retained sizes); public API in `io.jafar.hdump.api`, implementation details in `impl`/`internal`/`index`
-- **arch-rules/**: architectural invariant tests (ArchUnit) asserting the package-boundary and SPI rules from [Architecture.md](doc/agents/Architecture.md) — every `build` runs them
 - **hdump-shell/**: Heap dump interactive CLI with HdumpPath query language and tab completion
 - **pprof-parser/**: pprof profile parser (gzip + protobuf wire format); public API in `io.jafar.pprof.api`, wire decoding in `internal`
 - **pprof-shell/**: pprof profile analysis CLI with PprofPath query language and tab completion (uses `pprof-parser`)
@@ -122,7 +120,7 @@ Key components:
 ./get_resources.sh                    # optional: real recordings instead of generated ones
 ./gradlew test                        # tests
 ./gradlew spotlessApply                # formatting (every build runs spotlessCheck)
-./gradlew :arch-rules:test             # architectural invariants (also runs in build)
+./gradlew :arch-tests:test             # architectural invariants (also runs in build)
 ./gradlew :jfr-shell:run --console=plain
 ```
 
