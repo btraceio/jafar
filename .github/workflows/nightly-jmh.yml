@@ -146,12 +146,21 @@ jobs:
               ceilingSkipEveryChunk startTimeRangeSecondHalf startTimeRangeNothing; do
             args+=(--require "QueryPushdownBenchmark.$method")
           done
+          # Ratios of two results of the same run: they move less than the
+          # scores do with the runner the job landed on (see jmh_trend.py).
+          b=QueryPushdownBenchmark
+          args+=(
+            --ratio "type filter speedup=$b.decodeAllFilterInHandler/$b.typeFilterInParser"
+            --ratio "type filter cost over no decoding=$b.typeFilterInParser/$b.ceilingSkipEveryEvent"
+            --ratio "second-half range over every chunk=$b.startTimeRangeSecondHalf/$b.typeFilterInParser[targetType=bench.Common,generatedReader=true]"
+            --ratio "skipping every chunk over reading headers=$b.startTimeRangeNothing/$b.ceilingSkipEveryChunk"
+          )
           if [ "${{ steps.previous.outputs.have_previous }}" = "true" ]; then
             args+=(--previous build/jmh-previous)
           fi
           # The script exits 0 for any timing change (advisory) and 2 only for
-          # malformed result data or a required benchmark with no result, which
-          # is a pipeline bug worth failing on.
+          # malformed result data, a required benchmark with no result, or a
+          # ratio it cannot compute, which is a pipeline bug worth failing on.
           python3 scripts/jmh_trend.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload JMH results

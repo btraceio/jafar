@@ -732,7 +732,28 @@ record lacking `benchmark` or `primaryMetric`, a non-numeric score, a
 current run with no result JSON at all): that is a pipeline bug, not a
 performance statement, and only that fails the workflow. A benchmark named
 with `--require` that has no record in the current run is the same kind of
-bug and the same exit 2.
+bug and the same exit 2, and so is a `--ratio` the current run cannot provide.
+
+**Read the ratios before the deltas.** The first two runs of this workflow
+with `QueryPushdownBenchmark` in it ran the same commit an hour apart
+(runs 43743265238 and 43749673029, `76099c1`) and every one of the 20 scores
+moved, in the same direction, by 10% to 32%: the second job landed on a faster
+runner. Against the scheduled run before them the first showed −46% on
+`StreamingChunkParserIoBenchmark.parseViaPath` and +45% on
+`PprofParserBenchmark.parseFile`, in a module no commit in between had
+touched; measured on one machine, the two commits did not differ. A score's
+delta against the previous night therefore mostly says which machine the job
+got.
+
+`jmh_trend.py --ratio 'LABEL=NUM/DEN'` adds a second table that divides two
+results of the same run, paired on the parameters both have, with the previous
+run's ratio and the change next to it; a side can be narrowed with
+`[param=value,...]`. The nightly reports four: the type filter's speedup, its
+cost over decoding nothing, a range covering half the chunks over reading them
+all, and skipping every chunk over reading only headers. Across the same two
+runs these 14 ratios moved by 0.1% to 14.9%, half of them by less than 4%, in
+both directions. That is steadier than the scores, not steady: a ratio's delta
+is where to look first, and still not a verdict.
 `scripts/tests/test_jmh_trend.sh` (part of `run_all.sh`) proves each rule on
 the real JMH payload shape — the numbers nest under `primaryMetric`, and
 `scoreError` can arrive as the string `"NaN"`.
