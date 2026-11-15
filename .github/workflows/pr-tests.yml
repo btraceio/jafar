@@ -287,6 +287,42 @@ jobs:
           path: artifacts/xml
           retention-days: 14
 
+  golden-pinned-jdk:
+    # The generated fixtures (test-ap.jfr / test-jfr.jfr) are byte-identical only
+    # on a given JDK build, so the floating '21' cells can go green on a JDK whose
+    # bytes match a re-pinned fixture sha. This cell runs the JFR golden suite on a
+    # pinned Temurin (the same 21.0.3 the snapshot-publish job uses) as a
+    # cross-build backstop; the executable pin guard in JfrGoldenDumpTest is the
+    # primary defense. See test-recordings/README.md for the measured variance.
+    name: Golden tests (Temurin 21.0.3)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same reason as the tests job: the ubuntu-26.04 runner image has no
+      # preinstalled JDK 8, and configuring :parser needs the toolchain-8.
+      # JDK 21 stays the default.
+      - name: Install JDK 8 for Gradle toolchains
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up JDK 21.0.3
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21.0.3'
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Golden tests on a pinned JDK
+        run: ./gradlew --stacktrace --no-daemon :parser-core:test --tests '*JfrGoldenDumpTest' --rerun
+
   differential:
     # Step 6 of the generated-code safety harness (doc/agents/Gates.md,
     # "Differential oracles: Java vs Go untyped dumps"): the Java and the Go
