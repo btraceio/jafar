@@ -27,7 +27,7 @@ final class TemporalNormalizer {
   // The default (and most common) unit for both annotations in JFR recordings.
   private static final String TICKS = "TICKS";
 
-  private static final int KIND_TIMESTAMP = 1;
+  static final int KIND_TIMESTAMP = 1;
   private static final int KIND_TIMESPAN = 2;
 
   /**

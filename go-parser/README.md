@@ -62,6 +62,28 @@ opts := jfr.Options{
 err = parser.ParseWith(opts, handler)
 ```
 
+To read only the events from some point in time on, give the parser the range and it skips the
+chunks that ended before it:
+
+```go
+from := jfr.Since(startOfInterest) // epoch nanoseconds, the unit of an event's startTime
+opts := jfr.Options{
+    StartTime: from,
+    OnError:   jfr.FailOnError,
+}
+err = parser.ParseWith(opts, func(e *jfr.Event) error {
+    if !from.Contains(e.Values["startTime"].(int64)) {
+        return nil // a hint, not a filter: the chunks that are read deliver everything
+    }
+    // ...
+    return nil
+})
+```
+
+Only the lower bound skips chunks: an event is written when it is committed and can start long
+before the chunk it was written to, so `jfr.Until(t)` skips nothing. A skipped chunk is reported
+to `Options.OnChunkSkipped`, not to `OnChunkStart` or `OnChunkEnd`.
+
 Returning `jfr.ErrStop` from the handler ends parsing successfully - the whole
 recording, not only the current chunk; no event is delivered after it. Any other
 error aborts it and is returned from `Parse` unchanged.
@@ -277,6 +299,19 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   Here such a reference still decodes to the one-entry map `{field: value}` and no helper collapses
   it; not ported yet (btraceio/jafar#108).
 * **Untyped only.** No typed API, no code generation, no annotation processor.
+* **The type filter is per parse here, per handler in Java.** `Options.TypeFilter` governs the one
+  `EventFunc` of a `ParseWith` call. Java's `UntypedJafarParser.handle(TypeFilter, EventHandler)`
+  attaches a filter to each handler, because a Java parser can have several; an event is decoded
+  when any handler wants its type. Both skip a rejected event before decoding it, so neither
+  reports an undecodable event of a rejected type.
+* **The start-time range is per parse here, per handler in Java, with the same rule.**
+  `Options.StartTime` and Java's `handle(TypeFilter, TimeRange, EventHandler)` both skip a chunk
+  that ends more than a second before the range begins, and never one that starts after it; both
+  read an unfinished chunk and one whose wanted `startTime` is not a tick timestamp. In Java a
+  chunk is skipped only when every registered handler has a range that rules it out. A skipped
+  chunk reaches `OnChunkSkipped` here; a Java parser listener sees `onChunkStart`, `onMetadata`
+  and `onChunkEnd(skipped = true)`. Pinned by `TestStartTime*` here and `UntypedTimeRangeTest` and
+  `ChunkPruningTest` in Java.
 * **Sequential.** The Java parser hands chunks to a thread pool and calls
   handlers from those threads. This one decodes chunks in recording order and
   calls the handler on the calling goroutine, so events arrive in file order.

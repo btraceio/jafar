@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`UntypedJafarParser.handle(TypeFilter, EventHandler)`** - registers a handler for the event
+  types a filter accepts. An event is decoded only if some registered handler wants its type, so
+  the others cost their header and nothing more. The filter is asked once per chunk and type. An
+  undecodable event of a type nobody wants is no longer reported, because it is never decoded. The
+  Go parser's `Options.TypeFilter` has done the same since it was written
+- **`TypeFilter.named(...)`** - a filter accepting event types by exact name, for the common case
+- **`UntypedJafarParser.handle(TypeFilter, TimeRange, EventHandler)` and `TimeRange`** - a handler
+  can say which start times it wants, and the parser skips every chunk that ends before the range
+  begins: such a chunk costs its header and metadata, and its constant pools and events are not
+  read. The range is a hint, so the handler still checks `startTime`. Only the range's lower bound
+  skips anything: an event is written when it is committed and can start long before its chunk
+  (36 minutes, for `datadog.HeapLiveObject` in a Datadog recording), so a chunk that starts after
+  the range is always read
+- **Go parser: `Options.StartTime` and `Options.OnChunkSkipped`** - the same chunk skipping, with
+  the same rule
 - **`ParsingContext.withParallelism(int)`** - a context sharing the original's caches whose parsers
   read chunks on the given number of threads. `withParallelism(1)` delivers events one at a time, in
   file order, so handlers need no synchronization. The default stays
