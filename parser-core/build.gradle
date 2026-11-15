@@ -301,6 +301,8 @@ tasks.register('differentialTest', Test) {
     // The dump materializes the whole deep-resolved corpus in memory (tck-test.jfr alone renders
     // 67,657 events of nested values); `test` runs with the same headroom.
     jvmArgs '-Xmx8g'
+    // 8 GB heap: never at the same time as another such task (gradle/large-heap-tests.gradle)
+    usesService(rootProject.ext.largeHeapTestSlot)
     // Where JavaGoDifferentialTest finds the Go module whose jfrdump command it drives
     systemProperty 'jafar.go.dir', rootProject.file('go-parser').absolutePath
     // The whole Go module is an input: the differential verdict covers go-parser/jfr (the parser
@@ -355,6 +357,8 @@ dependencies {
 
 test {
     jvmArgs '-Xmx8g', '-Xms1g'
+    // 8 GB heap: never at the same time as another such task (gradle/large-heap-tests.gradle)
+    usesService(rootProject.ext.largeHeapTestSlot)
 }
 
 tasks.register('sourcesJar', Jar) {

@@ -14,6 +14,9 @@ apply from: rootProject.file('gradle/version-from-tag.gradle')
 // Not part of check: it needs the baseline script and the network.
 apply from: rootProject.file('gradle/api-compat.gradle')
 
+// One slot for the test tasks that fork an 8 GB JVM, so two of them never run at the same time.
+apply from: rootProject.file('gradle/large-heap-tests.gradle')
+
 repositories {
     mavenLocal()
     mavenCentral()

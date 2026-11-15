@@ -1,0 +1,23 @@
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+
+// One slot for the test tasks that run with an 8 GB heap.
+//
+// :parser-core:test, :parser-core:differentialTest and :parser-codegen:test each fork a JVM with
+// -Xmx8g, and org.gradle.parallel=true let two of them run side by side: 16 GB of permitted heap
+// on a 16 GB machine, which is also what a GitHub-hosted runner has. Measured on such a machine,
+// over five runs, the two test JVMs peaked at 5.0-5.5 GB and 3.6-3.7 GB resident at the same
+// moment and left 4.6-5.1 GB available. A test JVM was once killed with exit value 137 in a build
+// that ran them together; the cause was not established, and the measurements above do not show
+// it was memory. The slot removes the overlap whatever the cause was.
+//
+// A task takes the slot where it sets the heap, with
+//     usesService(rootProject.ext.largeHeapTestSlot)
+// so the two stay next to each other. Tasks holding the slot never run at the same time; every
+// other task still runs in parallel with them.
+abstract class LargeHeapTestSlot implements BuildService<BuildServiceParameters.None> {}
+
+ext.largeHeapTestSlot =
+    gradle.sharedServices.registerIfAbsent('largeHeapTestSlot', LargeHeapTestSlot) {
+        maxParallelUsages = 1
+    }
