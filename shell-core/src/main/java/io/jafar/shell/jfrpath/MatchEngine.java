@@ -238,11 +238,13 @@ final class MatchEngine {
           sliceFrom = a.isEmpty() ? 0 : Integer.parseInt(a);
           sliceTo = bb.isEmpty() ? Integer.MAX_VALUE : Integer.parseInt(bb);
         } catch (Exception ignore) {
+          // unparseable slice bounds; leave defaults
         }
       } else {
         try {
           segIndex = Integer.parseInt(inside.trim());
         } catch (Exception ignore) {
+          // unparseable segment index; leave default
         }
       }
     }
