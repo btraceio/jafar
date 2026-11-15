@@ -15,6 +15,73 @@ The module map is in [AGENTS.md](../../AGENTS.md#module-map).
 - The repository ships no git hooks; do not set `core.hooksPath` for it — that would
   replace your own global hooks.
 
+## Architectural invariants
+
+The patterns the whole repository is built on. The `arch-rules` module asserts them over compiled
+classes (ArchUnit, run by every `build` and by `./gradlew :arch-rules:test`); break one and the gate
+fails. Run them locally in your dev loop — CI is the final gate, not the first place you learn.
+
+### A1. `api` packages do not leak implementation types
+
+A module's `api` package (`io.jafar.<module>.api`) is its public surface. Types from `impl`,
+`internal`, `internal_api` and `index` may be *constructed inside method bodies* — the
+factory-in-api pattern: `HeapDumpParser.parse` builds a `HeapDumpImpl` behind the `HeapDump`
+interface — but must never appear in public or protected signatures (parameters, returns, throws,
+fields, supertypes; generic arguments included). Enforced by `ApiSurfacePurityTest`.
+
+### A2. Internal packages are contracts, not walls — but the contract lists its members
+
+`io.jafar.parser.internal_api` is deliberately shared by parser-core/parser-codegen, shell-core,
+the Jafar shell backend, tools, jfr2pprof — and (unchecked here) the separate demo build. A
+module's other `impl`/`internal`/`index` packages are nobody else's business. Do not "fix" an
+internal_api import as a layering violation: it is the shared internal contract, and *extending
+its consumer list is an architecture decision*, not a convenience import. Enforced by
+`InternalApiContractTest`.
+
+### A3. Extension goes through ServiceLoader-discovered SPIs, never hard-wiring
+
+`JfrBackend`, `ShellModule`, `LlmBackend`, `HandlerFactory`, `DeserializerFactory`,
+`UntypedEventStreamFactory` are the SPI surface. Backends and modules are *discovered* — the SPI
+packages must not depend on their implementations, and an integration that special-cases a
+concrete backend is wrong: it defeats the plugin architecture the shells are built on. Enforced by
+`SpiRulesTest` (the interfaces stay interfaces; SPI packages stay impl-free).
+
+### A4. SPI interfaces are published contracts
+
+`shell-core`'s public API is guarded by `japicmp` against the last released baseline (see its
+`build.gradle`): third-party backend plugins compile against it. Changing an SPI is a release
+decision — evolve compatibly or deprecate first. The jfr-shell-tck is the behavioural net for
+backends.
+
+### A5. parser-core's `api` is the documented exception
+
+parser-core predates the strict layering: its `api` shares the `internal_api` metadata model on
+purpose (`JafarRecordedEvent.type()` returns `MetadataClass`; `ParserContext` is a documented
+hybrid — "used internally and exposed via events"). For parser-core, A1 forbids only `impl` types
+in signatures; `internal_api` is allowed there. This is the encoded reality, not an aspiration:
+new modules (hdump, pprof, otlp) follow A1 in full.
+
+### Clean code
+
+Mechanically enforced on main sources by PMD (`./gradlew pmdMain`, part of `check`; ruleset:
+`config/pmd/ruleset.xml` — curated, must stay green): no empty catch blocks, no empty control
+statements, no constructors calling overridable methods, no dead locals/fields/methods. When a
+member is reflection-driven or updater-driven (invisible to the analysis), suppress at the member
+with `@SuppressWarnings("PMD.<Rule>")` and a comment saying why — see `JafarMcpServer` and
+`MetadataClass.typeSkipper` for the two living examples. Everything the ruleset flags that is not
+suppressed is genuinely dead: delete it, keep the side effects (an "unused" local in a parser is
+often a stream-advancing read — drop the variable, keep the call).
+
+Beyond the gates, the conventions the codebase already follows:
+
+- Keep public API minimal; package-private is the default, `public` earns its place.
+- Reach for the pattern the area already uses: Factory (api entry points), Strategy/Adapter
+  (shell output formats, providers), Command (command dispatch), sealed exhaustive hierarchies
+  for value types (`Value`, `BoolExpr`, `ValueExpr`), SPI for anything pluggable. The full
+  pattern inventory lives in `doc/cli/Architecture.md` (Design Patterns).
+- Prefer sealed types + exhaustive switches: the compiler catches the missed case.
+- Fail loud over fail quiet — except where a comment documents a deliberate best-effort catch.
+
 ## Parser APIs
 - **Typed API**: Uses interface definitions with `@JfrType("event.name")` annotations
 - **Untyped API**: Returns events as `Map<String, Object>` with wrapper types for arrays/complex values

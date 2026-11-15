@@ -75,7 +75,17 @@ scripts/check-doc-links.sh
 
 # Java/Go untyped-parser parity gate, local mode
 scripts/parity-check.sh --base origin/main
+
+# Architectural invariants (package boundaries, SPI rules; A1-A5 in doc/agents/Architecture.md)
+./gradlew :arch-rules:test
+
+# Clean-code static analysis (empty catches, dead code, ...; part of every `check`)
+./gradlew pmdMain
 ```
+
+The architecture tests and PMD are part of `./gradlew build` and `check` — run them locally in the
+development loop as you go (`./gradlew :arch-rules:test`, `./gradlew pmdMain`, both fast); CI
+(`pr-tests.yml`) is the final gate, not the first place a violation should surface.
 
 ## Go parser Commands
 The `go-parser/` directory is a standalone Go module and is deliberately kept out of the Gradle

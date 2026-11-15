@@ -1,0 +1,64 @@
+/*
+ * arch-rules: architectural invariant tests (ArchUnit).
+ *
+ * These tests encode the invariants in doc/agents/Architecture.md ("Architectural
+ * invariants"). They assert over the compiled classes of every Gradle module, so a
+ * boundary violation fails `./gradlew :arch-rules:test` — which every `build` runs.
+ * Run them locally in the dev loop; CI (`pr-tests.yml`, the `tests` job) is the final
+ * gate. See also doc/agents/Verification.md for what verification means here.
+ */
+
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        // The shell modules publish JVM 25+ compatibility attributes, so this module must
+        // target 25 to consume them; ArchUnit >= 1.4.1 reads Java 25 bytecode (class file 69).
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+dependencies {
+    testImplementation 'com.tngtech.archunit:archunit:1.4.2'
+
+    // Every analyzed module: main classes of all Gradle modules (the demo project is a
+    // separate Gradle build and is not wired here; its use of internal_api is unchecked).
+    testImplementation project(':parser-core')
+    testImplementation project(':parser-codegen')
+    testImplementation project(':jafar-processor')
+    testImplementation project(':tools')
+    testImplementation project(':shell-core')
+    testImplementation project(':llm-anthropic')
+    testImplementation project(':llm-openai')
+    testImplementation project(':jfr-shell')
+    testImplementation project(':jfr-shell-jafar')
+    testImplementation project(':jfr-shell-jdk')
+    testImplementation project(':jfr-shell-tck')
+    testImplementation project(':jfr-mcp')
+    testImplementation project(':hdump-parser')
+    testImplementation project(':hdump-shell')
+    testImplementation project(':pprof-parser')
+    testImplementation project(':pprof-shell')
+    testImplementation project(':otlp-parser')
+    testImplementation project(':otlp-shell')
+    testImplementation project(':jafar-shell')
+    testImplementation project(':jfr2pprof')
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    // Gradle 9 no longer provides the JUnit Platform launcher on the test runtime classpath
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // The rules never change and assert over whole packages, so a change in any analyzed
+    // module invalidates the cached result.
+    inputs.property('analyzedModules', 'all')
+}
