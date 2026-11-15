@@ -190,7 +190,7 @@ func TestTckRecordingTimestampsAreNormalised(t *testing.T) {
 		// would be off by decades.
 		const day = int64(24 * 3600 * 1e9)
 		lo := e.Chunk.Header.StartNanos - day
-		hi := e.Chunk.Header.StartNanos + e.Chunk.AsDurationNanos(e.Chunk.Header.Duration) + day
+		hi := e.Chunk.Header.StartNanos + e.Chunk.Header.Duration + day
 		if start < lo || start > hi {
 			t.Fatalf("%s startTime %d outside the chunk range [%d, %d]", e.Type.Name, start, lo, hi)
 		}

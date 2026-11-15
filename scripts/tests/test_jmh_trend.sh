@@ -159,5 +159,35 @@ rec io.jafar.parser.benchmark.X.parse 110 2 test.jfr > "$W/cur/parser-core.json"
 rec io.jafar.parser.benchmark.X.parse 100 2 test.jfr > "$W/prev/build/jmh/parser-core.json"
 run "nested previous layout: still compared" 0 "+10.0%" -- --current "$W/cur" --previous "$W/prev"
 
+# 13. --require: a benchmark that throws is left out of the result JSON while
+#     its Gradle task exits 0, so with other result files present the table
+#     would just be shorter. A required benchmark with no record is refused.
+W=$(mktemp -d)
+mkdir "$W/cur"
+rec io.jafar.parser.benchmark.X.parse 100 2 test.jfr > "$W/cur/parser-core.json"
+rec io.jafar.parser.benchmark.QueryPushdownBenchmark.typeFilterInParser 70 5 > "$W/cur/pushdown.json"
+run "required benchmark present, by Class.method: 0" 0 "typeFilterInParser" -- \
+    --current "$W/cur" --require QueryPushdownBenchmark.typeFilterInParser
+run "required benchmark present, by full name: 0" 0 "typeFilterInParser" -- \
+    --current "$W/cur" --require io.jafar.parser.benchmark.QueryPushdownBenchmark.typeFilterInParser
+run "one of two required benchmarks absent: 2, names it" 2 \
+    "no result for required benchmark(s): QueryPushdownBenchmark.startTimeRangeNothing" -- \
+    --current "$W/cur" --require QueryPushdownBenchmark.typeFilterInParser \
+    --require QueryPushdownBenchmark.startTimeRangeNothing
+# a name must match whole dot-separated parts, not any suffix of the text
+run "required name is not a loose suffix match: 2" 2 "no result for required benchmark(s): InParser" -- \
+    --current "$W/cur" --require InParser
+
+# 14. The case --require exists for: the pushdown run wrote an empty array
+#     (every benchmark threw). Without --require that is a shorter table and
+#     exit 0; with it, exit 2.
+W=$(mktemp -d)
+mkdir "$W/cur"
+rec io.jafar.parser.benchmark.X.parse 100 2 test.jfr > "$W/cur/parser-core.json"
+printf '[]' > "$W/cur/pushdown.json"
+run "empty result file beside a full one, nothing required: 0" 0 "X.parse" -- --current "$W/cur"
+run "empty result file beside a full one, benchmark required: 2" 2 "no result for required benchmark(s)" -- \
+    --current "$W/cur" --require QueryPushdownBenchmark.typeFilterInParser
+
 printf '%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

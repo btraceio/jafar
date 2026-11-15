@@ -31,10 +31,6 @@ final class Aggregations {
     this.eval = eval;
   }
 
-  private boolean matchesAll(Map<String, Object> map, List<Predicate> predicates) {
-    return MatchEngine.matchesAll(map, predicates, eval.defaultListMatchMode);
-  }
-
   static final String CROSSREF_USAGE =
       "crossref() must directly follow constants/<type>, with no filter or projection:"
           + " constants/<type> | crossref()";
@@ -219,24 +215,20 @@ final class Aggregations {
 
       if (query.isMultiType) {
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
-
+            typeSet,
+            query.predicates,
+            map -> {
               range.offer(map, valuePath, durationPath);
             });
       } else {
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
-
+            List.of(eventType),
+            query.predicates,
+            map -> {
               range.offer(map, valuePath, durationPath);
             });
       }
@@ -312,22 +304,20 @@ final class Aggregations {
       eval.validateEventTypes(session, query.eventTypes);
       if (query.isMultiType) {
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               addFormatted.accept(Values.get(map, path.toArray()));
             });
       } else {
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               addFormatted.accept(Values.get(map, path.toArray()));
             });
       }
@@ -353,21 +343,13 @@ final class Aggregations {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
-            session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              if (matchesAll(ev.value(), query.predicates)) c.increment();
-            });
+        eval.forEachMatching(
+            session.getRecordingPath(), typeSet, query.predicates, map -> c.increment());
       } else {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
-            session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              if (matchesAll(ev.value(), query.predicates)) c.increment();
-            });
+        eval.forEachMatching(
+            session.getRecordingPath(), List.of(eventType), query.predicates, map -> c.increment());
       }
       count = c.sum();
     } else if (query.root == Root.METADATA) {
@@ -412,24 +394,22 @@ final class Aggregations {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               if (val instanceof Number n) agg.add(n.doubleValue());
             });
       } else {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               if (val instanceof Number n) agg.add(n.doubleValue());
             });
@@ -460,12 +440,11 @@ final class Aggregations {
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
       List<String> path = vpath;
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          List.of(eventType),
+          query.predicates,
+          map -> {
             Object val = Values.get(map, path.toArray());
             if (val instanceof Number n) {
               synchronized (values) {
@@ -529,12 +508,11 @@ final class Aggregations {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               if (val instanceof Number n) {
                 s.add(n.doubleValue());
@@ -544,12 +522,11 @@ final class Aggregations {
       } else {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               if (val instanceof Number n) {
                 s.add(n.doubleValue());
@@ -611,12 +588,11 @@ final class Aggregations {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               offered.increment();
               addToGroups(
                   groups,
@@ -632,12 +608,11 @@ final class Aggregations {
       } else {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               offered.increment();
               addToGroups(
                   groups,
@@ -958,24 +933,22 @@ final class Aggregations {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               addLen.accept(val);
             });
       } else {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               addLen.accept(val);
             });
@@ -1037,24 +1010,22 @@ final class Aggregations {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               addTransformed.accept(val);
             });
       } else {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               addTransformed.accept(val);
             });
@@ -1126,24 +1097,22 @@ final class Aggregations {
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               addTransformed.accept(val);
             });
       } else {
         // Single-type query: use direct comparison (faster)
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               Object val = Values.get(map, path.toArray());
               addTransformed.accept(val);
             });
@@ -1181,22 +1150,20 @@ final class Aggregations {
       eval.validateEventTypes(session, query.eventTypes);
       if (query.isMultiType) {
         Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!typeSet.contains(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            typeSet,
+            query.predicates,
+            map -> {
               addFormatted.accept(Values.get(map, path.toArray()));
             });
       } else {
         String eventType = query.eventTypes.get(0);
-        eval.source.streamEvents(
+        eval.forEachMatching(
             session.getRecordingPath(),
-            ev -> {
-              if (!eventType.equals(ev.typeName())) return;
-              Map<String, Object> map = ev.value();
-              if (!matchesAll(map, query.predicates)) return;
+            List.of(eventType),
+            query.predicates,
+            map -> {
               addFormatted.accept(Values.get(map, path.toArray()));
             });
       }
@@ -1261,12 +1228,11 @@ final class Aggregations {
         };
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          List.of(eventType),
+          query.predicates,
+          map -> {
             Object val = Values.get(map, path.toArray());
             add.accept(val);
           });
@@ -1307,12 +1273,11 @@ final class Aggregations {
         };
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
-      eval.source.streamEvents(
+      eval.forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (!matchesAll(map, query.predicates)) return;
+          List.of(eventType),
+          query.predicates,
+          map -> {
             Object val = Values.get(map, path.toArray());
             add.accept(val);
           });

@@ -369,9 +369,59 @@ converted to epoch nanoseconds and nanosecond durations, which do not fit in an 
 
 ## Type Filtering
 
+### Filtering Before Decoding
+
+Give the parser a type filter and it skips every other event without decoding it:
+
+```java
+parser.handle(
+    TypeFilter.named("jdk.FileRead"),
+    (type, value, ctl) -> {
+        Object path = Values.get(value, "path");
+        System.out.println("File read: " + path);
+    });
+```
+
+This is the fast way to read a few event types out of a large recording. A handler registered
+without a filter (the forms below) makes the parser decode every event, whatever other handlers
+are registered.
+
+- The filter is asked once per chunk and event type, not once per event. It runs on the chunk's
+  thread, so it must be thread-safe and must give the same answer for the same type every time.
+- An event that is not decoded cannot fail to decode. A corrupted event of a type no handler wants
+  is not reported to `onDecodeError` and does not fail the parse.
+- The handler is called once per event even if you register it twice, with or without a filter.
+
+### Skipping Chunks by Start Time
+
+When you only want events from some point in time on, say so, and the parser skips whole chunks:
+
+```java
+TimeRange lastMinute = TimeRange.since(endNanos - 60_000_000_000L);
+parser.handle(
+    TypeFilter.named("jdk.ExecutionSample"),
+    lastMinute,
+    (type, value, ctl) -> {
+        long startTime = (Long) value.get("startTime");
+        if (startTime >= lastMinute.fromEpochNanos()) {
+            // ...
+        }
+    });
+```
+
+- **The range is a hint, not a filter.** From the chunks that are read, the handler gets every
+  event of the accepted types, so it must still check `startTime`. No event that starts in the
+  range is withheld.
+- **Only the lower bound skips chunks.** A chunk that ends before the range begins is skipped. A
+  chunk that starts after the range ends is not: an event is written when it is committed and can
+  start long before its chunk. `TimeRange.until(t)` is accepted and skips nothing.
+- A chunk that was never finished is always read, and a handler registered without a range keeps
+  every chunk.
+- Times are epoch nanoseconds, the unit of an event's `startTime`.
+
 ### Single Type Handler
 
-Process only specific event types:
+Checking the type inside the handler also works, but every event has been decoded by then:
 
 ```java
 parser.handle((type, value, ctl) -> {
@@ -722,7 +772,11 @@ The parser already parallelizes chunk processing across available cores, so hand
 
 ### 5. Filter Early
 
-Skip unnecessary work:
+Best: register the handler with a type filter, so unwanted events are never decoded (see
+[Filtering Before Decoding](#filtering-before-decoding)). On a generated 125 MB recording,
+reading a type that makes up 0.01% of the events took 71 ms with a filter and 583 ms without.
+
+When the decision needs more than the type, reject as early as you can inside the handler:
 
 ```java
 parser.handle((type, value, ctl) -> {

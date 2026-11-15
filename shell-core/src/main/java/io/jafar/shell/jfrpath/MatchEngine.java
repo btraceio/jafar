@@ -5,8 +5,6 @@ import static io.jafar.shell.jfrpath.JfrPath.*;
 import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.ComplexType;
 import io.jafar.parser.api.Values;
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -123,22 +121,14 @@ final class MatchEngine {
           ensureArgs(args, 2);
           Object beforeVal = resolveArg(root, args.get(0));
           if (!(beforeVal instanceof Number beforeNum)) return false;
-          Object beforeArg = resolveArg(root, args.get(1));
-          long beforeThreshold =
-              beforeArg instanceof Number tn
-                  ? tn.longValue()
-                  : TimeFormats.parseEpochNanos(String.valueOf(beforeArg));
+          long beforeThreshold = TimeFormats.timeArgument(resolveArg(root, args.get(1)));
           return beforeNum.longValue() < beforeThreshold;
         }
         case "after" -> {
           ensureArgs(args, 2);
           Object afterVal = resolveArg(root, args.get(0));
           if (!(afterVal instanceof Number afterNum)) return false;
-          Object afterArg = resolveArg(root, args.get(1));
-          long afterThreshold =
-              afterArg instanceof Number tn
-                  ? tn.longValue()
-                  : TimeFormats.parseEpochNanos(String.valueOf(afterArg));
+          long afterThreshold = TimeFormats.timeArgument(resolveArg(root, args.get(1)));
           return afterNum.longValue() > afterThreshold;
         }
         case "on" -> {
@@ -146,21 +136,8 @@ final class MatchEngine {
           Object onVal = resolveArg(root, args.get(0));
           if (!(onVal instanceof Number onNum)) return false;
           long epochNanos = onNum.longValue();
-          String dateStr = String.valueOf(resolveArg(root, args.get(1)));
-          LocalDate date;
-          try {
-            date = LocalDate.parse(dateStr);
-          } catch (DateTimeParseException e) {
-            throw new IllegalArgumentException(
-                "on() requires date in yyyy-MM-dd format: " + dateStr);
-          }
-          long startOfDay =
-              date.atStartOfDay(TimeFormats.SYSTEM_ZONE).toInstant().getEpochSecond()
-                  * 1_000_000_000L;
-          long endOfDay =
-              date.plusDays(1).atStartOfDay(TimeFormats.SYSTEM_ZONE).toInstant().getEpochSecond()
-                  * 1_000_000_000L;
-          return epochNanos >= startOfDay && epochNanos < endOfDay;
+          long[] day = TimeFormats.dayBounds(String.valueOf(resolveArg(root, args.get(1))));
+          return epochNanos >= day[0] && epochNanos < day[1];
         }
         default -> throw new IllegalArgumentException("Unknown function in filter: " + fb.name);
       }

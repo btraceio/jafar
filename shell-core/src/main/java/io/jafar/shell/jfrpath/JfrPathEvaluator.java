@@ -2,6 +2,8 @@ package io.jafar.shell.jfrpath;
 
 import static io.jafar.shell.jfrpath.JfrPath.*;
 
+import io.jafar.parser.TimeRange;
+import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.Values;
 import io.jafar.shell.JFRSession;
@@ -12,6 +14,7 @@ import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +35,73 @@ public final class JfrPathEvaluator {
      * any state it shares (a counter, a list, a map).
      */
     void streamEvents(Path recording, Consumer<Event> consumer) throws Exception;
+
+    /**
+     * Streams only the events whose type name is in {@code types}.
+     *
+     * <p>The default decodes every event and drops the others, which is correct for any source. A
+     * source that can skip an event before decoding it should override this: the evaluator calls it
+     * for every query that names its event types, which is nearly all of them.
+     */
+    default void streamEvents(Path recording, Collection<String> types, Consumer<Event> consumer)
+        throws Exception {
+      Set<String> wanted = new HashSet<>(types);
+      streamEvents(
+          recording,
+          ev -> {
+            if (wanted.contains(ev.typeName())) consumer.accept(ev);
+          });
+    }
+
+    /**
+     * Streams the events whose type name is in {@code types}, for a caller that only wants those
+     * whose {@code startTime} is in {@code startTime}.
+     *
+     * <p>The range is a hint: a source may skip parts of the recording that cannot hold such an
+     * event, and may deliver events outside the range all the same, so the caller still filters.
+     * The default ignores it.
+     */
+    default void streamEvents(
+        Path recording, Collection<String> types, TimeRange startTime, Consumer<Event> consumer)
+        throws Exception {
+      streamEvents(recording, types, consumer);
+    }
+  }
+
+  /**
+   * Test-only switch: {@code false} makes the default event source decode every event and filter
+   * afterwards, as it did before type filters existed. It is the reference the pushdown tests
+   * compare against, not a user option.
+   */
+  static final String PUSHDOWN_PROPERTY = "jafar.jfrpath.pushdown";
+
+  static boolean pushdownEnabled() {
+    return !"false".equalsIgnoreCase(System.getProperty(PUSHDOWN_PROPERTY));
+  }
+
+  /**
+   * Registers {@code handler} for the event types named in {@code types}, so that the parser does
+   * not decode the others (unless {@link #PUSHDOWN_PROPERTY} turns that off). The handler must
+   * still check the type itself only if it is registered for more than it wants.
+   */
+  static void handleTypes(
+      UntypedJafarParser parser,
+      Collection<String> types,
+      TimeRange startTime,
+      UntypedJafarParser.EventHandler handler) {
+    // TypeFilter.named, not a lambda on type.getName(): the type handed to a filter is parser
+    // internal API, which this module may not reach into (arch-tests rule a).
+    TypeFilter wanted = TypeFilter.named(types);
+    if (pushdownEnabled()) {
+      // The range lets the parser skip chunks; every caller still checks the event's startTime
+      // through the query's predicates, because events outside the range are delivered too.
+      parser.handle(wanted, startTime, handler);
+    } else {
+      parser.handle(
+          (type, value, ctl) -> {
+            if (wanted.test(type)) handler.handle(type, value, ctl);
+          });
+    }
   }
 
   @FunctionalInterface
@@ -119,34 +189,43 @@ public final class JfrPathEvaluator {
             throw e;
           }
         };
-    streamMatching(session, query, guarded);
+    forEachMatching(
+        session.getRecordingPath(),
+        query.eventTypes,
+        query.predicates,
+        map -> guarded.accept(Values.resolvedShallow(map)));
   }
 
-  private void streamMatching(
-      JFRSession session, Query query, Consumer<Map<String, Object>> consumer) throws Exception {
-    if (query.isMultiType) {
-      Set<String> typeSet = new HashSet<>(query.eventTypes);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!typeSet.contains(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              consumer.accept(Values.resolvedShallow(map));
-            }
-          });
-    } else {
-      String eventType = query.eventTypes.get(0);
-      source.streamEvents(
-          session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName())) return;
-            Map<String, Object> map = ev.value();
-            if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              consumer.accept(Values.resolvedShallow(map));
-            }
-          });
-    }
+  /**
+   * Streams the events of {@code types} that match {@code predicates} to {@code consumer}.
+   *
+   * <p>Every operator that reads events goes through here, because this is where a query's event
+   * types and its start-time range reach the source: the parser then decodes no other type and
+   * skips the chunks that end before the range. A caller that asks the source for every event
+   * instead makes it decode the whole recording.
+   *
+   * <p><strong>Thread safety:</strong> chunks are parsed in parallel and the consumer runs on the
+   * chunk's thread, so it is called from several threads at once and in no particular order across
+   * chunks. It must guard any state it shares; see {@link #consume}. The predicates are checked on
+   * the chunk's thread too, before the consumer is called.
+   */
+  void forEachMatching(
+      Path recording,
+      Collection<String> types,
+      List<JfrPath.Predicate> predicates,
+      Consumer<Map<String, Object>> consumer)
+      throws Exception {
+    source.streamEvents(
+        recording,
+        types,
+        StartTimeBounds.of(predicates),
+        ev -> {
+          Map<String, Object> map = ev.value();
+          if (predicates.isEmpty()
+              || MatchEngine.matchesAll(map, predicates, defaultListMatchMode)) {
+            consumer.accept(map);
+          }
+        });
   }
 
   public List<Map<String, Object>> evaluate(JFRSession session, Query query) throws Exception {
@@ -166,12 +245,14 @@ public final class JfrPathEvaluator {
       // Validate event types exist
       validateEventTypes(session, query.eventTypes);
 
-      // Rows arrive from several chunk-parsing threads at once (see consume()).
       List<Map<String, Object>> out = new ArrayList<>();
-      streamMatching(
-          session,
-          query,
-          row -> {
+      // Rows arrive from several chunk-parsing threads at once (see consume()).
+      forEachMatching(
+          session.getRecordingPath(),
+          query.eventTypes,
+          query.predicates,
+          map -> {
+            Map<String, Object> row = Values.resolvedShallow(map);
             synchronized (out) {
               out.add(row);
             }
@@ -270,49 +351,25 @@ public final class JfrPathEvaluator {
     List<Map<String, Object>> out = new ArrayList<>();
     try (UntypedJafarParser p =
         io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        p.handle(
-            (type, value, ctl) -> {
-              if (!typeSet.contains(type.getName())) return;
-              @SuppressWarnings("unchecked")
-              Map<String, Object> map = (Map<String, Object>) value;
-              if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-                Map<String, Object> row = Values.resolvedShallow(map);
-                synchronized (out) {
-                  // Other chunks keep delivering until the abort takes hold.
-                  if (out.size() < limit) {
-                    out.add(row);
-                  }
-                  if (out.size() >= limit) {
-                    ctl.abort();
-                  }
+      handleTypes(
+          p,
+          query.eventTypes,
+          StartTimeBounds.of(query.predicates),
+          (type, value, ctl) -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = (Map<String, Object>) value;
+            if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
+              // Handlers run on several chunk-parsing threads at once (see consume()).
+              synchronized (out) {
+                if (out.size() < limit) {
+                  out.add(Values.resolvedShallow(map));
+                }
+                if (out.size() >= limit) {
+                  ctl.abort();
                 }
               }
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        p.handle(
-            (type, value, ctl) -> {
-              if (!eventType.equals(type.getName())) return;
-              @SuppressWarnings("unchecked")
-              Map<String, Object> map = (Map<String, Object>) value;
-              if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-                Map<String, Object> row = Values.resolvedShallow(map);
-                synchronized (out) {
-                  // Other chunks keep delivering until the abort takes hold.
-                  if (out.size() < limit) {
-                    out.add(row);
-                  }
-                  if (out.size() >= limit) {
-                    ctl.abort();
-                  }
-                }
-              }
-            });
-      }
+            }
+          });
       p.run();
     }
     return out;
@@ -334,18 +391,16 @@ public final class JfrPathEvaluator {
       String eventType = query.segments.get(0);
       List<String> proj = query.segments.subList(1, query.segments.size());
       List<Object> out = new ArrayList<>();
-      source.streamEvents(
+      forEachMatching(
           session.getRecordingPath(),
-          ev -> {
-            if (!eventType.equals(ev.typeName)) return; // filter type
-            Map<String, Object> map = ev.value;
-            if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              // Called from several chunk-parsing threads: extract first, then append as one.
-              List<Object> vals = new ArrayList<>();
-              PathValues.extractWithIndexing(map, proj, vals);
-              synchronized (out) {
-                out.addAll(vals);
-              }
+          List.of(eventType),
+          query.predicates,
+          map -> {
+            // Called from several chunk-parsing threads: extract first, then append as one.
+            List<Object> vals = new ArrayList<>();
+            PathValues.extractWithIndexing(map, proj, vals);
+            synchronized (out) {
+              out.addAll(vals);
             }
           });
       return out;
@@ -620,18 +675,18 @@ public final class JfrPathEvaluator {
     List<Object> out = new ArrayList<>();
     try (UntypedJafarParser p =
         io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
-      p.handle(
+      handleTypes(
+          p,
+          List.of(eventType),
+          StartTimeBounds.of(query.predicates),
           (type, value, ctl) -> {
-            if (!eventType.equals(type.getName())) return;
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) value;
             if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              List<Object> vals = new ArrayList<>();
-              PathValues.extractWithIndexing(map, proj, vals);
+              // Handlers run on several chunk-parsing threads at once (see consume()).
               synchronized (out) {
-                // Other chunks keep delivering until the abort takes hold.
                 if (out.size() < limit) {
-                  out.addAll(vals);
+                  PathValues.extractWithIndexing(map, proj, out);
                 }
                 if (out.size() >= limit) {
                   ctl.abort();
@@ -705,15 +760,53 @@ public final class JfrPathEvaluator {
     return dp[s1.length()][s2.length()];
   }
 
-  /** Default EventSource that streams all events untyped from a recording. */
+  /**
+   * Default EventSource that streams events untyped from a recording: all of them, or only the
+   * types it was created for, which the parser then does not decode the others for.
+   */
   static final class DefaultEventSource implements EventSource {
+    /** The event types to read, or {@code null} for all of them. */
+    private final Collection<String> types;
+
+    /** The start times the caller wants; only meaningful with {@link #types}. */
+    private final TimeRange startTime;
+
+    DefaultEventSource() {
+      this(null, TimeRange.all());
+    }
+
+    private DefaultEventSource(Collection<String> types, TimeRange startTime) {
+      this.types = types;
+      this.startTime = startTime;
+    }
+
     @Override
     public void streamEvents(Path recording, Consumer<Event> consumer) throws Exception {
       try (UntypedJafarParser p =
           io.jafar.parser.api.ParsingContext.create().newUntypedParser(recording)) {
-        p.handle((type, value, ctl) -> consumer.accept(new Event(type.getName(), value)));
+        // The one place this class names an event's type (see handleTypes on why that matters).
+        UntypedJafarParser.EventHandler handler =
+            (type, value, ctl) -> consumer.accept(new Event(type.getName(), value));
+        if (types == null) {
+          p.handle(handler);
+        } else {
+          handleTypes(p, types, startTime, handler);
+        }
         p.run();
       }
+    }
+
+    @Override
+    public void streamEvents(Path recording, Collection<String> types, Consumer<Event> consumer)
+        throws Exception {
+      streamEvents(recording, types, TimeRange.all(), consumer);
+    }
+
+    @Override
+    public void streamEvents(
+        Path recording, Collection<String> types, TimeRange startTime, Consumer<Event> consumer)
+        throws Exception {
+      new DefaultEventSource(types, startTime).streamEvents(recording, consumer);
     }
   }
 
