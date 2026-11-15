@@ -28,13 +28,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tools.jackson.databind.ObjectMapper;
 
 /** MCP tool implementations for higher-level JFR analyses. */
 public final class JfrAnalysisTools {
 
   private static final Logger LOG = LoggerFactory.getLogger(JfrAnalysisTools.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   /**
    * The analyses themselves, which no longer live here.

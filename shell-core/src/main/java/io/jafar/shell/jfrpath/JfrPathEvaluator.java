@@ -620,13 +620,13 @@ public final class JfrPathEvaluator {
       int e = seg.lastIndexOf(']');
       if (e > b) {
         String inside = seg.substring(b + 1, e);
+        // slice only supported at tail; ignore here
         if (!inside.contains(":")) {
           try {
             tokens.add(Integer.parseInt(inside.trim()));
           } catch (Exception ignore) {
+            // not a numeric index token; leave it as-is
           }
-        } else {
-          // slice only supported at tail; ignore here
         }
       }
     }
@@ -652,11 +652,13 @@ public final class JfrPathEvaluator {
       try {
         from = Integer.parseInt(a);
       } catch (Exception ignore) {
+        // unparseable lower bound: keep default
       }
     if (!bb.isEmpty())
       try {
         to = Integer.parseInt(bb);
       } catch (Exception ignore) {
+        // unparseable upper bound: keep default
       }
     return new Slice(from, to);
   }
@@ -782,7 +784,7 @@ public final class JfrPathEvaluator {
     JfrPath.PipelineOp op = query.pipeline.get(0);
     List<Map<String, Object>> result =
         switch (op) {
-          case JfrPath.CountOp c -> aggregateCount(session, query);
+          case JfrPath.CountOp _ -> aggregateCount(session, query);
           case JfrPath.StatsOp s -> aggregateStats(session, query, s.valuePath);
           case JfrPath.QuantilesOp q -> aggregateQuantiles(session, query, q.valuePath, q.qs);
           case JfrPath.SketchOp sk -> aggregateSketch(session, query, sk.valuePath);
@@ -844,7 +846,7 @@ public final class JfrPathEvaluator {
           case JfrPath.FlameGraphOp fg -> aggregateFlameGraph(session, query, fg.direction);
           case JfrPath.AsDateTimeOp ft ->
               aggregateAsDateTime(session, query, ft.valuePath, ft.format);
-          case JfrPath.CrossrefOp cr -> aggregateCrossref(session, query);
+          case JfrPath.CrossrefOp _ -> aggregateCrossref(session, query);
         };
 
     // Apply remaining operators in sequence
@@ -959,12 +961,6 @@ public final class JfrPathEvaluator {
     if (chunks.isEmpty()) {
       throw new IllegalStateException("No chunks found in recording");
     }
-
-    // Use first chunk's timing info (all chunks in a recording share the same clock)
-    Map<String, Object> firstChunk = chunks.get(0);
-    long startTicks = ((Number) firstChunk.get("startTicks")).longValue();
-    long startNanos = ((Number) firstChunk.get("startNanos")).longValue();
-    long frequency = ((Number) firstChunk.get("frequency")).longValue();
 
     // Track min/max tick values
     long[] minMax = {Long.MAX_VALUE, Long.MIN_VALUE};
@@ -2689,11 +2685,13 @@ public final class JfrPathEvaluator {
           sliceFrom = a.isEmpty() ? 0 : Integer.parseInt(a);
           sliceTo = bb.isEmpty() ? Integer.MAX_VALUE : Integer.parseInt(bb);
         } catch (Exception ignore) {
+          // unparseable slice bounds; leave defaults
         }
       } else {
         try {
           segIndex = Integer.parseInt(inside.trim());
         } catch (Exception ignore) {
+          // unparseable segment index; leave default
         }
       }
     }
@@ -2803,6 +2801,7 @@ public final class JfrPathEvaluator {
       try {
         return Double.parseDouble(String.valueOf(actual));
       } catch (Exception ignore) {
+        // not a number; fall through to string comparison
       }
     }
     if (lit instanceof String) return String.valueOf(actual);
@@ -3216,7 +3215,7 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows, JfrPath.PipelineOp op) {
     return switch (op) {
       case JfrPath.TopOp top -> applyTop(rows, top.n, top.byPath, top.ascending);
-      case JfrPath.CountOp c -> applyCount(rows);
+      case JfrPath.CountOp _ -> applyCount(rows);
       case JfrPath.SumOp sum -> applySum(rows, sum.valuePath);
       case JfrPath.StatsOp stats -> applyStats(rows, stats.valuePath);
       case JfrPath.SelectOp sel -> applySelect(rows, sel);
@@ -3248,7 +3247,7 @@ public final class JfrPathEvaluator {
       case JfrPath.AsDateTimeOp ft -> applyAsDateTime(rows, ft.valuePath, ft.format);
       // Not a row transform: it re-reads the whole recording, so on rows it would silently
       // ignore what came before it.
-      case JfrPath.CrossrefOp cr -> throw new IllegalArgumentException(CROSSREF_USAGE);
+      case JfrPath.CrossrefOp _ -> throw new IllegalArgumentException(CROSSREF_USAGE);
       default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
     };
   }

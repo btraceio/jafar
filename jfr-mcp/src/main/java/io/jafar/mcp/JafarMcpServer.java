@@ -127,6 +127,7 @@ import tools.jackson.databind.ObjectMapper;
  *   <li>{@code otlp_help} - OtlpPath query language documentation
  * </ul>
  */
+@SuppressWarnings("PMD.UnusedPrivateMethod") // legacy handlers are invoked reflectively by tests
 public final class JafarMcpServer {
 
   private static final Logger LOG = LoggerFactory.getLogger(JafarMcpServer.class);
@@ -808,7 +809,9 @@ public final class JafarMcpServer {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Legacy handler delegation — kept for test backward-compatibility (Phase 9)
+  // Legacy handler delegation — kept for test backward-compatibility (Phase 9).
+  // Invoked reflectively by the test suite (getDeclaredMethod), so no call sites are
+  // visible here; deleting them breaks the tests that assert through them.
   // ─────────────────────────────────────────────────────────────────────────────
 
   private CallToolResult handleJfrOpen(Map<String, Object> args) {

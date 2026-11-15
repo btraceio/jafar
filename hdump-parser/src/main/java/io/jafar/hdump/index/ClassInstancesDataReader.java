@@ -74,7 +74,7 @@ public final class ClassInstancesDataReader implements AutoCloseable {
     }
 
     totalInstances = buffer.getLong();
-    int flags = buffer.getInt(); // Reserved for future use
+    buffer.getInt(); // Reserved for future use
   }
 
   /**

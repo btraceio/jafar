@@ -63,10 +63,9 @@ final class DependencyResolver {
     log.debug("Resolving dependencies for: {}", pluginId);
 
     // Validate plugin exists
-    PluginDefinition target =
-        registry
-            .get(pluginId)
-            .orElseThrow(() -> new DependencyException("Plugin not found: " + pluginId));
+    registry
+        .get(pluginId)
+        .orElseThrow(() -> new DependencyException("Plugin not found: " + pluginId));
 
     // Build dependency graph starting from target
     Set<String> toInstall = new LinkedHashSet<>();

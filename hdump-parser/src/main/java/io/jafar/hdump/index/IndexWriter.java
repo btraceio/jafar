@@ -60,7 +60,6 @@ public final class IndexWriter implements AutoCloseable {
    * @throws IOException if file cannot be created
    */
   public void beginObjectsIndex(int expectedEntries) throws IOException {
-    Path targetFile = indexDir.resolve(IndexFormat.OBJECTS_INDEX_NAME);
     currentTempFile = indexDir.resolve(IndexFormat.OBJECTS_INDEX_NAME + ".tmp");
 
     // Open buffered stream for sequential writes
@@ -150,7 +149,6 @@ public final class IndexWriter implements AutoCloseable {
    * @throws IOException if file cannot be created
    */
   public void beginInboundIndex(int expectedEntries) throws IOException {
-    Path targetFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME);
     currentTempFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME + ".tmp");
 
     currentStream =
@@ -216,7 +214,6 @@ public final class IndexWriter implements AutoCloseable {
    * @throws IOException if file cannot be created
    */
   public void beginClassMapIndex(int expectedEntries) throws IOException {
-    Path targetFile = indexDir.resolve(IndexFormat.CLASSMAP_INDEX_NAME);
     currentTempFile = indexDir.resolve(IndexFormat.CLASSMAP_INDEX_NAME + ".tmp");
 
     currentStream =
@@ -348,7 +345,6 @@ public final class IndexWriter implements AutoCloseable {
    * @throws IOException if file cannot be created
    */
   public void beginGcRootsIndex(int expectedEntries) throws IOException {
-    Path targetFile = indexDir.resolve(IndexFormat.GCROOTS_INDEX_NAME);
     currentTempFile = indexDir.resolve(IndexFormat.GCROOTS_INDEX_NAME + ".tmp");
 
     currentStream =

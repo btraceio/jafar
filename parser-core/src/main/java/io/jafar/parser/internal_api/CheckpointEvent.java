@@ -80,9 +80,11 @@ public final class CheckpointEvent extends AbstractEvent {
 
     long cpCount = stream.readVarint();
     for (long i = 0; i < cpCount; i++) {
-      long typeId = 0;
-      while ((typeId = stream.readVarint()) == 0)
-        ; // workaround for a bug in JMC JFR writer
+      long typeId = stream.readVarint();
+      // workaround for a bug in JMC JFR writer: it can emit zero type ids
+      while (typeId == 0) {
+        typeId = stream.readVarint();
+      }
       int count = (int) stream.readVarint();
       try {
         MetadataClass clz = context.getMetadataLookup().getClass(typeId);

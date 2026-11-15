@@ -25,7 +25,6 @@ import java.util.List;
 public final class JafarResources {
 
   private static final String MIME_MARKDOWN = "text/markdown";
-  private static final String MIME_TEXT = "text/plain";
 
   private final SessionRegistry jfrSessions;
   private final HeapSessionRegistry heapSessions;

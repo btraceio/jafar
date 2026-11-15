@@ -36,7 +36,6 @@ public final class HeapSession implements Session {
 
   private final Path path;
   private final HeapDump dump;
-  private final ParserOptions options;
   private volatile boolean closed = false;
   private volatile ObjectAgeEstimator.Result cachedAgeEstimation;
   private volatile ClusterDetector.Result cachedClusters;
@@ -48,7 +47,6 @@ public final class HeapSession implements Session {
   private HeapSession(Path path, HeapDump dump, ParserOptions options) {
     this.path = path;
     this.dump = dump;
-    this.options = options;
   }
 
   /**

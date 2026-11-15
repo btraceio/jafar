@@ -29,6 +29,10 @@ public abstract class AbstractMetadataElement {
    * @param kind the kind of metadata element
    * @throws IOException if an I/O error occurs during construction
    */
+  // The constructor dispatches to the overridable onAttribute hook through a *final*
+  // processAttributes() — a template method by design: subclasses parse their metadata
+  // elements during construction.
+  @SuppressWarnings("PMD.ConstructorCallsOverridableMethod")
   AbstractMetadataElement(RecordingStream stream, MetadataElementKind kind) throws IOException {
     this.stream = stream;
     this.kind = kind;

@@ -490,6 +490,7 @@ public final class ShellCompleter implements Completer {
           .filter(name -> name.startsWith(partial))
           .forEach(name -> candidates.add(new Candidate(name)));
     } catch (IOException ignore) {
+      // unreadable scripts directory: no script-name candidates
     }
   }
 
@@ -607,13 +608,11 @@ public final class ShellCompleter implements Completer {
 
         // Try to find the variable and complete its fields
         completeMapFields(varName, fieldPath, currentWord, varStart, candidates);
-      } else if (dotIndex == 0) {
-        // User typed "${." - invalid, no suggestions
-      } else {
-        // User is typing ${varName (no dot yet)
-        // Suggest variable names
+      } else if (dotIndex != 0) {
+        // User is typing ${varName (no dot yet): suggest variable names
         completeVariableNamesInSubstitution(varRef, currentWord, varStart, candidates);
       }
+      // dotIndex == 0 ("${.") is invalid: no suggestions
     }
   }
 
@@ -942,6 +941,7 @@ public final class ShellCompleter implements Completer {
         candidates.add(new Candidate(value));
       }
     } catch (IOException | java.io.UncheckedIOException ignore) {
+      // unreadable directory: no file candidates
     }
   }
 }

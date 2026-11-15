@@ -19,7 +19,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.StreamSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -530,53 +529,6 @@ final class PluginRegistry {
     } catch (Exception e) {
       // Network failure - return null
       return null;
-    }
-  }
-
-  /** Parse remote registry JSON and populate remotePlugins map. */
-  private void parseRemoteRegistry(String json) {
-    try {
-      JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-      JsonObject plugins = root.getAsJsonObject("plugins");
-
-      if (plugins != null) {
-        Map<String, PluginDefinition> newRemote = new HashMap<>();
-        for (String pluginId : plugins.keySet()) {
-          JsonObject pluginData = plugins.getAsJsonObject(pluginId);
-          String groupId = pluginData.get("groupId").getAsString();
-          String artifactId = pluginData.get("artifactId").getAsString();
-          String latestVersion = pluginData.get("latestVersion").getAsString();
-          String repository = pluginData.get("repository").getAsString();
-
-          // Parse dependency lists (backwards compatible - fields are optional)
-          List<String> depends = parseStringList(pluginData, "depends");
-          List<String> recommends = parseStringList(pluginData, "recommends");
-          List<String> provides = parseStringList(pluginData, "provides");
-
-          newRemote.put(
-              pluginId.toLowerCase(),
-              new PluginDefinition(
-                  groupId, artifactId, latestVersion, repository, depends, recommends, provides));
-        }
-        this.remotePlugins = newRemote;
-      }
-    } catch (Exception e) {
-      // Parse error - keep existing remote plugins
-      log.warn("Failed to parse remote registry", e);
-    }
-  }
-
-  /** Parse a string list from JSON, returning empty list if field is missing or invalid. */
-  private List<String> parseStringList(JsonObject obj, String field) {
-    if (!obj.has(field) || obj.get(field).isJsonNull()) {
-      return Collections.emptyList();
-    }
-    try {
-      return StreamSupport.stream(obj.getAsJsonArray(field).spliterator(), false)
-          .map(e -> e.getAsString().toLowerCase())
-          .toList();
-    } catch (Exception e) {
-      return Collections.emptyList();
     }
   }
 

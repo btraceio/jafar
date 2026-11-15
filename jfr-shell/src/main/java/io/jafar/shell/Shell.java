@@ -43,6 +43,7 @@ public final class Shell implements AutoCloseable {
     try {
       java.nio.file.Files.createDirectories(histPath.getParent());
     } catch (Exception ignore) {
+      // history dir may be unwritable; history is best-effort
     }
     this.history = new io.jafar.shell.core.SecretFilteringHistory();
     // Create dispatcher first so it can be passed to ShellCompleter
@@ -197,6 +198,7 @@ public final class Shell implements AutoCloseable {
     try {
       dispatcher.dispatch("open " + jfrPath.toString());
     } catch (Exception ignore) {
+      // best-effort reopen: failures are reported by the open command itself
     }
   }
 
@@ -344,6 +346,7 @@ public final class Shell implements AutoCloseable {
         }
       }
     } catch (IOException ignore) {
+      // unreadable script file; no description
     }
     return null;
   }
@@ -519,14 +522,17 @@ public final class Shell implements AutoCloseable {
     try {
       dispatcher.getGlobalStore().clear(); // Release global variables
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     try {
       sessions.closeAll();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     try {
       history.save();
     } catch (Exception ignore) {
+      // best-effort history save; shutdown continues
     }
     terminal.close();
   }

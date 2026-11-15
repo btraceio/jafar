@@ -1352,9 +1352,9 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   private void parseLoadClass(RecordHeader header) {
-    int classSerial = reader.readI4();
+    reader.readI4(); // class serial (unused)
     long classId = reader.readId();
-    int stackTraceSerial = reader.readI4();
+    reader.readI4(); // stack trace serial (unused)
     long classNameId = reader.readId();
 
     String className = strings.get(classNameId);
@@ -1436,17 +1436,17 @@ public final class HeapDumpImpl implements HeapDump {
   private void parseGcRootThreadObj() {
     long objId = reader.readId();
     int threadSerial = reader.readI4();
-    int stackTraceSerial = reader.readI4();
+    reader.readI4(); // stack trace serial (unused)
     gcRoots.add(new GcRootImpl(GcRoot.Type.THREAD_OBJ, objId, threadSerial, -1, this));
   }
 
   private void parseClassDump() {
     long classId = reader.readId();
-    int stackTraceSerial = reader.readI4();
+    reader.readI4(); // stack trace serial (unused)
     long superClassId = reader.readId();
     long classLoaderId = reader.readId();
-    long signersId = reader.readId();
-    long protDomainId = reader.readId();
+    reader.readId(); // signers (unused)
+    reader.readId(); // protection domain (unused)
     reader.readId(); // reserved
     reader.readId(); // reserved
     int instanceSize = reader.readI4();
@@ -1466,7 +1466,7 @@ public final class HeapDumpImpl implements HeapDump {
     // Constant pool
     int cpSize = reader.readU2();
     for (int i = 0; i < cpSize; i++) {
-      int cpIdx = reader.readU2();
+      reader.readU2(); // constant pool index (unused)
       int type = reader.readU1();
       reader.readValue(type); // Skip value
     }
@@ -1497,7 +1497,7 @@ public final class HeapDumpImpl implements HeapDump {
 
   private void parseInstanceDump() {
     long objId = reader.readId();
-    int stackTraceSerial = reader.readI4();
+    reader.readI4(); // stack trace serial (unused)
     long classId = reader.readId();
     int dataSize = reader.readI4();
 
@@ -1526,7 +1526,7 @@ public final class HeapDumpImpl implements HeapDump {
 
   private void parseObjArrayDump() {
     long objId = reader.readId();
-    int stackTraceSerial = reader.readI4();
+    reader.readI4(); // stack trace serial (unused)
     int length = reader.readI4();
     long arrayClassId = reader.readId();
 
@@ -1556,7 +1556,7 @@ public final class HeapDumpImpl implements HeapDump {
 
   private void parsePrimArrayDump() {
     long objId = reader.readId();
-    int stackTraceSerial = reader.readI4();
+    reader.readI4(); // stack trace serial (unused)
     int length = reader.readI4();
     int elemType = reader.readU1();
 

@@ -248,6 +248,7 @@ final class JafarSources {
         meta.put("classAnnotations", classAnn);
         meta.put("classAnnotationsFull", classAnnFull);
       } catch (Throwable ignore) {
+        // annotation decoration is best-effort; the class itself still converts
       }
 
       // Settings
@@ -264,6 +265,7 @@ final class JafarSources {
         meta.put("settingsByName", settingsByName);
         meta.put("settings", settingsDisplay);
       } catch (Throwable ignore) {
+        // settings decoration is best-effort; the class itself still converts
       }
 
       // Fields
@@ -310,6 +312,7 @@ final class JafarSources {
               annFull.add(an + (val != null && !val.isEmpty() ? ("(" + val + ")") : ""));
             }
           } catch (Throwable ignoreFieldAnn) {
+            // field annotation decoration is best-effort; the field still converts
           }
           fm.put("annotations", ann);
           fm.put("annotationsFull", annFull);
@@ -955,6 +958,7 @@ final class JafarSources {
             collectCpRefs(f.getType(), rootTypeName, referencedBy, visited);
           }
         } catch (Throwable ignore) {
+          // constant-pool reference scan is best-effort; incomplete refs are better than failing
         }
       }
     }

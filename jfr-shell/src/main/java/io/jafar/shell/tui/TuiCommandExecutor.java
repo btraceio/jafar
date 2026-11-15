@@ -703,6 +703,7 @@ public final class TuiCommandExecutor {
       double db = Double.parseDouble(b);
       return Double.compare(da, db);
     } catch (NumberFormatException ignore) {
+      // not numeric: fall back to natural string comparison
     }
     return a.compareToIgnoreCase(b);
   }
@@ -779,6 +780,7 @@ public final class TuiCommandExecutor {
         }
       }
     } catch (IOException ignore) {
+      // unreadable or corrupt history: start fresh
     }
   }
 
@@ -796,6 +798,7 @@ public final class TuiCommandExecutor {
       }
       Files.write(TuiContext.HISTORY_PATH, formatted);
     } catch (IOException ignore) {
+      // history is best-effort: never fail shutdown over it
     }
   }
 
@@ -1301,6 +1304,7 @@ public final class TuiCommandExecutor {
       p.getOutputStream().close();
       p.waitFor(2, TimeUnit.SECONDS);
     } catch (Exception ignore) {
+      // clipboard helpers are optional; copy already reported its own errors
     }
   }
 
