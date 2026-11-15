@@ -33,6 +33,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Implementation of TypedJafarParser that provides type-safe JFR event parsing.
@@ -42,6 +44,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * manages the parsing lifecycle.
  */
 public final class TypedJafarParserImpl implements TypedJafarParser {
+
+  private static final Logger LOG = LoggerFactory.getLogger(TypedJafarParserImpl.class);
+
   /**
    * Implementation of HandlerRegistration that manages handler lifecycle.
    *
@@ -387,19 +392,78 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
   // Factories are classpath-static: discovered once and reused across all parser instances.
   @SuppressWarnings("rawtypes")
-  private static final List<HandlerFactory> DISCOVERED_FACTORIES = discoverFactoriesOnce();
+  private static final List<HandlerFactory> DISCOVERED_FACTORIES =
+      discoverFactories(threadContextLoader(), null);
 
+  private static ClassLoader threadContextLoader() {
+    ClassLoader cl = Thread.currentThread().getContextClassLoader();
+    return cl != null ? cl : HandlerFactory.class.getClassLoader();
+  }
+
+  /**
+   * Discovers the {@link HandlerFactory} providers on {@code loader}. A broken provider is skipped,
+   * not fatal: one unusable jar must not take every typed parse down, and the remaining factories
+   * are still worth having. When {@code skipped} is non-null, the reasons are appended to it;
+   * otherwise each skip is logged at WARN.
+   */
   @SuppressWarnings("rawtypes")
-  private static List<HandlerFactory> discoverFactoriesOnce() {
+  static List<HandlerFactory> discoverFactories(ClassLoader loader, List<String> skipped) {
     List<HandlerFactory> result = new ArrayList<>();
-    try {
-      for (HandlerFactory<?> factory : ServiceLoader.load(HandlerFactory.class)) {
-        result.add(factory);
+    java.util.Iterator<HandlerFactory> it =
+        ServiceLoader.load(HandlerFactory.class, loader).iterator();
+    while (true) {
+      final HandlerFactory<?> factory;
+      try {
+        if (!it.hasNext()) {
+          break;
+        }
+        factory = it.next();
+      } catch (Throwable t) {
+        if (isFatalDiscovery(t)) {
+          throw (Error) t;
+        }
+        reportSkipped(
+            skipped, "Skipping unloadable HandlerFactory provider: " + describeDiscovery(t));
+        continue;
       }
-    } catch (Exception e) {
-      // No factories available; fall back to runtime bytecode generation
+      try {
+        // Vet the provider now, not at first use: a factory that answers neither question would
+        // otherwise fail inside registerFactory, i.e. inside the constructor of every parser.
+        String jfrType = factory.getJfrTypeName();
+        Class<?> iface = factory.getInterfaceClass();
+        if (jfrType == null || jfrType.trim().isEmpty() || iface == null) {
+          throw new IllegalStateException("incomplete provider metadata");
+        }
+        result.add(factory);
+      } catch (Throwable t) {
+        if (isFatalDiscovery(t)) {
+          throw (Error) t;
+        }
+        reportSkipped(skipped, "Skipping broken HandlerFactory provider " + describeDiscovery(t));
+      }
     }
     return result;
+  }
+
+  private static void reportSkipped(List<String> skipped, String note) {
+    if (skipped != null) {
+      skipped.add(note);
+    } else {
+      LOG.warn(note);
+    }
+  }
+
+  /** Loading is pointless and swallowing is wrong for virtual-machine errors and thread death. */
+  private static boolean isFatalDiscovery(Throwable t) {
+    return t instanceof VirtualMachineError || t instanceof ThreadDeath;
+  }
+
+  private static String describeDiscovery(Throwable t) {
+    String message = t.getMessage();
+    String s =
+        t.getClass().getSimpleName()
+            + (message == null ? "" : ": " + message.replaceAll("\\s+", " ").trim());
+    return s.length() > 300 ? s.substring(0, 297) + "..." : s;
   }
 
   private void discoverFactories() {

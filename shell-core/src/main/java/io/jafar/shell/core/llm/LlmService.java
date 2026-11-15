@@ -541,11 +541,63 @@ public final class LlmService {
     if (!readiness.ready()) {
       throw new LlmException(readiness.detail(), readiness.remedy());
     }
-    LlmResponse response = backend.complete(request, config);
+    // A provider that loads can still fail here (a lazily-linked SDK jar, a half-installed
+    // plugin). That must surface as an LlmException the command layer can report — with the
+    // provider named and a remedy — not as whatever the provider happened to throw.
+    final LlmResponse response;
+    try {
+      response = backend.complete(request, config);
+    } catch (LlmException e) {
+      throw e; // already a reported failure; pass it through untouched
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      throw new LlmException(
+          "The LLM backend '"
+              + providerName()
+              + "' failed while generating a response: "
+              + describeFailure(t),
+          "Fix or reinstall the backend jar (plugins live in ~/.jfr-shell/plugins), "
+              + "or select a different backend with 'set llm.backend = openai|anthropic|ollama'. "
+              + "'llm status' shows which backends load.",
+          t);
+    }
+    if (response == null) {
+      throw new LlmException(
+          "The LLM backend '" + providerName() + "' returned no response.",
+          "Fix or reinstall the backend jar (plugins live in ~/.jfr-shell/plugins), "
+              + "or select a different backend with 'set llm.backend = openai|anthropic|ollama'.");
+    }
     response.usage().ifPresent(usage -> sessionUsage = sessionUsage.plus(usage));
     requestCount++;
     lastResponse = response;
     return response;
+  }
+
+  /** VirtualMachineError and ThreadDeath must never be swallowed; everything else can be. */
+  private static boolean isFatal(Throwable t) {
+    return t instanceof VirtualMachineError || t instanceof ThreadDeath;
+  }
+
+  private static String describeFailure(Throwable t) {
+    String message = t.getMessage();
+    String s =
+        t.getClass().getSimpleName()
+            + (message == null ? "" : ": " + message.replaceAll("\\s+", " ").trim());
+    return s.length() > 300 ? s.substring(0, 297) + "..." : s;
+  }
+
+  private String providerName() {
+    try {
+      String id = backend.id();
+      return id == null || id.isBlank() ? backend.getClass().getSimpleName() : id;
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return backend.getClass().getSimpleName();
+    }
   }
 
   /** Token totals for this shell session. */

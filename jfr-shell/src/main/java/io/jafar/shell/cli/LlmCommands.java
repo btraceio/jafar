@@ -563,12 +563,25 @@ public final class LlmCommands {
         service.value());
   }
 
+  /** The backend's id for display, tolerating a provider that fails at call time. */
+  private static String safeBackendId(LlmBackend backend) {
+    try {
+      String id = backend.id();
+      return id == null || id.isBlank() ? "?" : id;
+    } catch (Throwable t) {
+      if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+        throw (Error) t;
+      }
+      return "?";
+    }
+  }
+
   private void printRequest(
       String command, LlmRequest request, LlmConfig config, LlmService service) {
     host.println("Nothing was sent. This is exactly what an '" + command + "' would transmit.");
     host.println("");
     host.println("model      : " + config.modelFor(service.backend()));
-    host.println("backend    : " + service.backend().id());
+    host.println("backend    : " + safeBackendId(service.backend()));
     host.println(
         "redaction  : "
             + (config.redactionEnabled()

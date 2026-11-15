@@ -715,6 +715,19 @@ public class CommandDispatcher {
     return fields;
   }
 
+  /** A broken provider must not take down an error path; the id is for diagnosis only. */
+  private static String backendIdOrUnknown(JfrBackend backend) {
+    try {
+      String id = backend.getId();
+      return id != null ? id : "?";
+    } catch (Throwable t) {
+      if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+        throw (Error) t;
+      }
+      return "<broken:" + t.getClass().getSimpleName() + ">";
+    }
+  }
+
   private static String labelOf(Map<String, Object> clazz) {
     if (clazz.get("label") instanceof String label) return label;
     return annotationValue(clazz, "@Label(");
@@ -2743,7 +2756,7 @@ public class CommandDispatcher {
       JfrBackend backend = BackendRegistry.getInstance().getCurrent();
       io.error(
           "Backend '"
-              + backend.getId()
+              + backendIdOrUnknown(backend)
               + "' does not support chunk queries. Use 'jafar' backend for full introspection.");
       return;
     }
@@ -2815,7 +2828,7 @@ public class CommandDispatcher {
       JfrBackend backend = BackendRegistry.getInstance().getCurrent();
       io.error(
           "Backend '"
-              + backend.getId()
+              + backendIdOrUnknown(backend)
               + "' does not support chunk queries. Use 'jafar' backend for full introspection.");
       return;
     }
@@ -2865,7 +2878,7 @@ public class CommandDispatcher {
       JfrBackend backend = BackendRegistry.getInstance().getCurrent();
       io.error(
           "Backend '"
-              + backend.getId()
+              + backendIdOrUnknown(backend)
               + "' does not support constant pool queries. Use 'jafar' backend for full"
               + " introspection.");
       return;

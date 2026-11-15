@@ -151,23 +151,49 @@ public final class Main implements Callable<Integer> {
         System.err.println("[DEBUG] BackendRegistry initialized");
         System.err.println(
             "[DEBUG] Current backend: "
-                + current.getId()
+                + debugId(current)
                 + " (priority: "
-                + current.getPriority()
+                + debugPriority(current)
                 + ")");
         System.err.println(
             "[DEBUG] Available backends: "
                 + registry.listAll().stream()
-                    .map(b -> b.getId() + ":" + b.getPriority())
+                    .map(b -> debugId(b) + ":" + debugPriority(b))
                     .collect(java.util.stream.Collectors.joining(", ")));
-      } catch (Exception e) {
-        System.err.println("[DEBUG] BackendRegistry initialization FAILED: " + e.getMessage());
-        e.printStackTrace(System.err);
+      } catch (Throwable t) {
+        if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+          throw (Error) t;
+        }
+        System.err.println("[DEBUG] BackendRegistry initialization FAILED: " + t.getMessage());
+        t.printStackTrace(System.err);
       }
     }
 
     int exitCode = new CommandLine(new Main()).execute(args);
     System.exit(exitCode);
+  }
+
+  /** A broken backend must not take down even the debug dump. */
+  private static String debugId(io.jafar.shell.backend.JfrBackend b) {
+    try {
+      return String.valueOf(b.getId());
+    } catch (Throwable t) {
+      if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+        throw (Error) t;
+      }
+      return "<broken:" + t.getClass().getSimpleName() + ">";
+    }
+  }
+
+  private static String debugPriority(io.jafar.shell.backend.JfrBackend b) {
+    try {
+      return String.valueOf(b.getPriority());
+    } catch (Throwable t) {
+      if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+        throw (Error) t;
+      }
+      return "?";
+    }
   }
 
   /**

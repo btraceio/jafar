@@ -10,7 +10,6 @@ import io.jafar.parser.internal_api.UntypedDeserializerCache;
 import io.jafar.parser.internal_api.UntypedEventStreamFactory;
 import java.nio.file.Path;
 import java.util.Iterator;
-import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 
 /**
@@ -51,11 +50,60 @@ public final class ParsingContextImpl implements ParsingContext {
   private final int parallelism;
 
   // DeserializerFactory is classpath-static: discovered once and reused across all contexts.
-  private static final DeserializerFactory DESERIALIZER_FACTORY = discoverDeserializerFactory();
+  private static final DeserializerFactory DESERIALIZER_FACTORY =
+      discoverDeserializerFactory(threadContextLoader());
 
-  private static DeserializerFactory discoverDeserializerFactory() {
-    Iterator<DeserializerFactory> it = ServiceLoader.load(DeserializerFactory.class).iterator();
-    return it.hasNext() ? it.next() : null;
+  /** Loads the first {@link DeserializerFactory} on this class's thread-context class loader. */
+  private static ClassLoader threadContextLoader() {
+    ClassLoader cl = Thread.currentThread().getContextClassLoader();
+    return cl != null ? cl : ParsingContextImpl.class.getClassLoader();
+  }
+
+  /**
+   * Loads the first {@link DeserializerFactory} on the given classpath, or {@code null} when there
+   * is none — or when the one that is installed cannot be used. A broken codegen jar must not take
+   * every parse down with an {@link ExceptionInInitializerError}; degrading to the generic path is
+   * exactly what an absent codegen jar gets, and the warning says which case this is.
+   */
+  static DeserializerFactory discoverDeserializerFactory(ClassLoader loader) {
+    try {
+      Iterator<DeserializerFactory> it =
+          ServiceLoader.load(DeserializerFactory.class, loader).iterator();
+      return it.hasNext() ? it.next() : null;
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      org.slf4j.LoggerFactory.getLogger(ParsingContextImpl.class)
+          .warn(
+              "Ignoring the installed DeserializerFactory provider; typed parsing falls back to "
+                  + "the generic reader: {}",
+              describe(t));
+      return null;
+    }
+  }
+
+  /** Loading is pointless to continue past these, and swallowing them is never right. */
+  static boolean isFatal(Throwable t) {
+    return t instanceof VirtualMachineError || t instanceof ThreadDeath;
+  }
+
+  static String describe(Throwable t) {
+    String message = t.getMessage();
+    String s =
+        t.getClass().getSimpleName()
+            + (message == null ? "" : ": " + message.replaceAll("\\s+", " ").trim());
+    Throwable cause = t.getCause();
+    if (cause != null && cause != t) {
+      s +=
+          " (caused by "
+              + cause.getClass().getSimpleName()
+              + (cause.getMessage() == null
+                  ? ""
+                  : ": " + cause.getMessage().replaceAll("\\s+", " ").trim())
+              + ")";
+    }
+    return s.length() > 300 ? s.substring(0, 297) + "..." : s;
   }
 
   // Like DeserializerFactory: classpath-static. Absent when parser-codegen is not on the classpath.
@@ -67,12 +115,15 @@ public final class ParsingContextImpl implements ParsingContext {
       Iterator<UntypedEventStreamFactory> it =
           ServiceLoader.load(UntypedEventStreamFactory.class).iterator();
       return it.hasNext() ? it.next() : null;
-    } catch (ServiceConfigurationError e) {
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
       // A provider that is on the classpath but cannot be loaded (a broken or mismatched
       // parser-codegen jar) must not take every parser down with an ExceptionInInitializerError,
       // and must not silently degrade either: say so, then read with the generic reader.
       org.slf4j.LoggerFactory.getLogger(ParsingContextImpl.class)
-          .warn("Generated untyped reader unavailable, using the generic reader: {}", e.toString());
+          .warn("Generated untyped reader unavailable, using the generic reader: {}", describe(t));
       return null;
     }
   }

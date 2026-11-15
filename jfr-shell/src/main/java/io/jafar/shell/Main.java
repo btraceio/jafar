@@ -164,35 +164,74 @@ public final class Main implements Callable<Integer> {
       warnIfBackendNotFromThisBuild(current);
 
       // If user specified a backend, verify it was selected
-      if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
-        // Check if plugin can be auto-installed
-        if (PluginManager.getInstance().canInstall(backend)) {
-          System.err.println("Backend not found: " + backend);
-          System.err.print("Downloading from Maven repositories... ");
-
-          try {
-            PluginManager.getInstance().installPlugin(backend);
-            System.err.println("done.");
-            System.err.println("Restart jfr-shell to use backend: " + backend);
-            return false;
-          } catch (Exception e) {
-            System.err.println("failed: " + e.getMessage());
-            return false;
-          }
+      if (backend != null) {
+        String currentId = backendIdOrNull(current);
+        if (currentId == null) {
+          System.err.println(
+              "Error: the selected backend ("
+                  + current.getClass().getName()
+                  + ") failed to report its id; refusing to use it.");
+          return false;
         }
+        if (!currentId.equalsIgnoreCase(backend)) {
+          // Check if plugin can be auto-installed
+          if (PluginManager.getInstance().canInstall(backend)) {
+            System.err.println("Backend not found: " + backend);
+            System.err.print("Downloading from Maven repositories... ");
 
-        System.err.println("Error: Backend not found: " + backend);
-        System.err.println(
-            "Available backends: "
-                + registry.listAll().stream()
-                    .map(JfrBackend::getId)
-                    .collect(Collectors.joining(", ")));
-        return false;
+            try {
+              PluginManager.getInstance().installPlugin(backend);
+              System.err.println("done.");
+              System.err.println("Restart jfr-shell to use backend: " + backend);
+              return false;
+            } catch (Exception e) {
+              System.err.println("failed: " + e.getMessage());
+              return false;
+            }
+          }
+
+          System.err.println("Error: Backend not found: " + backend);
+          System.err.println(
+              "Available backends: "
+                  + registry.listAll().stream()
+                      .map(JfrBackend::getId)
+                      .collect(Collectors.joining(", ")));
+          return false;
+        }
       }
       return true;
     } catch (IllegalStateException e) {
       System.err.println("Error: " + e.getMessage());
       return false;
+    }
+  }
+
+  /** VirtualMachineError and ThreadDeath must never be swallowed; everything else can. */
+  private static boolean isFatal(Throwable t) {
+    return t instanceof VirtualMachineError || t instanceof ThreadDeath;
+  }
+
+  /** The backend's id, or {@code null} when the (possibly broken) provider fails to answer. */
+  private static String backendIdOrNull(JfrBackend backend) {
+    try {
+      return backend.getId();
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return null;
+    }
+  }
+
+  /** The backend's version, or {@code null} when the (possibly broken) provider fails to answer. */
+  private static String backendVersionOrNull(JfrBackend backend) {
+    try {
+      return backend.getVersion();
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return null;
     }
   }
 
@@ -228,9 +267,10 @@ public final class Main implements Callable<Integer> {
     if (shellVersion == null || !shellVersion.endsWith("-SNAPSHOT") || backend == null) {
       return null;
     }
-    String id = backend.getId();
-    String version = backend.getVersion();
-    if (!IN_TREE_BACKENDS.contains(id)
+    String id = backendIdOrNull(backend);
+    String version = backendVersionOrNull(backend);
+    if (id == null
+        || !IN_TREE_BACKENDS.contains(id)
         || version == null
         || "dev".equals(version)
         || version.equals(shellVersion)) {
@@ -297,27 +337,37 @@ public final class Main implements Callable<Integer> {
 
       JfrBackend current = registry.getCurrent();
       warnIfBackendNotFromThisBuild(current);
-      if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
-        if (PluginManager.getInstance().canInstall(backend)) {
-          System.err.println("Backend not found: " + backend);
-          System.err.print("Downloading from Maven repositories... ");
-          try {
-            PluginManager.getInstance().installPlugin(backend);
-            System.err.println("done.");
-            System.err.println("Restart jfr-shell to use backend: " + backend);
-            return 1;
-          } catch (Exception e) {
-            System.err.println("failed: " + e.getMessage());
-            return 1;
-          }
+      if (backend != null) {
+        String currentId = backendIdOrNull(current);
+        if (currentId == null) {
+          System.err.println(
+              "Error: the selected backend ("
+                  + current.getClass().getName()
+                  + ") failed to report its id; refusing to use it.");
+          return 1;
         }
-        System.err.println("Error: Backend not found: " + backend);
-        System.err.println(
-            "Available backends: "
-                + registry.listAll().stream()
-                    .map(JfrBackend::getId)
-                    .collect(Collectors.joining(", ")));
-        return 1;
+        if (!currentId.equalsIgnoreCase(backend)) {
+          if (PluginManager.getInstance().canInstall(backend)) {
+            System.err.println("Backend not found: " + backend);
+            System.err.print("Downloading from Maven repositories... ");
+            try {
+              PluginManager.getInstance().installPlugin(backend);
+              System.err.println("done.");
+              System.err.println("Restart jfr-shell to use backend: " + backend);
+              return 1;
+            } catch (Exception e) {
+              System.err.println("failed: " + e.getMessage());
+              return 1;
+            }
+          }
+          System.err.println("Error: Backend not found: " + backend);
+          System.err.println(
+              "Available backends: "
+                  + registry.listAll().stream()
+                      .map(JfrBackend::getId)
+                      .collect(Collectors.joining(", ")));
+          return 1;
+        }
       }
     } catch (IllegalStateException e) {
       System.err.println("Error: " + e.getMessage());

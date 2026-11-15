@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Iterator;
 import java.util.ServiceLoader;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
@@ -66,15 +67,20 @@ public final class TckRunner {
     // Load backend from JAR
     loadedBackend = loadBackend(backendJar);
     if (loadedBackend == null) {
-      System.err.println("Error: No JfrBackend implementation found in JAR");
+      System.err.println("Error: No usable JfrBackend implementation found in JAR");
       System.err.println(
-          "Ensure the JAR contains META-INF/services/io.jafar.shell.backend.JfrBackend");
+          "Ensure the JAR contains META-INF/services/io.jafar.shell.backend.JfrBackend and the "
+              + "provider loads cleanly (see any 'Skipping unusable provider' lines above)");
       System.exit(1);
     }
 
     System.out.println(
-        "Loaded backend: " + loadedBackend.getName() + " (id=" + loadedBackend.getId() + ")");
-    System.out.println("Capabilities: " + loadedBackend.getCapabilities());
+        "Loaded backend: "
+            + safeCall(() -> loadedBackend.getName())
+            + " (id="
+            + safeCall(loadedBackend::getId)
+            + ")");
+    System.out.println("Capabilities: " + safeCall(() -> loadedBackend.getCapabilities()));
     System.out.println();
 
     // Run TCK tests
@@ -102,7 +108,22 @@ public final class TckRunner {
           new URLClassLoader(new URL[] {jarUrl}, TckRunner.class.getClassLoader());
 
       ServiceLoader<JfrBackend> loader = ServiceLoader.load(JfrBackend.class, classLoader);
-      for (JfrBackend backend : loader) {
+      Iterator<JfrBackend> it = loader.iterator();
+      while (true) {
+        final JfrBackend backend;
+        try {
+          if (!it.hasNext()) {
+            break;
+          }
+          backend = it.next();
+        } catch (Throwable t) {
+          if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+            throw (Error) t;
+          }
+          // A broken provider must not mask the other providers in the same jar.
+          System.err.println("Skipping unusable provider: " + t);
+          continue;
+        }
         return backend; // Return first found
       }
     } catch (Exception e) {
@@ -110,6 +131,18 @@ public final class TckRunner {
       e.printStackTrace();
     }
     return null;
+  }
+
+  /** Best-effort rendering of a provider value; never throws. */
+  private static String safeCall(java.util.function.Supplier<Object> call) {
+    try {
+      return String.valueOf(call.get());
+    } catch (Throwable t) {
+      if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+        throw (Error) t;
+      }
+      return "<broken: " + t + ">";
+    }
   }
 
   private static Path extractBuiltInTestRecording() {

@@ -155,7 +155,7 @@ public final class Shell implements AutoCloseable {
               @Override
               public QueryEvaluator evaluatorFor(Session session) {
                 ShellModule module = moduleById.get(session.getType());
-                return module != null ? module.getQueryEvaluator() : null;
+                return module != null ? queryEvaluator(module) : null;
               }
 
               @Override
@@ -844,6 +844,100 @@ public final class Shell implements AutoCloseable {
     return path.equals("~") ? System.getProperty("user.home") : path;
   }
 
+  // --- Broken-module guards: a provider that throws at call time must not take the shell down. ---
+
+  private static boolean isFatal(Throwable t) {
+    return t instanceof VirtualMachineError || t instanceof ThreadDeath;
+  }
+
+  private static String moduleName(ShellModule module) {
+    try {
+      String name = module.getDisplayName();
+      return name == null ? module.getClass().getSimpleName() : name;
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return module.getClass().getSimpleName();
+    }
+  }
+
+  private static String moduleId(ShellModule module) {
+    try {
+      String id = module.getId();
+      return id == null ? "?" : id;
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return "?";
+    }
+  }
+
+  private static List<String> moduleExtensions(ShellModule module) {
+    try {
+      return orEmpty(module.getSupportedExtensions());
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return List.of();
+    }
+  }
+
+  private static List<String> moduleExamples(ShellModule module) {
+    try {
+      return orEmpty(module.getExamples());
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return List.of();
+    }
+  }
+
+  private static <T> List<T> orEmpty(java.util.Collection<T> values) {
+    return values == null ? List.of() : List.copyOf(values);
+  }
+
+  private static int modulePriority(ShellModule module) {
+    try {
+      return module.getPriority();
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return Integer.MIN_VALUE;
+    }
+  }
+
+  private static boolean moduleCanHandle(ShellModule module, Path path) {
+    try {
+      return module.canHandle(path);
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return false;
+    }
+  }
+
+  private static QueryEvaluator queryEvaluator(ShellModule module) {
+    if (module == null) {
+      return null;
+    }
+    try {
+      return module.getQueryEvaluator();
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      LOG.error(
+          "Module {} failed to provide a query evaluator: {}", moduleId(module), t.toString());
+      return null;
+    }
+  }
+
   /**
    * {@code set}/{@code let}/{@code vars}/{@code unset}/{@code echo}/{@code invalidate}. Returns
    * whether the input was one of them. Variables live in the current session's store or, with
@@ -884,7 +978,7 @@ public final class Shell implements AutoCloseable {
       return false;
     }
     ShellModule module = moduleById.get(current.get().session.getType());
-    QueryEvaluator evaluator = module != null ? module.getQueryEvaluator() : null;
+    QueryEvaluator evaluator = module != null ? queryEvaluator(module) : null;
     return evaluator != null && startsWithRoot(input, evaluator.getRootTypes());
   }
 
@@ -936,7 +1030,7 @@ public final class Shell implements AutoCloseable {
     // Find a module that can handle this file
     ShellModule handler = null;
     for (ShellModule module : modules) {
-      if (module.canHandle(path)) {
+      if (moduleCanHandle(module, path)) {
         handler = module;
         break;
       }
@@ -946,18 +1040,14 @@ public final class Shell implements AutoCloseable {
       error("Error: No module can handle file: " + path);
       err.println("Supported extensions:");
       for (ShellModule module : modules) {
-        err.println(
-            "  "
-                + module.getDisplayName()
-                + ": "
-                + String.join(", ", module.getSupportedExtensions()));
+        err.println("  " + moduleName(module) + ": " + String.join(", ", moduleExtensions(module)));
       }
       flush();
       return;
     }
 
     if (verbose) {
-      out.println("Opening " + path + " with " + handler.getDisplayName() + "...");
+      out.println("Opening " + path + " with " + moduleName(handler) + "...");
       flush();
     }
 
@@ -1124,9 +1214,9 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    QueryEvaluator evaluator = module.getQueryEvaluator();
+    QueryEvaluator evaluator = queryEvaluator(module);
     if (evaluator == null) {
-      error("Error: Module does not support queries: " + module.getId());
+      error("Error: Module does not support queries: " + moduleId(module));
       flush();
       return;
     }
@@ -1434,13 +1524,13 @@ public final class Shell implements AutoCloseable {
                   }
                   SessionManager.SessionRef<Session> ref = current.get();
                   ShellModule module = moduleById.get(ref.session.getType());
-                  if (module == null || module.getQueryEvaluator() == null) {
+                  QueryEvaluator evaluator = module != null ? queryEvaluator(module) : null;
+                  if (evaluator == null) {
                     throw new IllegalStateException(
                         "No query evaluator for session type: " + ref.session.getType());
                   }
                   // Parse first: an evaluator's contract is to take the parsed query, and only
                   // some of them also accept the raw string.
-                  QueryEvaluator evaluator = module.getQueryEvaluator();
                   Object result =
                       evaluator.evaluate(
                           ref.session, evaluator.parse(query), buildCrossSessionContext());
@@ -1469,10 +1559,20 @@ public final class Shell implements AutoCloseable {
                       return Optional.empty();
                     }
                     ShellModule module = moduleById.get(current.get().session.getType());
-                    if (module == null || module.getQueryEvaluator() == null) {
+                    QueryEvaluator evaluator = module != null ? queryEvaluator(module) : null;
+                    if (evaluator == null) {
                       return Optional.empty();
                     }
-                    module.getQueryEvaluator().parse(query);
+                    try {
+                      evaluator.parse(query);
+                    } catch (Throwable t) {
+                      if (isFatal(t)) {
+                        throw (Error) t;
+                      }
+                      String message = t.getMessage();
+                      return Optional.of(
+                          message == null || message.isBlank() ? t.toString() : message);
+                    }
                     return Optional.empty();
                   } catch (RuntimeException e) {
                     String message = e.getMessage();
@@ -1513,7 +1613,7 @@ public final class Shell implements AutoCloseable {
       @Override
       public Optional<QueryEvaluator> evaluatorFor(Session session) {
         ShellModule module = moduleById.get(session.getType());
-        return module != null ? Optional.of(module.getQueryEvaluator()) : Optional.empty();
+        return Optional.ofNullable(queryEvaluator(module));
       }
     };
   }
@@ -1770,9 +1870,9 @@ public final class Shell implements AutoCloseable {
       SessionManager.SessionRef<Session> ref = current.get();
       ShellModule module = moduleById.get(ref.session.getType());
       if (module != null) {
-        List<String> examples = module.getExamples();
+        List<String> examples = moduleExamples(module);
         if (!examples.isEmpty()) {
-          out.println("Examples for " + module.getDisplayName() + ":");
+          out.println("Examples for " + moduleName(module) + ":");
           for (String example : examples) {
             out.println("  " + example);
           }
@@ -1816,12 +1916,13 @@ public final class Shell implements AutoCloseable {
         && current.isPresent()
         && !(current.get().session instanceof JFRSession)) {
       ShellModule module = moduleById.get(current.get().session.getType());
-      String name = module != null ? module.getDisplayName() : current.get().session.getType();
+      String name = module != null ? moduleName(module) : current.get().session.getType();
       out.println(
           "'help " + sub + "' describes JFR recordings; the current session is " + name + ".");
-      if (module != null && !module.getExamples().isEmpty()) {
+      List<String> examples = module != null ? moduleExamples(module) : List.of();
+      if (!examples.isEmpty()) {
         out.println("Queries for " + name + ":");
-        for (String example : module.getExamples()) {
+        for (String example : examples) {
           out.println("  " + example);
         }
       }
@@ -1838,9 +1939,9 @@ public final class Shell implements AutoCloseable {
       out.println("  (none)");
     } else {
       for (ShellModule module : modules) {
-        out.println("  " + module.getDisplayName() + " (" + module.getId() + ")");
-        out.println("    Extensions: " + String.join(", ", module.getSupportedExtensions()));
-        out.println("    Priority: " + module.getPriority());
+        out.println("  " + moduleName(module) + " (" + moduleId(module) + ")");
+        out.println("    Extensions: " + String.join(", ", moduleExtensions(module)));
+        out.println("    Priority: " + modulePriority(module));
       }
     }
     out.println();
@@ -1874,8 +1975,11 @@ public final class Shell implements AutoCloseable {
     for (ShellModule module : modules) {
       try {
         module.shutdown();
-      } catch (Exception e) {
-        LOG.error("Error shutting down module: {}", module.getId(), e);
+      } catch (Throwable e) {
+        if (isFatal(e)) {
+          throw (Error) e;
+        }
+        LOG.error("Error shutting down module: {}", moduleId(module), e);
       }
     }
 

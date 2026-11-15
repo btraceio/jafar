@@ -119,3 +119,13 @@ based on `canHandle(Path)` matching.
 Modules are loaded via `ShellModuleLoader.loadAll()` which uses `ServiceLoader`.
 The `ModuleSessionFactory` routes `open` commands to the correct module based on
 file type detection. Modules are sorted by priority (higher = preferred).
+
+A broken module jar must not take the shell down. Discovery skips a module that cannot be loaded
+(missing class, failing static initializer), whose `getId()` is blank or throws, whose
+`getPriority()` throws, or whose `initialize()` throws — the failures are logged at WARN and are
+also available via `ShellModuleLoader.lastDiscoveryFailures()` for diagnostics. A module that
+throws from `canHandle()` is treated as not-a-match; one that fails `createSession()` fails the
+open with a named error instead of an opaque crash. Provider calls that remain (display names,
+examples, the query evaluator) degrade to placeholders rather than propagating, so one bad module
+cannot crash the shell at or after startup. `VirtualMachineError` and `ThreadDeath` are never
+swallowed anywhere in this path.

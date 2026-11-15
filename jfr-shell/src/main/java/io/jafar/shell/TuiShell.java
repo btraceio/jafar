@@ -1,6 +1,7 @@
 package io.jafar.shell;
 
 import io.jafar.shell.core.ModuleSessionFactory;
+import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.ShellModule;
@@ -17,6 +18,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Full-screen TUI shell using TamboUI for rendering. Launched via {@code --tui} flag as an
@@ -27,6 +30,8 @@ import org.jline.terminal.TerminalBuilder;
  * | hints.
  */
 public final class TuiShell implements AutoCloseable {
+  private static final Logger LOG = LoggerFactory.getLogger(TuiShell.class);
+
   private final Terminal jlineTerminal;
   private final SessionManager<Session> sessions;
   private final List<ShellModule> modules;
@@ -90,16 +95,68 @@ public final class TuiShell implements AutoCloseable {
   }
 
   private void swapToModule(ShellModule module) {
-    currentModuleId = module.getId();
-    TuiAdapter adapter = module.createTuiAdapter(sessions, components.dispatcher);
+    currentModuleId = moduleId(module);
+    TuiAdapter adapter = createTuiAdapter(module);
     components.swapAdapter(adapter);
-    components.dispatcher.setModuleEvaluator(module.getQueryEvaluator());
+    components.dispatcher.setModuleEvaluator(moduleQueryEvaluator(module));
+  }
+
+  /** A broken module must not take the TUI down, not even for a log line. */
+  private static String moduleId(ShellModule module) {
+    try {
+      String id = module.getId();
+      return id == null ? "(unknown)" : id;
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      return "(unknown)";
+    }
+  }
+
+  private TuiAdapter createTuiAdapter(ShellModule module) {
+    try {
+      return module.createTuiAdapter(sessions, components.dispatcher);
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      LOG.error("Module '{}' failed to create a TUI adapter: {}", moduleId(module), t.toString());
+      return null;
+    }
+  }
+
+  /** A broken module must not take the TUI down; it just cannot answer queries. */
+  private static QueryEvaluator moduleQueryEvaluator(ShellModule module) {
+    try {
+      return module.getQueryEvaluator();
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        throw (Error) t;
+      }
+      LOG.error(
+          "Module '{}' failed to provide a query evaluator: {}", moduleId(module), t.toString());
+      return null;
+    }
+  }
+
+  private static boolean isFatal(Throwable t) {
+    return t instanceof VirtualMachineError || t instanceof ThreadDeath;
   }
 
   private ShellModule findModuleForFile(Path path) {
     if (path != null && Files.exists(path)) {
       for (ShellModule m : modules) {
-        if (m.canHandle(path)) return m;
+        try {
+          if (m.canHandle(path)) {
+            return m;
+          }
+        } catch (Throwable t) {
+          if (isFatal(t)) {
+            throw (Error) t;
+          }
+          LOG.error("Module '{}' failed the file check: {}", moduleId(m), t.toString());
+        }
       }
     }
     // Default to first module
@@ -139,7 +196,10 @@ public final class TuiShell implements AutoCloseable {
     for (ShellModule module : modules) {
       try {
         module.shutdown();
-      } catch (Exception ignore) {
+      } catch (Throwable t) {
+        if (isFatal(t)) {
+          throw (Error) t;
+        }
         // one module failing to shut down must not stop the others
       }
     }

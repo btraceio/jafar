@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Settings for the shell's LLM features.
@@ -25,6 +27,8 @@ import java.util.function.Function;
  * unexpected is the hardest kind of misconfiguration to see.
  */
 public final class LlmConfig {
+
+  private static final Logger LOG = LoggerFactory.getLogger(LlmConfig.class);
 
   /**
    * How many times a query that fails to parse is sent back for correction.
@@ -118,10 +122,42 @@ public final class LlmConfig {
     return resolve("llm.model", "JAFAR_LLM_MODEL", null);
   }
 
-  /** The model to use with a given backend: the configured one, else that backend's default. */
+  /** The model to use when a backend cannot answer {@link LlmBackend#defaultModel()}. */
+  static final String FALLBACK_MODEL = "unknown";
+
+  /**
+   * The model to use with a given backend: the configured one, else that backend's default.
+   *
+   * <p>A backend whose {@code defaultModel()} fails is reported and answered with {@link
+   * #FALLBACK_MODEL} rather than blowing up the caller — the request then fails at the provider
+   * with a name the user can act on, instead of an unexpected exception from a display path.
+   */
   public String modelFor(LlmBackend backend) {
     String configured = model();
-    return configured != null ? configured : backend.defaultModel();
+    if (configured != null) {
+      return configured;
+    }
+    try {
+      String model = backend.defaultModel();
+      if (model != null && !model.isBlank()) {
+        return model;
+      }
+      LOG.warn(
+          "LLM backend {} returned a blank defaultModel(); using '{}'",
+          backend.getClass().getName(),
+          FALLBACK_MODEL);
+      return FALLBACK_MODEL;
+    } catch (Throwable t) {
+      if (t instanceof VirtualMachineError || t instanceof ThreadDeath) {
+        throw (Error) t;
+      }
+      LOG.warn(
+          "LLM backend {} failed defaultModel() ({}); using '{}'",
+          backend.getClass().getName(),
+          t.toString(),
+          FALLBACK_MODEL);
+      return FALLBACK_MODEL;
+    }
   }
 
   /**
