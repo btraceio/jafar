@@ -244,13 +244,13 @@ Loaded backend: Mini Backend (id=mini)
 Capabilities: [EVENT_STREAMING, METADATA_CLASSES, STREAMING_PARSE, UNTYPED_HANDLERS]
 
 === TCK Results ===
-Tests run: 23
-Passed: 23
+Tests run: 31
+Passed: 31
 Failed: 0
 Skipped: 0
 ```
 
-Chunk and constant pool tests are auto-skipped since we don't declare those capabilities.
+Chunk and constant pool tests pass trivially for backends that don't declare those capabilities (they return early rather than being skipped).
 
 ## What's Next?
 

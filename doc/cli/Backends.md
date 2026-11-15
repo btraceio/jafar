@@ -303,14 +303,14 @@ java -jar jfr-shell-tck-all.jar path/to/my-backend.jar path/to/test.jfr
 
 ### TCK Test Categories
 
-The TCK runs 27 tests across these categories:
+The TCK runs 31 tests across these categories:
 
 | Category | Tests | Description |
 |----------|-------|-------------|
 | Identity | 4 | Valid ID, name, version, priority |
 | Capabilities | 2 | Capability set consistency |
 | Event Streaming | 4 | Events are properly streamed |
-| Metadata | 5 | Classes and fields load correctly |
+| Metadata | 9 | Classes and fields load correctly; duplicates and determinism are asserted |
 | Chunks | 4 | Chunk info is accurate (if supported) |
 | Constant Pools | 8 | CP access works, and the available types, summary, entry listing and `crossref` agree on every run (if supported) |
 
@@ -325,8 +325,8 @@ Loaded backend: My Custom Backend (id=mybackend)
 Capabilities: [EVENT_STREAMING, METADATA_CLASSES, UNTYPED_HANDLERS]
 
 === TCK Results ===
-Tests run: 27
-Passed: 27
+Tests run: 31
+Passed: 31
 Failed: 0
 Skipped: 0
 ```

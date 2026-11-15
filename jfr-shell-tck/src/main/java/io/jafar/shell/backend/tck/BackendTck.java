@@ -12,6 +12,7 @@ import io.jafar.shell.backend.MetadataSource;
 import io.jafar.shell.backend.UnsupportedCapabilityException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -302,6 +303,141 @@ public abstract class BackendTck {
     Map<String, Object> details = source.loadClass(recording, "com.nonexistent.FakeEventType");
 
     assertNull(details, "Should return null for non-existent class");
+  }
+
+  @Test
+  void metadataSourceLoadAllClassesHasNoDuplicateEntries() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    Path recording = getTestRecording();
+
+    List<Map<String, Object>> classes = source.loadAllClasses(recording);
+
+    Set<String> seen = new HashSet<>();
+    for (Map<String, Object> clazz : classes) {
+      String key = String.valueOf(clazz.get("id")) + " " + clazz.get("name");
+      assertTrue(
+          seen.add(key),
+          () ->
+              "Duplicate metadata class entry in loadAllClasses(): id="
+                  + clazz.get("id")
+                  + ", name="
+                  + clazz.get("name")
+                  + " (multi-chunk recordings repeat the metadata in each chunk; backends must de-duplicate)");
+    }
+  }
+
+  /**
+   * Writes a copy of {@code source} with its bytes repeated twice. JFR chunk metadata is repeated
+   * across chunks of multi-chunk recordings, so a recording with its own bytes appended simulates a
+   * recording whose chunks repeat identical class definitions.
+   */
+  private static Path doubleRecording(Path source) throws java.io.IOException {
+    byte[] bytes = java.nio.file.Files.readAllBytes(source);
+    Path doubled = java.nio.file.Files.createTempFile("tck-doubled", ".jfr");
+    java.nio.file.Files.write(doubled, bytes);
+    try (java.io.OutputStream out =
+        java.nio.file.Files.newOutputStream(doubled, java.nio.file.StandardOpenOption.APPEND)) {
+      out.write(bytes);
+    }
+    doubled.toFile().deleteOnExit();
+    return doubled;
+  }
+
+  @Test
+  void metadataSourceLoadAllClassesHasNoDuplicatesAcrossRepeatedChunks() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    // The built-in recording is a valid multi-chunk recording whose chunks repeat the same class
+    // definitions when duplicated; the doubled copy exercises multi-chunk de-duplication.
+    Path doubled = null;
+    try {
+      doubled = doubleRecording(getTestRecording());
+    } catch (java.io.IOException e) {
+      org.junit.jupiter.api.Assumptions.abort(
+          "Could not prepare a doubled recording: " + e.getMessage());
+      return;
+    }
+    try {
+      List<Map<String, Object>> classes = source.loadAllClasses(doubled);
+
+      Set<String> seen = new HashSet<>();
+      for (Map<String, Object> clazz : classes) {
+        String key = String.valueOf(clazz.get("id")) + " " + clazz.get("name");
+        assertTrue(
+            seen.add(key),
+            () ->
+                "Duplicate metadata class entry in loadAllClasses() on a repeated-content "
+                    + "recording: id="
+                    + clazz.get("id")
+                    + ", name="
+                    + clazz.get("name"));
+      }
+
+      List<String> first = classKeys(source.loadAllClasses(doubled));
+      List<String> second = classKeys(source.loadAllClasses(doubled));
+      assertEquals(
+          first,
+          second,
+          "loadAllClasses() returned a different result across calls on the doubled recording");
+    } finally {
+      if (doubled != null) {
+        java.nio.file.Files.deleteIfExists(doubled);
+      }
+    }
+  }
+
+  @Test
+  void metadataSourceLoadAllClassesIsDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    Path recording = getTestRecording();
+
+    List<String> first = classKeys(source.loadAllClasses(recording));
+    List<String> second = classKeys(source.loadAllClasses(recording));
+
+    assertEquals(
+        first, second, "loadAllClasses() returned a different result across calls (order/content)");
+  }
+
+  @Test
+  void metadataSourceLoadClassIsDeterministicAcrossCalls() throws Exception {
+    if (!backend.supports(BackendCapability.METADATA_CLASSES)) {
+      return;
+    }
+
+    MetadataSource source = backend.createMetadataSource();
+    Path recording = getTestRecording();
+
+    List<Map<String, Object>> classes = source.loadAllClasses(recording);
+    if (classes.isEmpty()) {
+      return;
+    }
+    String typeName = (String) classes.get(0).get("name");
+
+    Map<String, Object> first = source.loadClass(recording, typeName);
+    Map<String, Object> second = source.loadClass(recording, typeName);
+
+    assertNotNull(first, "loadClass should return a result for: " + typeName);
+    assertEquals(
+        first, second, "loadClass() returned different results for the same type across calls");
+  }
+
+  private static List<String> classKeys(List<Map<String, Object>> classes) {
+    List<String> keys = new ArrayList<>(classes.size());
+    for (Map<String, Object> clazz : classes) {
+      keys.add(String.valueOf(clazz.get("id")) + " " + clazz.get("name"));
+    }
+    return keys;
   }
 
   // ==================== Chunk Source Tests ====================
