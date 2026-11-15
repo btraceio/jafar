@@ -923,10 +923,6 @@ public class JfrTypeProcessor extends AbstractProcessor {
     return lastDot > 0 ? qualifiedName.substring(0, lastDot) : "";
   }
 
-  private String sanitizeVarName(String name) {
-    return name.replace('.', '_').replace('$', '_');
-  }
-
   private String generateReadCode(FieldInfo field) {
     // Note: RecordingStream uses readVarint() for all varint-encoded integers
     String typeToRead = field.isArray ? field.elementType : field.javaType;
