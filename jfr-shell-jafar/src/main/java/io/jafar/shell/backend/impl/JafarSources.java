@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 
@@ -49,11 +48,15 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> loadClass(Path recording, String typeName) throws Exception {
-      final AtomicReference<Map<String, Object>> ref = new AtomicReference<>();
-      if (System.getProperty("jfr.shell.completion.debug") != null) {
+      boolean debug = System.getProperty("jfr.shell.completion.debug") != null;
+      if (debug) {
         System.err.println("[DEBUG] JafarMetadataSource.loadClass() called for: " + typeName);
       }
 
+      // Chunks are parsed in parallel; each chunk's onMetadata runs on a chunk thread. Collect
+      // matches keyed by chunk index and pick the lowest-numbered chunk afterwards so the
+      // result is deterministic regardless of thread scheduling.
+      Map<Integer, Map<String, Object>> matches = new ConcurrentHashMap<>();
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -66,42 +69,29 @@ final class JafarSources {
                   byName.put(mc.getName(), mc);
                 }
 
-                if (System.getProperty("jfr.shell.completion.debug") != null) {
-                  System.err.println("[DEBUG]   Metadata has " + byName.size() + " classes");
-                  // Show matching classes
-                  java.util.List<String> matching =
-                      byName.keySet().stream()
-                          .filter(n -> n.contains("ExecutionSample"))
-                          .sorted()
-                          .toList();
-                  if (!matching.isEmpty()) {
-                    System.err.println("[DEBUG]   Classes matching 'ExecutionSample':");
-                    matching.forEach(n -> System.err.println("[DEBUG]     - " + n));
-                  }
-                }
-
                 MetadataClass clazz = byName.get(typeName);
                 if (clazz != null) {
-                  if (System.getProperty("jfr.shell.completion.debug") != null) {
-                    System.err.println("[DEBUG]   Found matching class: " + typeName);
-                  }
-                  ref.set(convertClass(clazz));
-                } else {
-                  if (System.getProperty("jfr.shell.completion.debug") != null) {
-                    System.err.println("[DEBUG]   Class NOT found: " + typeName);
-                  }
+                  matches.put(context.getChunkIndex(), convertClass(clazz));
+                } else if (debug) {
+                  System.err.println(
+                      "[DEBUG]   Chunk " + context.getChunkIndex() + ": NOT found: " + typeName);
                 }
                 return false;
               }
             });
       }
 
-      if (System.getProperty("jfr.shell.completion.debug") != null) {
+      Map<String, Object> result =
+          matches.entrySet().stream()
+              .min(Map.Entry.comparingByKey())
+              .map(Map.Entry::getValue)
+              .orElse(null);
+      if (debug) {
         System.err.println(
             "[DEBUG] JafarMetadataSource.loadClass() returning: "
-                + (ref.get() != null ? "non-null" : "NULL"));
+                + (result != null ? "non-null" : "NULL"));
       }
-      return ref.get();
+      return result;
     }
 
     @Override
@@ -125,7 +115,11 @@ final class JafarSources {
 
     @Override
     public List<Map<String, Object>> loadAllClasses(Path recording) throws Exception {
-      List<Map<String, Object>> result = new ArrayList<>();
+      // Chunks are parsed in parallel; collecting into a shared list races and duplicates the
+      // repeated per-chunk metadata. Collect each chunk's classes keyed by chunk index, then
+      // merge in chunk order, keeping the first occurrence of each (id, name) pair so the
+      // output is deterministic and duplicate-free.
+      Map<Integer, List<MetadataClass>> perChunk = new ConcurrentHashMap<>();
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -133,13 +127,23 @@ final class JafarSources {
             new ChunkParserListener() {
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                for (MetadataClass clazz : metadata.getClasses()) {
-                  result.add(convertClass(clazz));
-                }
+                perChunk.put(context.getChunkIndex(), new ArrayList<>(metadata.getClasses()));
                 return false;
               }
             });
       }
+      List<Map<String, Object>> result = new ArrayList<>();
+      Set<String> seen = new HashSet<>();
+      perChunk.entrySet().stream()
+          .sorted(Map.Entry.comparingByKey())
+          .forEach(
+              entry -> {
+                for (MetadataClass clazz : entry.getValue()) {
+                  if (seen.add(clazz.getId() + "\u0000" + clazz.getName())) {
+                    result.add(convertClass(clazz));
+                  }
+                }
+              });
       return result;
     }
 
