@@ -49,6 +49,11 @@ GO='go-parser/jfr/parser.go'
 case_files=("$JAVA"); case_body=""
 check "one-sided Java, no statement: blocked" 1 "no parity statement" gate
 
+# 1b. The message names the side that changed, not the other one.
+check "one-sided Java, no statement: names the Java side" 1 "parser-core (Java) side only" gate
+case_files=("$GO"); case_body=""
+check "one-sided Go, no statement: names the Go side" 1 "go-parser (Go) side only" gate
+
 # 2. One-sided Java change with a not-applicable statement -> passes.
 case_files=("$JAVA")
 case_body="Fix thing.
@@ -102,7 +107,8 @@ echo x > "$scratch/parser-core/src/main/java/io/jafar/parser/impl/Foo.java"
 git -C "$scratch" add -A
 git -C "$scratch" -c user.email=t@t -c user.name=t commit -q -m change
 out=$( cd "$scratch" && "$script" --base main 2>&1 ) || rc=$?
-if [ "${rc:-0}" = "1" ] && grep -qF "Add the statement" <<<"$out"; then
+if [ "${rc:-0}" = "1" ] && grep -qF "Add the statement" <<<"$out" \
+    && grep -qF "parser-core (Java) side only" <<<"$out"; then
     printf 'ok   local mode: one-sided branch asked for a statement\n'; pass=$((pass + 1))
 else
     printf 'FAIL local mode: rc=%s out=%s\n' "${rc:-0}" "$out"; fail=$((fail + 1))
