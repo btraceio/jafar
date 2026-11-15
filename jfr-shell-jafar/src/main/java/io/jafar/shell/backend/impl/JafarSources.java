@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 
 /**
@@ -285,12 +284,14 @@ final class JafarSources {
      * @param recording path to the JFR recording
      * @param filter optional predicate to filter chunks, null for all
      * @param limit maximum number of chunks to collect (-1 for unlimited)
-     * @return list of matching chunk rows
+     * @return list of matching chunk rows, ordered by chunk index
      */
     private List<Map<String, Object>> loadChunksWithLimit(
         Path recording, Predicate<Map<String, Object>> filter, int limit) throws Exception {
-      // Synchronized because chunks may be processed in parallel
-      final List<Map<String, Object>> rows = Collections.synchronizedList(new ArrayList<>());
+      // Chunks are parsed in parallel; collect matching rows keyed by chunk index and merge in
+      // chunk order afterwards so the result is deterministic. Rows are cheap to create (header
+      // data only), so every chunk reports one; the limit selects the lowest-indexed matches.
+      Map<Integer, Map<String, Object>> rows = new ConcurrentHashMap<>();
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -299,34 +300,35 @@ final class JafarSources {
               @Override
               public boolean onChunkStart(
                   ParserContext context, int chunkIndex, ChunkHeader header) {
-                // Check if we've already collected enough chunks from previous iterations
-                if (limit > 0 && rows.size() >= limit) {
-                  return false; // Stop processing - we already have enough
-                }
                 Map<String, Object> row = createChunkRow(chunkIndex, header);
                 if (filter == null || filter.test(row)) {
-                  rows.add(row);
+                  rows.put(chunkIndex, row);
                 }
-                // Always return true to complete processing of this chunk
-                // The limit check at the start of next onChunkStart will stop if needed
+                // Always return true so every chunk reports its row; skipping events below is
+                // only an optimization and cannot change which rows are collected.
                 return true;
               }
 
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                // Stop processing metadata if we already have enough chunks
+                // Stop parsing this chunk's events once enough chunks matched. Only affects how
+                // much of this chunk is parsed, never which rows are collected.
                 return limit <= 0 || rows.size() < limit;
               }
             });
       }
-      return rows;
+      return rows.entrySet().stream()
+          .sorted(Map.Entry.comparingByKey())
+          .map(Map.Entry::getValue)
+          .limit(limit < 0 ? Long.MAX_VALUE : limit)
+          .collect(java.util.stream.Collectors.toList());
     }
 
     @Override
     public Map<String, Object> getChunkSummary(Path recording) throws Exception {
-      final long[] stats = new long[5]; // count, totalSize, minSize, maxSize, compressedCount
-      stats[2] = Long.MAX_VALUE; // minSize
-      stats[3] = Long.MIN_VALUE; // maxSize
+      // Chunks are parsed in parallel; collect per-chunk stats and merge in chunk order so the
+      // result is deterministic (and the plain counters are not mutated concurrently).
+      Map<Integer, long[]> perChunk = new ConcurrentHashMap<>(); // [size, compressed(0/1)]
 
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
@@ -336,13 +338,7 @@ final class JafarSources {
               @Override
               public boolean onChunkStart(
                   ParserContext context, int chunkIndex, ChunkHeader header) {
-                stats[0]++;
-                stats[1] += header.size;
-                stats[2] = Math.min(stats[2], header.size);
-                stats[3] = Math.max(stats[3], header.size);
-                if (header.compressed) {
-                  stats[4]++;
-                }
+                perChunk.put(chunkIndex, new long[] {header.size, header.compressed ? 1 : 0});
                 return true;
               }
 
@@ -352,6 +348,18 @@ final class JafarSources {
               }
             });
       }
+
+      long count = 0, totalSize = 0, minSize = Long.MAX_VALUE, maxSize = Long.MIN_VALUE;
+      long compressedCount = 0;
+      for (Map.Entry<Integer, long[]> e : new java.util.TreeMap<>(perChunk).entrySet()) {
+        long size = e.getValue()[0];
+        count++;
+        totalSize += size;
+        minSize = Math.min(minSize, size);
+        maxSize = Math.max(maxSize, size);
+        compressedCount += e.getValue()[1];
+      }
+      long[] stats = {count, totalSize, minSize, maxSize, compressedCount};
 
       Map<String, Object> summary = new HashMap<>();
       summary.put("totalChunks", stats[0]);
@@ -383,7 +391,7 @@ final class JafarSources {
 
     @Override
     public List<Map<String, Object>> loadSummary(Path recording) throws Exception {
-      final Map<String, Long> sizes = new HashMap<>();
+      final Map<String, Long> sizes = new ConcurrentHashMap<>();
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -440,34 +448,11 @@ final class JafarSources {
     @Override
     public List<Map<String, Object>> loadEntries(
         Path recording, String typeName, Predicate<Map<String, Object>> filter) throws Exception {
-      final List<Map<String, Object>> rows = new ArrayList<>();
-      final BiConsumer<ConstantPool, String> drain =
-          (cp, tn) -> {
-            if (!cp.getType().getName().equals(tn)) {
-              return;
-            }
-            try {
-              cp.ensureIndexed();
-            } catch (Throwable ignore) {
-            }
-            Iterator<Long> it = cp.ids();
-            while (it.hasNext()) {
-              long id = it.next();
-              Object val = cp.get(id);
-              Map<String, Object> row = new HashMap<>();
-              row.put("id", id);
-              if (val instanceof Map<?, ?> map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> mv = (Map<String, Object>) map;
-                row.putAll(mv);
-              } else {
-                row.put("value", val);
-              }
-              if (filter == null || filter.test(row)) {
-                rows.add(row);
-              }
-            }
-          };
+      // Chunks are parsed in parallel; drain into per-chunk lists and merge in chunk order so
+      // the output is deterministic and race-free. Draining happens once in onChunkEnd, when the
+      // chunk's constant pools are fully populated — draining per checkpoint delta would re-emit
+      // entries that were already drained.
+      final Map<Integer, List<Map<String, Object>>> perChunk = new ConcurrentHashMap<>();
 
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
@@ -486,31 +471,72 @@ final class JafarSources {
               @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
                 context.remove(GenericValueReader.class);
+                if (!skipped) {
+                  List<Map<String, Object>> rows = new ArrayList<>();
+                  try {
+                    context
+                        .getConstantPools()
+                        .pools()
+                        .forEach(cp -> drainPool(cp, typeName, filter, rows));
+                  } catch (Throwable ignore) {
+                  }
+                  perChunk.put(chunkIndex, rows);
+                }
                 return ChunkParserListener.super.onChunkEnd(context, chunkIndex, skipped);
               }
 
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                try {
-                  context.getConstantPools().pools().forEach(cp -> drain.accept(cp, typeName));
-                } catch (Throwable ignore) {
-                }
                 return true;
               }
 
               @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent event) {
-                context.getConstantPools().pools().forEach(cp -> drain.accept(cp, typeName));
                 return true;
               }
             });
       }
+      List<Map<String, Object>> rows = new ArrayList<>();
+      perChunk.entrySet().stream()
+          .sorted(Map.Entry.comparingByKey())
+          .forEach(entry -> rows.addAll(entry.getValue()));
       return rows;
+    }
+
+    private static void drainPool(
+        ConstantPool cp,
+        String typeName,
+        Predicate<Map<String, Object>> filter,
+        List<Map<String, Object>> out) {
+      if (!cp.getType().getName().equals(typeName)) {
+        return;
+      }
+      try {
+        cp.ensureIndexed();
+      } catch (Throwable ignore) {
+      }
+      Iterator<Long> it = cp.ids();
+      while (it.hasNext()) {
+        long id = it.next();
+        Object val = cp.get(id);
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", id);
+        if (val instanceof Map<?, ?> map) {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> mv = (Map<String, Object>) map;
+          row.putAll(mv);
+        } else {
+          row.put("value", val);
+        }
+        if (filter == null || filter.test(row)) {
+          out.add(row);
+        }
+      }
     }
 
     @Override
     public Set<String> getAvailableTypes(Path recording) throws Exception {
-      Set<String> types = new HashSet<>();
+      Set<String> types = ConcurrentHashMap.newKeySet();
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -534,20 +560,21 @@ final class JafarSources {
 
     @Override
     public Map<String, Object> crossref(Path recording, String typeName) throws Exception {
-      // JFR CP IDs are chunk-local. Global stats (total/referenced/unused CP entries) must be
-      // computed per chunk and then summed. Per-chunk state is reset on each onChunkStart.
-      long[] totalCpCount = {0};
-      long[] referencedCpCount = {0};
-
-      // Per-chunk target-type CP IDs (reset per chunk)
-      Set<Long>[] chunkAllIds = new Set[] {new HashSet<>()};
-      // Per-chunk CP edge graph (reset per chunk, merged into cpEdges at chunk end)
-      Map<String, Map<Long, Map<String, Set<Long>>>>[] chunkCpEdges =
-          new Map[] {new ConcurrentHashMap<>()};
+      // Per-chunk state, keyed by chunk index: chunks are parsed in parallel, so a single
+      // shared slot would be overwritten mid-chunk by neighbouring chunks.
+      java.util.concurrent.atomic.AtomicLong totalCpCount =
+          new java.util.concurrent.atomic.AtomicLong();
+      java.util.concurrent.atomic.AtomicLong referencedCpCount =
+          new java.util.concurrent.atomic.AtomicLong();
+      // Per-chunk target-type CP IDs
+      Map<Integer, Set<Long>> chunkAllIds = new ConcurrentHashMap<>();
+      // Per-chunk CP edge graph (merged into cpEdges at chunk end)
+      Map<Integer, Map<String, Map<Long, Map<String, Set<Long>>>>> chunkCpEdges =
+          new ConcurrentHashMap<>();
       // Per-chunk union of all event CP refs — seed for per-chunk global BFS
-      Map<String, Set<Long>>[] chunkEventRefs = new Map[] {new ConcurrentHashMap<>()};
-      // Per-chunk edge processor (points at chunkCpEdges[0], recreated per chunk)
-      EdgeCollectingProcessor[] edgeProcRef = {new EdgeCollectingProcessor(chunkCpEdges[0])};
+      Map<Integer, Map<String, Set<Long>>> chunkEventRefs = new ConcurrentHashMap<>();
+      // Per-chunk edge processor
+      Map<Integer, EdgeCollectingProcessor> edgeProcs = new ConcurrentHashMap<>();
 
       // Global merged CP edge graph — accumulated from all chunks for per-event-type BFS
       Map<String, Map<Long, Map<String, Set<Long>>>> cpEdges = new ConcurrentHashMap<>();
@@ -596,25 +623,34 @@ final class JafarSources {
               @Override
               public boolean onChunkStart(
                   ParserContext context, int chunkIndex, ChunkHeader header) {
-                chunkAllIds[0] = new HashSet<>();
-                chunkCpEdges[0] = new ConcurrentHashMap<>();
-                chunkEventRefs[0] = new ConcurrentHashMap<>();
-                edgeProcRef[0] = new EdgeCollectingProcessor(chunkCpEdges[0]);
+                chunkAllIds.put(chunkIndex, new HashSet<>());
+                Map<String, Map<Long, Map<String, Set<Long>>>> edges = new ConcurrentHashMap<>();
+                chunkCpEdges.put(chunkIndex, edges);
+                chunkEventRefs.put(chunkIndex, new ConcurrentHashMap<>());
+                edgeProcs.put(chunkIndex, new EdgeCollectingProcessor(edges));
                 context.put(GenericValueReader.class, new GenericValueReader(eventCollector));
                 return true;
               }
 
               @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-                if (!skipped) {
+                Set<Long> allIds = chunkAllIds.remove(chunkIndex);
+                Map<String, Map<Long, Map<String, Set<Long>>>> edges =
+                    chunkCpEdges.remove(chunkIndex);
+                Map<String, Set<Long>> eventRefs = chunkEventRefs.remove(chunkIndex);
+                edgeProcs.remove(chunkIndex);
+                if (!skipped && edges != null) {
                   // Per-chunk BFS: which target-type IDs are reachable from events in this chunk?
                   Set<Long> chunkReachable =
-                      bfsCpReachable(chunkEventRefs[0], chunkCpEdges[0], typeName);
+                      bfsCpReachable(
+                          eventRefs != null ? eventRefs : Collections.emptyMap(), edges, typeName);
                   // totalCpCount is accumulated per-checkpoint via extractConstantPoolCount.
-                  referencedCpCount[0] +=
-                      chunkReachable.stream().filter(chunkAllIds[0]::contains).count();
+                  if (allIds != null) {
+                    referencedCpCount.addAndGet(
+                        chunkReachable.stream().filter(allIds::contains).count());
+                  }
                   // Merge this chunk's CP edges into the global graph for per-event-type BFS.
-                  chunkCpEdges[0].forEach(
+                  edges.forEach(
                       (type, idMap) ->
                           cpEdges
                               .computeIfAbsent(type, k -> new ConcurrentHashMap<>())
@@ -626,8 +662,12 @@ final class JafarSources {
 
               @Override
               public boolean onCheckpoint(ParserContext context, CheckpointEvent cp) {
+                int chunkIndex = context.getChunkIndex();
+                Set<Long> allIds = chunkAllIds.get(chunkIndex);
+                EdgeCollectingProcessor edgeProc = edgeProcs.get(chunkIndex);
                 RecordingStream stream = context.get(RecordingStream.class);
-                GenericValueReader edgeReader = new GenericValueReader(edgeProcRef[0]);
+                GenericValueReader edgeReader =
+                    edgeProc != null ? new GenericValueReader(edgeProc) : null;
                 context
                     .getConstantPools()
                     .pools()
@@ -635,24 +675,26 @@ final class JafarSources {
                         pool -> {
                           if (pool.getType().getName().equals(typeName)) {
                             // Accumulate delta count for global total (mirrors loadSummary).
-                            totalCpCount[0] += extractConstantPoolCount(pool);
+                            totalCpCount.addAndGet(extractConstantPoolCount(pool));
                             // Collect IDs defined in this checkpoint for per-chunk BFS.
-                            MutableConstantPool targetMcp = (MutableConstantPool) pool;
-                            Iterator<Long> it = targetMcp.ids();
-                            while (it.hasNext()) {
-                              long id = it.next();
-                              if (targetMcp.getOffset(id) != 0) chunkAllIds[0].add(id);
+                            if (allIds != null) {
+                              MutableConstantPool targetMcp = (MutableConstantPool) pool;
+                              Iterator<Long> it = targetMcp.ids();
+                              while (it.hasNext()) {
+                                long id = it.next();
+                                if (targetMcp.getOffset(id) != 0) allIds.add(id);
+                              }
                             }
                           }
                           // Build per-chunk CP reference edges for ALL types
-                          if (stream != null) {
+                          if (stream != null && edgeProc != null && edgeReader != null) {
                             MutableConstantPool mcp = (MutableConstantPool) pool;
                             Iterator<Long> it = mcp.ids();
                             while (it.hasNext()) {
                               long id = it.next();
                               long offset = mcp.getOffset(id);
                               if (offset == 0) continue;
-                              edgeProcRef[0].startEntry(mcp.getType().getName(), id);
+                              edgeProc.startEntry(mcp.getType().getName(), id);
                               long saved = stream.position();
                               try {
                                 stream.position(offset);
@@ -660,7 +702,7 @@ final class JafarSources {
                               } catch (Throwable ignore) {
                               } finally {
                                 stream.position(saved);
-                                edgeProcRef[0].endEntry();
+                                edgeProc.endEntry();
                               }
                             }
                           }
@@ -709,11 +751,13 @@ final class JafarSources {
                     }
                   }
                 }
-                allRefs.forEach(
-                    (refType, refIds) ->
-                        chunkEventRefs[0]
-                            .computeIfAbsent(refType, k -> ConcurrentHashMap.newKeySet())
-                            .addAll(refIds));
+                Map<String, Set<Long>> refs = chunkEventRefs.get(context.getChunkIndex());
+                if (refs != null) {
+                  allRefs.forEach(
+                      (refType, refIds) ->
+                          refs.computeIfAbsent(refType, k -> ConcurrentHashMap.newKeySet())
+                              .addAll(refIds));
+                }
                 if (!allRefs.isEmpty()) {
                   String et = eventType.getName();
                   allRefs.forEach(
@@ -745,8 +789,8 @@ final class JafarSources {
         }
       }
 
-      long total = totalCpCount[0];
-      long referenced = referencedCpCount[0];
+      long total = totalCpCount.get();
+      long referenced = referencedCpCount.get();
       long unused = total - referenced;
 
       Map<String, Object> result = new LinkedHashMap<>();
