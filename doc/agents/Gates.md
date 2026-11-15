@@ -535,6 +535,15 @@ parse generates nothing.
 > `both parses must carry the context's one cache`. **When a test's name says
 > "shared", assert the identity of the shared thing.**
 
+**A standing failure at `=16` (R8).** The stress test can fail on a *typed*
+parse: `round 3 parse 4 (typed): chunk 1 differs … expected … when=After GC …
+but was … when=null` — seen once in 7 runs at `=16` on a 4-core host. It is
+not the untyped cache: 8 concurrent typed-only parses of `tck-test.jfr`, 150
+rounds, with no untyped parse in the JVM, returned `when() == null` for every
+`jdk.GCHeapSummary` event of a whole parse (1,892 at a time) in 4 of 5 runs
+on the code before the cache became per-context, mostly when each parse had
+a `ParsingContext` of its own. The cause is not known and it is not fixed.
+
 **The recorded fire cases (R5).** Both recorded races are probabilistic; each
 was re-run until it failed, then reverted (sha-verified against the
 pre-mutation file):
