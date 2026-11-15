@@ -27,6 +27,14 @@ across JDK builds — measured: Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2
 same input (the parsed values are identical; only the on-disk layout differs). The golden dumps
 therefore pin the digest, not the fixture bytes, for these fixtures.
 
+Measured on macOS x86_64 by regenerating on each build and comparing `shasum -a 256` of
+`test-ap.jfr` (test-jfr.jfr behaves the same): Liberica 21.0.2 → `94c055d9…`, Temurin 21.0.3 →
+`536317be…`, Temurin 21.0.4 and 21.0.5 → `3ca687bf…` (the goldens were pinned to yet another
+`0aa892ff…`, from the CI runner's Temurin). In every case the parser-produced dump digest was
+identical — see `parser-core/src/test/golden/test-ap.jfr.golden`. JDK-build variance is inside the
+JMC writer/JDK, not in this generator (the generator feeds fixed seeds, fixed timestamps and a
+fixed tick base).
+
 Each generated recording is a single chunk, like the recordings the suites were written against. Some tests
 assume that (an abort in one chunk does not stop chunks parsing in parallel; constant-pool ids are
 chunk-local). Multi-chunk output is exercised by the benchmark mode, this module's tests, the

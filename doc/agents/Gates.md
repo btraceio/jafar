@@ -362,7 +362,8 @@ case table and the file-naming rule.
 - The two generated JFR fixtures (`test-ap.jfr`, `test-jfr.jfr`) also pin
   a null fixture sha: the generator is deterministic only per JDK build —
   measured: Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 all write different bytes
-  for identical input (same digest, different layout), so a pinned sha
+  for identical input (same digest, different layout; hashes and method in
+  [test-recordings/README.md](../../test-recordings/README.md)), so a pinned sha
   fails on every machine but the one that generated the golden. The
   digest, which is JDK-independent, is the gate; the fixture-sha rule
   survives only for the committed `tck-test.jfr`.

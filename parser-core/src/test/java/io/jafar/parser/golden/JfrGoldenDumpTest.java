@@ -1,12 +1,17 @@
 package io.jafar.parser.golden;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import io.jafar.testsupport.GoldenFile;
 import io.jafar.testsupport.JfrCorpus;
 import io.jafar.testsupport.ProcessorCount;
 import io.jafar.testsupport.jfr.JfrCanonicalDump;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -20,12 +25,12 @@ import org.junit.jupiter.params.provider.EnumSource;
  * <p>The golden holds the line count, a digest over the sorted dump lines and the per-event-type
  * counts, plus the fixture sha256 for the committed TCK recording; the two generated fixtures
  * record no fixture sha, because their bytes are reproducible only on the JDK build that produced
- * them (measured: Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 produce different output for
- * identical input, so a pinned sha fails everywhere except the machine that generated the goldens —
- * the CI runner — while telling us nothing about parser correctness). The digest, which is
+ * them (measured across Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 — see {@code
+ * test-recordings/README.md} — so a pinned sha survives only on the JDK build that wrote the
+ * golden, wherever that is, and says nothing about parser correctness). The digest, which is
  * JDK-independent, remains the gate; the full dump is materialized only on a mismatch, into {@code
  * build/golden-actual}, next to the new golden, for the review diff (Risk 4: the tck deep-resolved
- * dump is ~480 MB; a green run never builds it).
+ * dump is ~454 MB, measured 453,889,122 bytes; a green run never builds it).
  *
  * <p>A change to any parsed value — a seeded decode-path change, a swapped wrapped-constant
  * handling — fails here naming the fixture and the regeneration command (AC-4.2, the DataShapes
@@ -64,6 +69,37 @@ class JfrGoldenDumpTest {
         JfrCanonicalDump.digest(recording, true, !corpus.isGenerated()),
         () -> fullDump(recording),
         REGEN_COMMAND);
+  }
+
+  /**
+   * The pin asymmetry is load-bearing, so it is asserted, not just documented: the generated
+   * fixtures' goldens keep an empty {@code fixture-sha256} line (their bytes differ per JDK build),
+   * while the committed TCK recording keeps a 64-hex pin. A stray regeneration with the wrong pin
+   * would otherwise pass on the machine that produced it and fail nowhere.
+   */
+  @ParameterizedTest
+  @EnumSource(JfrCorpus.class)
+  void goldenPinsFixtureShaOnlyForTheCommittedRecording(JfrCorpus corpus) throws IOException {
+    String dir = System.getProperty(GoldenFile.GOLDEN_DIR_PROPERTY);
+    if (dir == null || dir.isEmpty()) {
+      throw new AssertionError(
+          "system property " + GoldenFile.GOLDEN_DIR_PROPERTY + " is not set; run via Gradle");
+    }
+    String golden = Files.readString(Paths.get(dir).resolve(corpus.fixtureName() + ".golden"));
+    String shaLine =
+        golden
+            .lines()
+            .filter(l -> l.startsWith("fixture-sha256="))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no fixture-sha256 line in " + golden));
+    String sha = shaLine.substring("fixture-sha256=".length());
+    if (corpus.isGenerated()) {
+      assertEquals("", sha, "generated fixture golden must not pin the JDK-build-dependent bytes");
+    } else {
+      assertTrue(
+          sha.matches("[0-9a-f]{64}"),
+          "committed TCK recording lost its fixture-sha256 pin: " + sha);
+    }
   }
 
   /**
