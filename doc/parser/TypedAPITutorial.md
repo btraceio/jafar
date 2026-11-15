@@ -52,7 +52,8 @@ Event interfaces are plain Java interfaces that represent JFR event types. They:
 
 Handlers are lambda functions or method references that:
 - Receive event instances and a control object
-- Execute synchronously on the parser thread
+- Execute on the chunk parsing threads, concurrently for different chunks, so they must be
+  thread-safe (or use `ParsingContext.create().withParallelism(1)` for sequential, file-ordered calls)
 - Should be fast (offload heavy work to background threads)
 - Can abort parsing early using `ctl.abort()`
 
@@ -162,7 +163,7 @@ try (TypedJafarParser parser = JafarParser.newTypedParser(Paths.get("recording.j
 
     parser.run();  // Blocks until parsing completes
 
-    reg.destroy(parser);  // Cleanup (optional if parser is closed)
+    reg.close();  // Deregister (optional: closing the parser deregisters every handler)
 }
 ```
 
@@ -358,7 +359,7 @@ Convert JFR tick values to time units:
 
 ```java
 parser.handle(FileRead.class, (event, ctl) -> {
-    long durationNanos = ctl.chunkInfo().convertTicks(event.duration(), TimeUnit.NANOSECONDS);
+    long durationNanos = ctl.chunkInfo().asDurationNanos(event.duration());
     double durationMs = durationNanos / 1_000_000.0;
     System.out.printf("Duration: %.2f ms%n", durationMs);
 });

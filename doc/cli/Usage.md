@@ -47,10 +47,19 @@ jfr> events/jdk.FileRead/bytesRead --limit 5
 
 ### Session Management
 - `open <path> [--alias NAME]`: Open a recording file.
+- `connect`: List local JVMs (`[jfr]` marks one with a discoverable disk-backed JFR event repository).
+- `connect <pid> [--alias NAME] [--repository <dir>]`: Attach a live session to a running JVM's JFR event repository (local machine only, no attach API). While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`, `backend`) are not available — use `tail`.
+- `tail [filter] [--limit N] [--format table|json]`: Stream events from the live session until Ctrl-C, the target JVM exits, or the limit is reached. The filter is a JfrPath expression with per-event operators only (`filter`, `select`, transforms) — aggregations (`count()`, `groupBy()`, …) need the full row set and are rejected.
 - `sessions`: List all sessions; marks the current one.
 - `use <id|alias>` (or `session`): Switch current session.
 - `close [<id|alias>|--all]`: Close a session or all.
 - `info [<id|alias>]`: Show session information.
+
+Live-streaming caveats: the target needs a **disk-backed** recording (e.g.
+`-XX:StartFlightRecording=disk=true`); in-memory recordings only reach the on-disk repository at
+rotation/dump. Slow consumers never slow the target, but events can be lost on the target side
+when its repository wraps (old chunks are deleted); the drop count is visible in `info` and the
+tail status line. See [Live event streaming](#live-event-streaming) for a walkthrough.
 
 ### Querying and Browsing
 - `show <expr> [--limit N] [--format table|json] [--tree] [--depth N] [--list-match any|all|none]`: Evaluate a JfrPath expression. For list fields, `--list-match` sets default matching mode.
@@ -113,6 +122,12 @@ JFR analysis tool with interactive and non-interactive modes
 Execute queries without entering the shell, suitable for scripting and CI/automation:
 
 ```bash
+# List local JVMs and their discoverable JFR event repositories
+jfr-shell ps
+
+# Stream live events from a running JVM until Ctrl-C (exit 0 on interrupt)
+jfr-shell tail <pid> ["events/<type>[filter] | filter(...)"] [--repository <dir>] [--limit N] [--format table|json]
+
 # Show command - Execute JfrPath queries
 jfr-shell show <jfr-file> "<expression>" [options]
   --limit, -l <N>           Limit number of results
@@ -364,6 +379,46 @@ JFR Shell provides intelligent context-aware tab completion throughout the query
 - After `--` — Available options: `--limit`, `--format`, `--tree`, `--depth`, `--list-match`
 
 Press Tab at any point to see context-appropriate suggestions.
+
+## Live Event Streaming
+
+Attach to a running JVM and watch its JFR events as they arrive (JEP-349 style, local machine,
+no attach API — the shell reads the target's on-disk event repository):
+
+```bash
+jfr-shell
+jfr> connect                 # list local JVMs; [jfr] = disk-backed JFR repository found
+jfr> connect 12345           # attach; the live session becomes current
+jfr> tail                    # stream all events until Ctrl-C
+jfr> tail "events/jdk.FileRead | filter(bytesRead > 0)" --limit 100
+jfr> info                    # live statistics: events seen, dropped, stream state
+jfr> close                   # detach (the target JVM is never modified)
+```
+
+One-shot (scripting/automation):
+
+```bash
+jfr-shell ps
+jfr-shell tail 12345 "events/jdk.ExecutionSample" --format json
+```
+
+Notes:
+
+- The target needs a **disk-backed** recording (`-XX:StartFlightRecording=disk=true`); an
+  in-memory recording only reaches the on-disk repository at rotation/dump.
+- Discovery scans the platform temp base (`/tmp` on Linux, the per-user temp dir on macOS,
+  `%TEMP%` on Windows). If the target uses `-XX:FlightRecorderOptions=repository=...` or a
+  custom location, pass it with `--repository <dir>` — supported by `connect <pid>` (interactive)
+  and the one-shot `jfr-shell tail <pid>` command only. The interactive `tail` streams from the
+  repository the live session attached to at `connect` time; it accepts only `--limit` and
+  `--format`. Explicitly passed repositories are hardened like discovery-found ones (same owner,
+  liveness and symlink checks).
+- While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`,
+  `backend`, LLM queries) are rejected with a pointer to `tail`; `sessions`/`use`/`close`/`info`
+  work unchanged. Per-event filters only — aggregations are Phase 2 (see the design doc,
+  `doc/design/jfr-event-streaming.md`).
+- Ctrl-C ends `tail` cleanly: the prompt stays alive (interactive) or the process exits 0
+  (one-shot).
 
 ## See Also
 

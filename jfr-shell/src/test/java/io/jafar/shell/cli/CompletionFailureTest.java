@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -35,7 +36,7 @@ class CompletionFailureTest {
           .normalize();
 
   @TempDir Path tempDir;
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private Path recording;
 
   @BeforeEach

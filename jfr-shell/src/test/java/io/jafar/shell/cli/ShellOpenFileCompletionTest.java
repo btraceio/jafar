@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -71,7 +72,7 @@ class ShellOpenFileCompletionTest {
     Files.writeString(jfr, "x");
     Files.writeString(txt, "x");
 
-    SessionManager<JFRSession> sm =
+    SessionManager<Session> sm =
         new SessionManager<>((p, c) -> Mockito.mock(JFRSession.class), ParsingContext.create());
     ShellCompleter completer = new ShellCompleter(sm, null);
     List<Candidate> cands = new ArrayList<>();

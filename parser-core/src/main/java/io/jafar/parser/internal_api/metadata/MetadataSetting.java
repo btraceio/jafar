@@ -61,8 +61,8 @@ final class MetadataSetting extends AbstractMetadataElement {
   }
 
   @Override
-  protected void onSubelement(int count, AbstractMetadataElement element) {
-    throw new IllegalStateException("Unexpected subelement: " + element.getKind());
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {
+    throw unexpectedSubelement(element);
   }
 
   @Override

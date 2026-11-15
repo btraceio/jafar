@@ -63,6 +63,16 @@ public final class MetadataField extends AbstractMetadataElement {
       throws IOException {
     super(stream, MetadataElementKind.FIELD);
     readSubelements(event);
+    // Parsed lazily and unchecked by getDimension(); a dimension that is not a number is a
+    // property of the recording, so reject it here where it can be reported as one.
+    if (dimensionVal != null) {
+      try {
+        dimension = Integer.parseInt(dimensionVal);
+      } catch (NumberFormatException e) {
+        throw new IOException(
+            "Metadata field " + getName() + ": invalid dimension \"" + dimensionVal + "\"");
+      }
+    }
   }
 
   /**
@@ -112,6 +122,12 @@ public final class MetadataField extends AbstractMetadataElement {
    */
   public long getTypeId() {
     if (classId == null) {
+      if (classIdVal == null) {
+        // No "class" attribute at all: the type stays unresolved, and decoding or skipping a
+        // value of it reports that.
+        classId = -1L;
+        return classId;
+      }
       try {
         classId = ParsingUtils.parseLongSWAR(classIdVal);
       } catch (NumberFormatException e) {
@@ -154,14 +170,14 @@ public final class MetadataField extends AbstractMetadataElement {
    * @param element the subelement that was read
    */
   @Override
-  protected void onSubelement(int count, AbstractMetadataElement element) {
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {
     if (element.getKind() == MetadataElementKind.ANNOTATION) {
       if (annotations == null) {
         annotations = new ArrayList<>(count);
       }
       annotations.add((MetadataAnnotation) element);
     } else {
-      throw new IllegalStateException("Unexpected subelement: " + element.getKind());
+      throw unexpectedSubelement(element);
     }
   }
 

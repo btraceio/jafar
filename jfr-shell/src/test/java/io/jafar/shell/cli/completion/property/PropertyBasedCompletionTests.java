@@ -16,6 +16,7 @@ import io.jafar.shell.cli.completion.property.models.ValidationResult;
 import io.jafar.shell.cli.completion.property.validators.CandidateValidator;
 import io.jafar.shell.cli.completion.property.validators.CompletionContextValidator;
 import io.jafar.shell.cli.completion.property.validators.CompletionInvariants;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -43,7 +44,7 @@ import org.jline.reader.ParsedLine;
 @PropertyDefaults(tries = 1000, shrinking = ShrinkingMode.FULL)
 public class PropertyBasedCompletionTests {
 
-  private static SessionManager<JFRSession> sessionManager;
+  private static SessionManager<Session> sessionManager;
   private static ShellCompleter completer;
   private static MetadataService metadataService;
   private static CompletionContextAnalyzer analyzer;

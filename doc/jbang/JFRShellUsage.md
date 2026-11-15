@@ -15,8 +15,6 @@ jbang jfr-shell@btraceio recording.jfr
 # From GitHub script URL
 jbang https://github.com/btraceio/jbang-catalog/blob/main/jfr-shell.java recording.jfr
 
-# From JitPack coordinates
-jbang io.github.btraceio:jfr-shell:0.1.0 recording.jfr
 ```
 
 ### Install as Command
@@ -301,24 +299,6 @@ Or use the full GitHub URL directly:
 ```bash
 jbang https://github.com/btraceio/jbang-catalog/blob/main/jfr-shell.java recording.jfr
 ```
-
----
-
-### JitPack Build Failed
-
-**Problem**: `Could not resolve io.github.btraceio:jfr-shell:0.1.0`
-
-**Solution**: Check JitPack build status:
-
-```bash
-# Visit in browser:
-https://jitpack.io/com/github/btraceio/jfr-shell/0.1.0/build.log
-
-# Or trigger build via curl:
-curl https://jitpack.io/com/github/btraceio/jfr-shell/0.1.0/build.log
-```
-
-Wait a few minutes for JitPack to build the artifact, then retry.
 
 ---
 

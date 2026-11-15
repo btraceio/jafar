@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,7 +27,7 @@ class ConstantsCommandOptionsTest {
           .toAbsolutePath()
           .normalize();
 
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private CommandDispatcherTest.BufferIO io;
   private CommandDispatcher dispatcher;
 

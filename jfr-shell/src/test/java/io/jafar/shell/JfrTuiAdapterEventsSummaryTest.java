@@ -3,6 +3,7 @@ package io.jafar.shell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.util.List;
@@ -41,7 +42,7 @@ class JfrTuiAdapterEventsSummaryTest {
     assertEquals(List.of(1, 2), session.getAvailableChunkIds(), "chunks in fixture");
     adapter =
         new JfrTuiAdapter(
-            new SessionManager<JFRSession>(
+            new SessionManager<Session>(
                 (path, c) -> new JFRSession(path, (ParsingContext) c), ParsingContext.create()),
             null);
   }

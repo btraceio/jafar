@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
@@ -45,11 +46,11 @@ class ChunkIndexTest {
   @Test
   void completedChunkIdsSelectThatChunk() throws Exception {
     ParsingContext ctx = ParsingContext.create();
-    SessionManager<JFRSession> sessions =
+    SessionManager<Session> sessions =
         new SessionManager<>((path, c) -> new JFRSession(path, (ParsingContext) c), ctx);
     sessions.open(TCK_RECORDING, null);
     try {
-      JFRSession session = sessions.getCurrent().get().session;
+      JFRSession session = (JFRSession) sessions.getCurrent().get().session;
       List<Integer> ids = session.getAvailableChunkIds();
       assertEquals(List.of(1, 2), ids, "completion ids");
       List<Object> selected = new ArrayList<>();

@@ -39,7 +39,7 @@ Workflows live in `.github/workflows/`:
 
 | Workflow | Runs | Local reproduction |
 |---|---|---|
-| `pr-tests.yml` (Tests, JDK matrix; Combined Test Report) | `./gradlew build` on newer JDKs; on JDK 8 only `:parser-core`/`:parser-codegen` `compileJava` + `test8`; plus MCP smoke tests, japicmp, Gradle-plugin tests, TCK | `./gradlew build` (JDK 8 leg: `./gradlew -x spotlessCheck :parser-core:test8 :parser-codegen:test8`) |
+| `pr-tests.yml` (Tests, JDK matrix; Combined Test Report; api-compat + api-break) | `./gradlew build` on newer JDKs; on JDK 8 only `:parser-core`/`:parser-codegen` `compileJava` + `test8`; plus MCP smoke tests, Gradle-plugin tests, TCK; separate `api-compat` job runs japicmp against tag-derived baselines, and the `api-break` job checks its reports for breaks | `./gradlew build` (JDK 8 leg: `./gradlew -x spotlessCheck :parser-core:test8 :parser-codegen:test8`) |
 | `go-parser.yml` | only when `go-parser/**` changes: `go vet`, `go test -race` | `cd go-parser && go vet ./... && go test -race ./... && gofmt -l .` (must print nothing) |
 | `pr-e2e.yml` | only with the `e2e` label | `./gradlew :jfr-mcp:endToEndTest` |
 | `pr-results-comment.yml` | posts results on fork PRs | — |
@@ -52,8 +52,9 @@ Procedure:
    when `./get_resources.sh` can't fetch recordings. Compare failing sets **by name** against the
    base branch, never by count (R6).
 4. Formatting failures: `./gradlew spotlessApply`, commit the result.
-5. `japicmp` failure on `shell-core`: an API break. Either revert the break or tell the user — don't
-   suppress the check.
+5. `api-break` job failure (decided from the `api-compat` japicmp reports): an API break. Either
+   revert the break or, with the user's consent, add an `API-Break: <reason>` statement to the PR
+   body — don't suppress or bypass the check. See `doc/agents/Gates.md`.
 6. A test that is slow rather than failing: measure under a raised deadline before calling it flaky
    (see the case file under R6).
 7. If you can't tell whether a failure is flaky after one rerun-by-fix, say so and ask; don't loop.

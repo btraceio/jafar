@@ -13,8 +13,9 @@ This tutorial teaches you how to use JFR Shell, an interactive CLI for exploring
 8. [Advanced Queries](#advanced-queries)
 9. [Event Decoration and Joining](#event-decoration-and-joining)
 10. [Multi-Session Management](#multi-session-management)
-11. [Non-Interactive Mode](#non-interactive-mode)
-12. [Real-World Examples](#real-world-examples)
+11. [Live Event Streaming](#live-event-streaming)
+12. [Non-Interactive Mode](#non-interactive-mode)
+13. [Real-World Examples](#real-world-examples)
 
 ## Installation
 
@@ -864,6 +865,55 @@ jfr> close prod
 # Close all
 jfr> close --all
 ```
+
+## Live Event Streaming
+
+Watch a running JVM's JFR events as they happen — JFR as structured logging, live triage of a
+misbehaving service — without touching the target (no agent, no attach API; the shell reads the
+target's on-disk event repository, JEP-349 style):
+
+```bash
+jfr> connect                 # list local JVMs; [jfr] = disk-backed JFR repository found
+Local JVMs (use 'connect <pid>' to attach):
+  12345  [jfr] com.example.PaymentService
+  12346         com.intellij.idea.Main
+
+jfr> connect 12345 --alias prod
+Connected to PID 12345 (repository: /tmp/2026_11_09_10_00_00_12345) as 'prod'; use 'tail' to stream events, 'close' to detach
+
+jfr> tail "events/jdk.FileRead | filter(bytesRead > 100000)" --limit 20
+10:00:01.123 jdk.FileRead eventThread={...javaName=main...} path=/data/export.csv bytesRead=250000
+10:00:02.001 jdk.FileRead eventThread={...javaName=pool-2-thread-1...} path=/data/export2.csv bytesRead=1048576
+^C tail finished (interrupted): 2 events shown, 871 filtered, 0 dropped by the live session
+```
+
+The filter is a JfrPath expression with **per-event** operators (`filter`, `select`, transforms).
+Aggregations need the full row set and do not exist in a live stream — that is Phase 2
+(`doc/design/jfr-event-streaming.md`).
+
+```bash
+jfr> info                    # live statistics
+Session Information:
+  Type: jfr-live
+  pid: 12345
+  repository: /tmp/2026_11_09_10_00_00_12345
+  eventsSeen: 891
+  dropped: 0
+  state: running
+```
+
+What to know:
+
+- The target needs a **disk-backed** recording (`-XX:StartFlightRecording=disk=true`). An
+  in-memory recording only reaches the on-disk repository at rotation/dump.
+- A slow `tail` never slows the target, but the target's repository wrap deletes old chunks —
+  events can be lost on the target side; the drop counters tell you how much arrived.
+- Custom repository location? `connect <pid> --repository <dir>`.
+- While the live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`)
+  are rejected with a pointer to `tail`; `sessions` / `use` / `close` work as usual. Switching
+  away with `use` and back restores full access.
+- One-shot form for scripting: `jfr-shell ps` and `jfr-shell tail <pid> [filter] [--limit N]`
+  (Ctrl-C exits 0; the target JVM exiting ends the stream cleanly).
 
 ## Non-Interactive Mode
 

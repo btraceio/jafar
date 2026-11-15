@@ -115,14 +115,14 @@ public final class MetadataAnnotation extends AbstractMetadataElement {
    * @param element the subelement that was read
    */
   @Override
-  protected void onSubelement(int count, AbstractMetadataElement element) {
+  protected void onSubelement(int count, AbstractMetadataElement element) throws IOException {
     if (annotations == null) {
       annotations = new ArrayList<>(count);
     }
     if (element.getKind() == MetadataElementKind.ANNOTATION) {
       annotations.add((MetadataAnnotation) element);
     } else {
-      throw new IllegalStateException("Unexpected subelement: " + element.getKind());
+      throw unexpectedSubelement(element);
     }
   }
 

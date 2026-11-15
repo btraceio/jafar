@@ -13,6 +13,7 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.MutableConstantPool;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.providers.ConstantPoolProvider;
 import java.nio.charset.StandardCharsets;
@@ -77,7 +78,7 @@ class CrossrefDecodeFailureTest {
 
   @TempDir Path dir;
   private BufferIO io;
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private CommandDispatcher dispatcher;
 
   @BeforeEach

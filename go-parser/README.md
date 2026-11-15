@@ -293,6 +293,16 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   `OnError` that returns nil. Neither delivers the bad event, even partially.
   Pinned by `TestUndecodableEventIsReportedAndSkipped` here and
   `EventDecodeFailureTest` in `parser-core`.
+* **Both reject a malformed recording with an error that names the defect; the checks are the
+  same, the strictness is not.** The size, count, offset, nesting-depth and undeclared-type checks
+  in `forEachChunk`, `readChunkHeader`, `readElement`, `readCheckpoints` and `readValue` have
+  Java counterparts with the same bounds (64 levels of metadata and of value nesting, counts
+  bounded by the bytes that are left, 1024 zero type ids). Two things differ. A metadata class
+  without a `name` is kept here with an empty name; Java rejects the recording, because it
+  dispatches on type names. And a checkpoint chain that cannot be followed is recoverable here
+  (see the next point) while it fails the parse in Java. Pinned by `MalformedRecordingTest` in
+  `parser-core`; the same corruption sweep was run against this parser when the Java checks
+  were added (2367 inputs, no panic, no hang) but is not a committed test here.
 * **A corrupted constant pool entry is recoverable here.** Go reports it
   through `Options.OnError` and keeps the entries indexed before it; Java fails
   the parse, naming the pool and index, even with a decode error handler, since
@@ -394,3 +404,16 @@ module is built outside the repository tree.
 
 The event counts pinned by `recording_test.go` were cross-checked against the
 JDK's own `jfr summary` tool.
+
+`internal/differential` is a harness, not API: it is the Go half of the
+Java/Go differential gate that [doc/agents/Gates.md](../doc/agents/Gates.md)
+in the repository root documents. `differential.Dump` renders a recording
+into the canonical dump format shared with the Java side's `JfrCanonicalDump`
+(one sorted line per event, constant pools resolved deep, floats as IEEE-754
+bit patterns, a header naming the side, the fixture's sha256 and the event
+count), and `internal/differential/cmd/jfrdump` is the thin command the
+Java-side `:parser-core:differentialTest` task invokes
+(`go run ./internal/differential/cmd/jfrdump`). It lives outside `jfr/` on
+purpose — being test tooling, not parser production code, the Java/Go parity
+rules that track production changes to the untyped parsers do not apply to
+it — and nothing in this module's public surface depends on it.

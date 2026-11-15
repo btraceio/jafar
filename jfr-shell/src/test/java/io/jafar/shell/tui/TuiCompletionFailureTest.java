@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.cli.ShellCompleter;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -34,7 +35,7 @@ class TuiCompletionFailureTest {
 
   @TempDir Path tempDir;
   private final ExecutorService pool = Executors.newSingleThreadExecutor();
-  private SessionManager<JFRSession> sessions;
+  private SessionManager<Session> sessions;
   private Path recording;
   private TuiContext ctx;
   private TuiCommandExecutor executor;

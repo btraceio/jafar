@@ -149,6 +149,31 @@ tasks.named('test') {
         .withPropertyName('sharedFixtures')
         .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.property('writeSharedFixtures', providers.environmentVariable('JAFAR_WRITE_FIXTURES').orElse(''))
+    // The allocation tests need their own JVM args and the budget file; they run in allocationTest
+    exclude 'io/jafar/parser/alloc/**'
+    // The Java/Go differential needs the Go toolchain on PATH, which `test` (and therefore
+    // `build`) must not assume: the class runs only in its own differentialTest task, excluded
+    // here (see that task's comment for why it is not in `check` either).
+    exclude '**/JavaGoDifferentialTest*'
+    // Quiet the parser's slf4j-simple logging (AC-4.5, kb/fuzz-robustness-baseline item 3): the
+    // fuzz corpus replays corrupted recordings whose metadata reads dump a stack trace per event
+    // at WARN, swamping CI output. io.jafar loggers go to ERROR; nothing else changes. Verified
+    // before the change: no parser-core test captures stderr or asserts on log output.
+    systemProperty 'org.slf4j.simpleLogger.log.io.jafar', 'error'
+    // Jazzer session bound (step 7, AC-7.1): the duration a coverage-guided session (JAZZER_FUZZ=1)
+    // of the fuzz test below may run before libFuzzer stops. jazzer-junit 0.30.0 resolves that
+    // bound from the jazzer.max.duration system property (the JAZZER_MAX_DURATION env var works
+    // too) BEFORE falling back to @FuzzTest(maxDuration), whose default is "5m" — so the
+    // annotation stays at its default and this property is the single knob, fed by
+    // -Pjafar.fuzz.maxDuration=<duration> (default 5m; e.g. 30s for a short local run). In
+    // regression mode (JAZZER_FUZZ unset) nothing consults the bound, so the property is inert.
+    // Verified against jazzer-junit 0.30.0: AgentConfigurator.forFuzzing applies the annotation
+    // value only via Opt.maxDuration.setIfDefault, and FuzzTestExecutor passes Opt.maxDuration
+    // to libFuzzer as -max_total_time=<seconds>.
+    def fuzzMaxDuration = providers.gradleProperty('jafar.fuzz.maxDuration').orElse('5m').get()
+    systemProperty 'jazzer.max.duration', fuzzMaxDuration
+    // A changed bound must re-run the task, not leave it UP-TO-DATE with the old session length.
+    inputs.property('jazzerMaxDuration', fuzzMaxDuration)
     // Ensure JUnit 5 and fixed report locations for CI collection
     useJUnitPlatform()
     reports {
@@ -176,6 +201,8 @@ tasks.register('test8', Test) {
     group = 'verification'
     testClassesDirs = files(layout.buildDirectory.dir('classes/java/test8'))
     classpath = sourceSets.test8.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/test8'))
+    // The allocation tests need their own JVM args and the budget file; they run in allocationTest8
+    exclude 'io/jafar/parser/alloc/**'
     shouldRunAfter tasks.named('test')
     javaLauncher.set(j8LauncherProvider)
     dependsOn tasks.named('compileTest8JavaCompat')
@@ -189,6 +216,117 @@ tasks.register('test8', Test) {
     }
 }
 
+// --- Allocation budget gate (D9) ---------------------------------------------------------
+// The -XX:ActiveProcessorCount=4 pin is load-bearing, not a tuning knob: StreamingChunkParser
+// sizes its chunk pool max(processors - 2, 1), so the pin fixes the pool at 2 threads, matching
+// tck-test.jfr's 2 chunks. AllocationMeter sums the pool threads' ABSOLUTE allocated-bytes
+// counters, which is only valid for fresh threads of this parse; a pool that followed the host
+// CPU count would also vary the thread-to-chunk mapping and, with it, the measured figure.
+//
+// -XX:TieredStopAtLevel=1 pins compilation to C1, which performs no escape analysis and therefore
+// no timing-dependent scalar replacement. Measured with default tiered compilation (T12), the
+// pool-thread sum wobbled by 0.6-6% between otherwise identical runs, because whether C2 had
+// compiled (and eliminated allocations in) the hot decode loop by the measured parse depends on
+// background compile-queue timing. Under C1 the same measurement is byte-identical across runs,
+// so the budget is the bytecode-level truth of what the parse allocates, not what the JIT happens
+// to eliminate on a given run — and escape-analysis elimination is not a guarantee the parser
+// may rely on anyway (AC-3.2/AC-3.3; spec Q6 anticipated exactly this trade-off).
+def allocationBudgetsFile = rootProject.file('gradle/allocation-budgets.properties')
+
+tasks.register('allocationTest', Test) {
+    description = 'Asserts the untyped parse of tck-test.jfr stays within its allocation budget (JDK 21).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/jafar/parser/alloc/**'
+    javaLauncher.set(j21LauncherProvider)
+    useJUnitPlatform()
+    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
+    // A budget change re-runs the gate, and so does a fixture change: without the recording as
+    // an input, an edited tck-test.jfr would leave the task UP-TO-DATE with a stale verdict.
+    inputs.file(allocationBudgetsFile)
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/allocationTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/allocationTest"))
+    }
+}
+
+// Same gate in the JDK 8 cell, modelled on `test8`: the test8 source set (compiled to Java 8
+// bytecode by compileTest8JavaCompat) run on the JDK 8 launcher. test8Implementation extendsFrom
+// testImplementation, so the test-support dependency above reaches this classpath too.
+tasks.register('allocationTest8', Test) {
+    description = 'Asserts the untyped parse of tck-test.jfr stays within its allocation budget (JDK 8).'
+    group = 'verification'
+    testClassesDirs = files(layout.buildDirectory.dir('classes/java/test8'))
+    classpath = sourceSets.test8.runtimeClasspath + files(layout.buildDirectory.dir('classes/java/test8'))
+    include 'io/jafar/parser/alloc/**'
+    javaLauncher.set(j8LauncherProvider)
+    dependsOn tasks.named('compileTest8JavaCompat')
+    useJUnitPlatform()
+    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
+    inputs.file(allocationBudgetsFile)
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/allocationTest8"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/allocationTest8"))
+    }
+}
+
+// --- Java/Go differential gate (safety-harness step 6) ---------------------------------
+// differentialTest runs the end-to-end Java/Go differential (JavaGoDifferentialTest) over the
+// JfrCorpus fixtures and the shared go-parser/jfr/testdata node-pool recordings: each fixture is
+// dumped by JfrCanonicalDump (side=java) in this JVM and by `go run
+// ./internal/differential/cmd/jfrdump` (side=go) in a child process, and DumpComparator compares
+// the two dumps line by line under the committed allowlist.
+//
+// Deliberately NOT part of `check` (so not of `build`): the task needs the Go toolchain on PATH,
+// which no plain Java build may assume — a machine without Go must still pass `build`. Run it
+// explicitly with `./gradlew :parser-core:differentialTest`, or in CI where setup-go has installed
+// the toolchain (the path-filtered `differential` job).
+tasks.register('differentialTest', Test) {
+    description = 'Compares the Java and Go untyped parsers over the shared JFR corpus (needs Go on PATH).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/jafar/parser/differential/JavaGoDifferentialTest*'
+    javaLauncher.set(j21LauncherProvider)
+    useJUnitPlatform()
+    // The dump materializes the whole deep-resolved corpus in memory (tck-test.jfr alone renders
+    // 67,657 events of nested values); `test` runs with the same headroom.
+    jvmArgs '-Xmx8g'
+    // Where JavaGoDifferentialTest finds the Go module whose jfrdump command it drives
+    systemProperty 'jafar.go.dir', rootProject.file('go-parser').absolutePath
+    // The whole Go module is an input: the differential verdict covers go-parser/jfr (the parser
+    // under test) and go-parser/internal/differential (the harness) equally, so any change under
+    // go-parser/** must re-run the gate instead of leaving it UP-TO-DATE with a stale verdict.
+    inputs.dir(rootProject.file('go-parser'))
+        .withPropertyName('goDifferentialSources')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    // ... and so is the committed allowlist the compare applies.
+    inputs.file(rootProject.file('parser-core/src/test/resources/differential/allowlist.txt'))
+        .withPropertyName('differentialAllowlist')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    shouldRunAfter tasks.named('test')
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/differentialTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/differentialTest"))
+    }
+}
+
+tasks.named('check') {
+    // `build` runs the JDK 21 allocation cell; allocationTest8 runs in the CI JDK 8 cell
+    dependsOn tasks.named('allocationTest')
+}
+
 dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'
@@ -199,6 +337,15 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    // Allocation meter + budgets (test-support); test8 inherits it because test8Implementation
+    // extendsFrom testImplementation
+    testImplementation project(':test-support')
+    // Jazzer regression mode (AC-4.5, kb/a2-jazzer-jdk-floor): replays the committed corpus of
+    // io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/ as plain JUnit parameters in
+    // this test JVM. JAZZER_FUZZ is never set here, so the run stays in regression mode; Jazzer
+    // still dynamically attaches its instrumentation agent (byte-buddy), which prints its own
+    // INFO/WARNING lines to stderr — that is Jazzer's output, not parser logging.
+    testImplementation 'com.code-intelligence:jazzer-junit:0.30.0'
     // Gradle 9 no longer provides the JUnit Platform launcher on the test runtime classpath
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 

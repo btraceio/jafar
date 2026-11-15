@@ -720,4 +720,176 @@ class JfrPathSelectOpTest {
     assertEquals("/tmp/file.txt", out.get(0).get("path"));
     assertEquals("0.5 KB", out.get(0).get("sizeKb"));
   }
+
+  // --- top(n, by=<collection-valued field>[0]): one value per row, no Integer-over-Collection
+  // crash. Each of the two routes below fails at ITS OWN site if only that site's fix reverts. ---
+
+  /** Events whose by= field holds a Collection (the JDK backend's array shape). */
+  private static JfrPathEvaluator.EventSource collectionFieldEvents() {
+    return (rec, consumer) -> {
+      consumer.accept(
+          new JfrPathEvaluator.Event("jdk.FileRead", Map.of("ids", List.of(30L), "path", "c")));
+      consumer.accept(
+          new JfrPathEvaluator.Event("jdk.FileRead", Map.of("ids", List.of(10L), "path", "a")));
+      consumer.accept(
+          new JfrPathEvaluator.Event("jdk.FileRead", Map.of("ids", List.of(20L), "path", "b")));
+    };
+  }
+
+  @Test
+  void streamingTopByIndexedCollectionField() throws Exception {
+    // Size-1 pipeline: the single op dispatches through the first-op switch to the streaming
+    // Aggregations.aggregateTop comparator
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+
+    var eval = new JfrPathEvaluator(collectionFieldEvents());
+    var q = JfrPathParser.parse("events/jdk.FileRead | top(2, by=ids[0], asc=true)");
+
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+
+    assertEquals(2, out.size());
+    assertEquals("a", out.get(0).get("path"));
+    assertEquals("b", out.get(1).get("path"));
+  }
+
+  @Test
+  void cachedTopByIndexedCollectionField() throws Exception {
+    // Pipeline with top NOT first: head goes through the first-op switch, then top is applied
+    // to the materialized rows via applyToRows -> RowOps.applyTop (the cached twin site)
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+
+    var eval = new JfrPathEvaluator(collectionFieldEvents());
+    var q = JfrPathParser.parse("events/jdk.FileRead | head(3) | top(2, by=ids[0], asc=true)");
+
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+
+    assertEquals(2, out.size());
+    assertEquals("a", out.get(0).get("path"));
+    assertEquals("b", out.get(1).get("path"));
+  }
+
+  // --- substring() argument validation ---
+
+  @Test
+  void substringValidatesItsArguments() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (rec, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event("jdk.FileRead", Map.of("path", "/tmp/x.txt")));
+            };
+    var eval = new JfrPathEvaluator(src);
+
+    java.util.function.Function<String, IllegalArgumentException> runQuery =
+        query ->
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> eval.evaluate(session, JfrPathParser.parse(query)));
+
+    IllegalArgumentException ex;
+
+    ex = runQuery.apply("events/jdk.FileRead | select(substring(path, 'oops') as s)");
+    assertTrue(ex.getMessage().contains("substring() start must be numeric"), ex.getMessage());
+
+    ex = runQuery.apply("events/jdk.FileRead | select(substring(path, 99) as s)");
+    assertTrue(ex.getMessage().contains("substring() start"), ex.getMessage());
+
+    ex = runQuery.apply("events/jdk.FileRead | select(substring(path, 0 - 1) as s)");
+    assertTrue(ex.getMessage().contains("substring() start"), ex.getMessage());
+
+    ex = runQuery.apply("events/jdk.FileRead | select(substring(path, 0, 'x') as s)");
+    assertTrue(ex.getMessage().contains("substring() length must be numeric"), ex.getMessage());
+
+    ex = runQuery.apply("events/jdk.FileRead | select(substring(path, 0, 0 - 1) as s)");
+    assertTrue(
+        ex.getMessage().contains("substring() length must not be negative"), ex.getMessage());
+
+    // start == length is legal and yields "" ("/tmp/x.txt" is 10 chars)
+    List<Map<String, Object>> out =
+        eval.evaluate(
+            session, JfrPathParser.parse("events/jdk.FileRead | select(substring(path, 10) as s)"));
+    assertEquals("", out.get(0).get("s"));
+  }
+
+  // --- if(): numeric zero is the false branch ---
+
+  @Test
+  void ifTreatsNumericZeroAsFalse() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (rec, consumer) -> {
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 0L)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 1L)));
+            };
+
+    var eval = new JfrPathEvaluator(src);
+    var q =
+        JfrPathParser.parse("events/jdk.FileRead | select(if(bytes, 'large', 'small') as size)");
+    List<Map<String, Object>> out = eval.evaluate(session, q);
+
+    assertEquals("small", out.get(0).get("size")); // numeric zero -> false branch
+    assertEquals("large", out.get(1).get("size")); // non-zero -> true branch
+
+    assertFalse(Coerce.toBoolean(0L));
+    assertTrue(Coerce.toBoolean(1L));
+  }
+
+  // --- comparison boundaries at the literal, through both routes ---
+
+  @Test
+  void comparisonBoundariesAtTheLiteral() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/x.jfr"));
+
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (rec, consumer) -> {
+              // bytes as Long to match the parser's Long-typed numeric literals: the verbatim-moved
+              // EQ/NE coercion returns the actual Number as-is, so Integer actuals never
+              // equals-equal
+              // a Long literal (pre-existing cross-type quirk this pin test must not depend on)
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 0L)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 1L)));
+              consumer.accept(new JfrPathEvaluator.Event("jdk.FileRead", Map.of("bytes", 2L)));
+            };
+    var eval = new JfrPathEvaluator(src);
+
+    java.util.function.BiFunction<String, java.util.Set<Integer>, java.util.Set<Integer>> bytesOf =
+        (predicate, expected) -> {
+          try {
+            List<Map<String, Object>> bracket =
+                eval.evaluate(
+                    session, JfrPathParser.parse("events/jdk.FileRead[" + predicate + "]"));
+            List<Map<String, Object>> pipeline =
+                eval.evaluate(
+                    session,
+                    JfrPathParser.parse("events/jdk.FileRead | filter(" + predicate + ")"));
+            java.util.Set<Integer> bracketBytes = new java.util.TreeSet<>();
+            java.util.Set<Integer> pipelineBytes = new java.util.TreeSet<>();
+            bracket.forEach(r -> bracketBytes.add(((Number) r.get("bytes")).intValue()));
+            pipeline.forEach(r -> pipelineBytes.add(((Number) r.get("bytes")).intValue()));
+            assertEquals(expected, bracketBytes);
+            assertEquals(expected, pipelineBytes);
+            return expected;
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        };
+
+    // Each op includes or excludes exactly the boundary row (bytes == 1)
+    bytesOf.apply("bytes>=1", new java.util.TreeSet<>(java.util.List.of(1, 2)));
+    bytesOf.apply("bytes<=1", new java.util.TreeSet<>(java.util.List.of(0, 1)));
+    bytesOf.apply("bytes!=1", new java.util.TreeSet<>(java.util.List.of(0, 2)));
+    bytesOf.apply("bytes=1", new java.util.TreeSet<>(java.util.List.of(1)));
+    bytesOf.apply("bytes>1", new java.util.TreeSet<>(java.util.List.of(2)));
+    bytesOf.apply("bytes<1", new java.util.TreeSet<>(java.util.List.of(0)));
+  }
 }

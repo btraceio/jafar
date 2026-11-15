@@ -1,0 +1,68 @@
+# Java/Go differential allowlist (io.jafar.parser.differential.DumpComparator).
+#
+# SHRINK-ONLY ALLOWLIST (like the fuzz known-escapes and the ArchUnit freeze store, spec I1/Q14):
+# no test or tool ever writes this file. An entry is added only by a visible hand edit in the diff,
+# always as a '# reason:' comment line immediately followed by the entry line, and only after the
+# divergence it covers has been root-caused.
+#
+# Entry syntax (one entry per line, each preceded by '# reason: <why>'):
+#
+#   equiv <type> <fieldPath> <rule>
+#       Both sides' rendering of that field is normalized by the named rule BEFORE the line
+#       compare; the values themselves are still compared. An equiv entry therefore documents a
+#       representational difference only (identical underlying value, different shape), never a
+#       value divergence. Known rules (registered in DumpComparator):
+#         unwrap-empty-key — a field key '<path>.' (an empty inner key) is renamed to '<path>',
+#                            so 'x.=V' and 'x=V' compare equal. The java map path builds that
+#                            wrapper for a nameless pooled value — a primitive pool class with no
+#                            fields, e.g. a pooled java.lang.String (see the entry below).
+#
+#   diverge <type> <fieldPath> side=<java|go>
+#       The field is excluded from the compare on BOTH sides and listed in the comparator's
+#       output. side names the side at fault: a real cross-parser divergence, not a
+#       representation difference.
+#
+# An entry that matches nothing FAILS the compare with "stale allowlist entry", so fixing a
+# divergence is forced to shrink this list: an equiv entry goes stale when its rule normalizes no
+# line of a fixture that carries the entry's event type, and a diverge entry when the field's
+# content no longer differs between the sides on such a fixture (including when the field is gone
+# from both). This allowlist is one corpus-level list while the differential compares fixture by
+# fixture, so an entry whose event type is absent from both dumps of a fixture is not judged by
+# that fixture. An entry whose type appears in NO fixture of the corpus is therefore silent — a
+# typo'd type name must be caught in review; the gate cannot see it.
+#
+# Root cause (T35, AC-6.4), proven against tck-test.jfr (both sides dump 18 events; every other
+# field byte-identical):
+#
+#   The recording's chunk-2 metadata (metadata id=1, 53 classes) declares
+#     'class id=119 name=datadog.Endpoint super=jdk.jfr.Event simpleType=false fields=7'
+#     with 'field name=endpoint type=java.lang.String typeId=20 constantPool=true',
+#   and 'class id=20 name=java.lang.String simpleType=false primitive=true fields=0' — a
+#   PRIMITIVE class with NO fields, so a pooled entry has no field name to key its value.
+#   ($JAVA_HOME/bin/jfr metadata and jdk.jfr.consumer RecordingFile.readEventTypes() list only
+#   chunk-1's metadata and do not show datadog.Endpoint at all; jfr print does, flat.)
+#
+#   Java untyped map path: MutableConstantPool.decodeAsMap has no name special case for
+#   java.lang.String (its get(), the TYPED path, does: "read the string directly"), so it runs
+#   GenericValueReader.readValue, which reads a primitive pool class as
+#   readSingleValue(stream, null, type, "") — the synthetic EMPTY field name
+#   (GenericValueReader.java:40) — and MapValueBuilder.onStringValue (MapValueBuilder.java:35)
+#   stores {"" -> "GET /actuator/health"}. Values.resolvedDeep keeps that one-entry map
+#   (Values.java:147-150: the collapse branch needs ComplexType.isSimpleType(), which mirrors
+#   ConstantPoolAccessor.isSimpleType() = simpleType && exactly one field — false for
+#   java.lang.String), so even resolvedDeepCollapsed would keep it; the flattening renders
+#   'endpoint.=GET /actuator/health'.
+#
+#   Go path: constantpool.go:191 special-cases ct.Name == "java.lang.String" and returns the
+#   scalar string, and resolveDeep resolves the *Ref through Value() (values.go:135), so the
+#   flattening renders 'endpoint=GET /actuator/health'.
+#
+#   Third oracle: 'jfr print --events datadog.Endpoint' renders
+#     endpoint = "GET /actuator/health"
+#   — the same scalar string both parsers hold. The VALUES are identical; only the java map
+#   path's wrapper key for a nameless primitive pool type differs, so this is an equiv
+#   (representational) entry, not a diverge: the rule renames the java key 'endpoint.' to
+#   'endpoint' and the value is still compared, so a real value divergence keeps failing
+#   (DumpComparatorTest.anEquivEntryStillComparesTheNormalizedValues).
+# reason: representational only — a pooled java.lang.String (primitive class, 0 metadata fields, no field name) is keyed "" by the java map path and returned as the scalar by go's java.lang.String special case; identical values on all 18 events, confirmed by jfr print and the code cited above
+equiv datadog.Endpoint endpoint unwrap-empty-key

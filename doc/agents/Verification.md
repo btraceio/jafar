@@ -87,7 +87,8 @@ script's 90-second cap; run it in the background for more than a few commands.
 **Corollary:** offering something in completion, documenting it, or printing a confirmation are not
 evidence that it works. Confirmation messages lie — see R3.
 
-## R2. Enumerate every path before you call it wired
+| Variable stores | the global `VariableStore` and every open session's store: `set` can copy a lazy variable into any of them, so session close, `invalidate` and `unset` must reach all of them, in both shells (`Shell.closeSession`, `CommandDispatcher.forgetSession`) |
+| `show` of a variable | the whole-variable path and the substituted-query path: flags (`--limit`, `--format`) are substituted on both, and a jar test runs each with a variable-valued flag |
 
 When adding a capability, list every implementation of the interface and every dispatcher that could
 reach it, then check each one. Write the list down; do not do it from memory.
@@ -145,7 +146,7 @@ In this repository the recurring multiplicities are:
 > prompt are two paths; a constructor parameter must not share a name with a field that code in
 > the constructor reaches.
 
-## R3. A fallback that hides a misconfiguration is a bug
+A failure path that loses the failure is a fallback too. A command handler that prints an error and returns normally must record it through the shell's error channel ([Shells.md](Shells.md#scripting-is-shared-one-implementation-four-front-ends)); a `finally` must not run completion callbacks (`onArrayEnd`, `onComplexValueEnd`) on the failure path, where they can throw and replace the original exception. Check: the test that makes the operation fail asserts the original exception type, or the script's stop-on-error summary, not only that something failed.
 
 A `catch` that substitutes a default, a literal that stands in for a real value, a lookup that
 returns `null` and is quietly tolerated — each turns a loud failure into a wrong answer. Either
@@ -244,7 +245,7 @@ looks identical to the file not being read at all.
 > Pinned by `ParseErrorMessageTest` on `NodePoolFixture`. **A failure is only reported once its
 > reason reaches the reader; check what the prompt prints, not what the stack trace holds.**
 
-## R4. Documentation is code — run it
+R4 covers every command a change commits, not only prose: a `package.json` or Gradle script, a gate script and a CI step must each have been run on the final tree, with the result stated (R8). A gate script that nothing invokes (no npm script, no CI job, no row in [Gates.md](Gates.md)) is not a gate; wire it or delete it. Check: run each script the diff adds or edits (`npm run <name>`, `scripts/<gate>.sh`), and grep `.github/workflows/` for every new gate script.
 
 Commands in a README or tutorial are executed by people. Run them, in a clean environment, before
 committing them.
@@ -297,6 +298,26 @@ which is exactly what it is for.
 > itself (`assertEquals(1L, ...)`). When the expected text is a prefix of a plausible wrong one,
 > assert the value, or assert the wrong one is absent; `doc/parser/MapVariables.md` had been
 > promising `5432` all along.
+
+> **Case file — when "fails without the fix" means "never returns".** `MalformedRecordingTest` pins
+> inputs on which the unfixed parser does not throw but spins: a chunk header declaring size 0 left
+> the chunk loop re-reading the same header forever, in a thread no interrupt reaches. Stashing the
+> fix and running the test task the usual way did not produce a red test, it produced nothing — two
+> runs, 15 and 7 minutes, both killed by `timeout` (exit 124) with no JUnit XML written, because the
+> test JVM could not finish. What worked: build the unfixed classes once, keep a copy, and replay
+> the inputs against both copies from a throwaway `main` that gives each input a few seconds on a
+> daemon thread and prints the root cause or `HANG`:
+>
+> ```bash
+> git stash push -- parser-core/src/main && ./gradlew -q :parser-core:compileJava \
+>   && cp -r parser-core/build/classes/java/main /tmp/unfixed; git stash pop
+> java -cp /tmp/unfixed:<slf4j jars>:<dir of the replay class> Replay <inputs>   # before
+> java -cp parser-core/build/classes/java/main:...           Replay <inputs>   # after
+> ```
+>
+> The table that printed (`chunk size 0 -> HANG` before, `IOException: Chunk 1 at offset 0 declares
+> size 0` after) is the R5 record. If the bug is a hang, do not revert-and-run the suite: the
+> suite's own timeout is the only thing that will ever report.
 
 ## R6. Compare failure sets by name, never by count
 
@@ -510,7 +531,7 @@ When a rule earns its place, add the one-line summary to the table in
 [AGENTS.md](../../AGENTS.md#read-this-first) as well — that table is what gets read; this file is
 what gets read second.
 
-## Keeping the rest of it honest
+- **A doc claim that restates a manifest field changes with that field.** Runtime floors, module format and entry points (`engines`, `exports`, `type` in `package.json`; toolchain versions in Gradle) are restated in READMEs and [Build.md](Build.md). When the diff touches one, grep the docs for the old value (for example `grep -rn 'Node.js 20' --include='*.md' .`) and update every hit in the same commit.
 
 The same obligation runs through `doc/agents/`:
 
@@ -577,3 +598,20 @@ take precedence over the generated ones.
 > pooled frames produced empty flame graphs with no error. A synthetic fixture is a model of a
 > producer: match its layout, not just its names, and when it fails a test, find out which of the two
 > is wrong before changing either.
+
+> **Case file — the fixtures have too few chunks to lose a race.** A consumer handed to
+> `EventSource.streamEvents` (or a handler given to the parser) is called from one thread per chunk,
+> concurrently. Every JfrPath operator kept its state in a plain `long[]`, `ArrayList` or `HashMap`
+> anyway, and the suite was green, because the test recordings hold one or two chunks. On a
+> generated 32-chunk recording with exactly 320,000 `bench.Sampled` events,
+> `events/bench.Sampled | count()` returned 317233, 316995 and 316700 on three consecutive runs.
+> `JfrPathConcurrentAggregationTest` now generates a 16-chunk recording of known contents and
+> asserts exact results five times over; against the unfixed code 90 of its 105 runs failed: counts
+> short by a few percent (`expected: <640000> but was: <613668>`), a
+> `ConcurrentModificationException` out of `decorateByKey`, and
+> `Index 34 out of bounds for length 33` out of a plain `events/<type>` listing. This is the
+> `JafarConstantPoolSource` bug above, found a second time. When you write a consumer, treat it as
+> concurrent with itself: read the event outside any lock, then update shared state through a
+> `LongAdder`, a `ConcurrentHashMap` or a short `synchronized` block. When you test one, use a
+> recording with many chunks and repeat the assertion; one green run on `test-jfr.jfr` says nothing.
+> The order in which rows from different chunks arrive is still not defined.

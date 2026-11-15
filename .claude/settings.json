@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"command\",\"\"))' 2>/dev/null) || exit 0; printf '%s\\n' \"$cmd\" | grep -Eq '(^|[;&|( ])(git push|gh pr create)( |$)' || exit 0; cd \"${CLAUDE_PROJECT_DIR:-.}\" || exit 0; out=$(scripts/check-doc-links.sh 2>&1); rc=$?; if [ \"$rc\" -eq 1 ]; then printf 'Blocked before push: scripts/check-doc-links.sh fails, and the guardrails job in pr-tests.yml will fail the same way (doc/agents/Gates.md, Doc links row). Fix the links, commit, then push:\\n%s\\n' \"$out\" >&2; exit 2; fi; out=$(./gradlew -q spotlessCheck 2>&1); if printf '%s' \"$out\" | grep -q 'format violations'; then printf 'Blocked before push: ./gradlew spotlessCheck reports format violations, and the Tests (JDK 21) job in pr-tests.yml will fail the same way (doc/agents/Gates.md, Formatting row). Run ./gradlew spotlessApply, commit, then push:\\n%s\\n' \"$(printf '%s' \"$out\" | tail -n 20)\" >&2; exit 2; fi; exit 0",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

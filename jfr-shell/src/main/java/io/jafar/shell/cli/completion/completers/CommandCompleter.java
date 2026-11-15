@@ -13,6 +13,8 @@ public final class CommandCompleter implements ContextCompleter {
 
   private static final String[] COMMANDS = {
     "open",
+    "connect",
+    "tail",
     "sessions",
     "use",
     "session",
@@ -47,6 +49,22 @@ public final class CommandCompleter implements ContextCompleter {
     "quit"
   };
 
+  private final boolean liveCommands;
+
+  /** Default: live commands ({@code connect}/{@code tail}) offered — jfr-shell hosts. */
+  public CommandCompleter() {
+    this(true);
+  }
+
+  /**
+   * @param liveCommands when {@code false}, the live-streaming commands are skipped by EXACT name
+   *     (never prefix filtering — {@code constants} must keep completing for the {@code const}
+   *     prefix)
+   */
+  public CommandCompleter(boolean liveCommands) {
+    this.liveCommands = liveCommands;
+  }
+
   @Override
   public boolean canHandle(CompletionContext ctx) {
     return ctx.type() == CompletionContextType.COMMAND;
@@ -57,6 +75,9 @@ public final class CommandCompleter implements ContextCompleter {
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput().toLowerCase(Locale.ROOT);
     for (String cmd : COMMANDS) {
+      if (!liveCommands && (cmd.equals("connect") || cmd.equals("tail"))) {
+        continue; // live streaming is a host-shell capability (issue #92)
+      }
       if (cmd.startsWith(partial)) {
         candidates.add(new Candidate(cmd));
       }

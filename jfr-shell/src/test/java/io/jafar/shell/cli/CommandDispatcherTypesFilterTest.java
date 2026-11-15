@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.util.Set;
@@ -47,8 +48,7 @@ class CommandDispatcherTypesFilterTest {
     when(session.getNonPrimitiveMetadataTypes()).thenReturn(Set.of("jdk.A", "jdk.B", "custom.C"));
     when(session.getAvailableTypes()).thenReturn(Set.of("jdk.A", "custom.C"));
 
-    SessionManager<JFRSession> sm =
-        new SessionManager<>((p, c) -> session, ParsingContext.create());
+    SessionManager<Session> sm = new SessionManager<>((p, c) -> session, ParsingContext.create());
     BufferIO io = new BufferIO();
     CommandDispatcher disp = new CommandDispatcher(sm, io, r -> {});
 

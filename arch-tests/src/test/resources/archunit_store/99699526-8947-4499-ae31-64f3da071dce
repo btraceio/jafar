@@ -1,0 +1,1 @@
+Method <io.jafar.pprof.api.PprofParser.parse(java.nio.file.Path)> calls method <io.jafar.pprof.internal.PprofReader.read(java.nio.file.Path)> in (PprofParser.java:32)

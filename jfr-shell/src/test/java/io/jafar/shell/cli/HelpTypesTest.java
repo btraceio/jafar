@@ -3,7 +3,7 @@ package io.jafar.shell.cli;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
-import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import org.junit.jupiter.api.Test;
 
@@ -33,7 +33,7 @@ class HelpTypesTest {
 
   @Test
   void helpTypesShowsUsageAndExamples() {
-    var sessions = new SessionManager<JFRSession>((p, c) -> null, ParsingContext.create());
+    var sessions = new SessionManager<Session>((p, c) -> null, ParsingContext.create());
     var io = new BufferIO();
     var disp = new CommandDispatcher(sessions, io, r -> {});
     boolean handled = disp.dispatch("help metadata");

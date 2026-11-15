@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.shell.JFRSession;
+import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,14 +47,14 @@ class MapVariablesTest {
   }
 
   ParsingContext ctx;
-  SessionManager<JFRSession> sm;
+  SessionManager<Session> sm;
   BufferIO io;
   CommandDispatcher dispatcher;
 
   @BeforeEach
   void setUp() {
     ctx = ParsingContext.create();
-    SessionManager.SessionFactory<JFRSession> factory =
+    SessionManager.SessionFactory<Session> factory =
         (path, c) -> {
           JFRSession s = Mockito.mock(JFRSession.class);
           Mockito.when(s.getRecordingPath()).thenReturn(path);

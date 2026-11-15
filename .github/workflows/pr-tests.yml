@@ -57,6 +57,326 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/parity-body.md
           scripts/parity-check.sh --files-from /tmp/parity-files.txt --body-file /tmp/parity-body.md
 
+  api-compat:
+    # The per-plane japicmp comparison, step 1 of the generated-code safety
+    # harness (doc/agents/Gates.md). Runs on every trigger, like `tests`: the
+    # reports must exist on merge_group runs too. The deciding half — the
+    # API-Break statement — is the `api-break` job below, which consumes this
+    # job's artifact and runs on pull_request only.
+    name: API compat (japicmp per plane)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same reason as the tests job: the ubuntu-26.04 runner image has no
+      # preinstalled JDK 8, and configuring :parser needs the toolchain-8.
+      # api-baseline.sh builds tag checkouts with it too, so it must come
+      # before any Gradle invocation. JDK 21 stays the default.
+      - name: Install JDK 8 for Gradle toolchains
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Materialize the per-plane baselines
+        run: scripts/api-baseline.sh
+
+      - name: Run the per-surface japicmp tasks
+        run: ./gradlew --stacktrace --no-daemon apiCompat
+
+      - name: Upload API compat reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-compat-reports
+          path: |
+            build/reports/api-compat/
+            build/api-baseline/*/BASELINE
+          retention-days: 14
+
+  api-break:
+    # The blocking API-evolution statement (see .agents/skills/pr-writing and
+    # doc/agents/Gates.md). Runs on pull_request only: the statement lives in
+    # the PR body. On merge_group the job is skipped, which satisfies a
+    # required check; the authoritative run is the pull_request one.
+    name: API break statement
+    runs-on: ubuntu-latest
+    needs: api-compat
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The artifact's root is the least common ancestor of the upload paths
+      # (build/), so the reports land back at build/reports/api-compat.
+      - name: Download the API compat reports
+        uses: actions/download-artifact@v4
+        with:
+          name: api-compat-reports
+          path: build
+
+      - name: Check the API-Break statement
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/api-break-body.md
+          scripts/api-break-check.sh --reports build/reports/api-compat --base "origin/${{ github.base_ref }}" --body-file /tmp/api-break-body.md
+
+  alloc-budget:
+    # The blocking allocation-budget ratchet statement (see .agents/skills/pr-writing
+    # and doc/agents/Gates.md). Runs on pull_request only, like `parity`: the
+    # statement lives in the PR body. On merge_group the job is skipped, which
+    # satisfies a required check; the authoritative run is the pull_request one.
+    name: Alloc budget statement
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the Alloc-Budget statement
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/alloc-body.md
+          scripts/alloc-budget-check.sh --base "origin/${{ github.base_ref }}" --body-file /tmp/alloc-body.md
+
+  concurrency-matrix:
+    # Step 5 of the generated-code safety harness (doc/agents/Gates.md,
+    # "Concurrency: the processor-count matrix"). The determinism nets, the
+    # pool-mirror abort tests, the golden dumps and the shared-ParsingContext
+    # stress test must hold at BOTH extremes of StreamingChunkParser's
+    # per-parse pool of max(nproc-2,1) threads: a few-core runner cannot
+    # reproduce a chunk-callback interleaving (the recorded fire case in
+    # Gates.md stays green at =1), while =16 runs the pool the races live on.
+    # The allocation cells are NOT part of this job: allocationTest* keeps
+    # its own -XX:ActiveProcessorCount=4 pin (D9, same doc).
+    name: Concurrency matrix (ActiveProcessorCount=${{ matrix.apc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        apc: [ 1, 16 ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same reason as the tests job: the ubuntu-26.04 runner image has no
+      # preinstalled JDK 8, and configuring :parser needs the toolchain-8.
+      # JDK 21 stays the default.
+      - name: Install JDK 8 for Gradle toolchains
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      # --rerun per task, never once at the end: setup-gradle restores the
+      # build cache, and a test task restored FROM-CACHE reports a previous
+      # JVM's results. The R9 audit line below must come from this run's JVMs
+      # (the same cache lie the allocation gate records in Gates.md).
+      - name: Run the concurrency nets at ActiveProcessorCount=${{ matrix.apc }}
+        run: |
+          ./gradlew --stacktrace --no-daemon -Pjafar.activeProcessorCount=${{ matrix.apc }} \
+            :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun \
+            :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun \
+            :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun \
+            :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun
+
+      # R9: a green task proves nothing about which JVM produced it. Every
+      # covered class calls test-support's ProcessorCount.assertExpected() in
+      # @BeforeAll, which asserts the expected count and prints
+      # "availableProcessors=<n> expected=<N|unset> pool=<max(n-2,1)>" to
+      # real stdout — recorded in the JUnit XML's system-out. Each class's XML
+      # must carry the line with THIS cell's count; the trailing space in the
+      # needle pins =1 against =16.
+      - name: Prove the matrix count reached the test JVMs (R9)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          classes=(
+            JFRSessionDeterminismTest
+            MultiChunkDeterminismTest
+            ConstantPoolChunkLocalityTest
+            EventDecodeFailureTest
+            JfrGoldenDumpTest
+            GeneratedEventDecodeFailureTest
+            SharedParsingContextStressTest
+          )
+          needle="availableProcessors=${{ matrix.apc }} "
+          status=0
+          for c in "${classes[@]}"; do
+            xmls=(**/build/test-results/test/TEST-*."$c".xml)
+            if [ ${#xmls[@]} -eq 0 ]; then
+              echo "R9 FAIL: no JUnit XML for $c — the class did not run"
+              status=1
+              continue
+            fi
+            if ! grep -q -- "$needle" "${xmls[@]}"; then
+              echo "R9 FAIL: $c did not report \"$needle\" — the matrix flag did not reach its JVM"
+              status=1
+            else
+              echo "R9 ok: $c reports $(grep -h -o 'availableProcessors=[0-9]* expected=[^ ]* pool=[0-9]*' "${xmls[@]}" | head -1)"
+            fi
+          done
+          exit $status
+
+      # Same collection shape as the `tests` job: flat XML plus a placeholder
+      # when empty, so the artifact is always well-formed.
+      - name: Prepare artifacts (collect XML; add placeholder if empty)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/xml
+          shopt -s globstar nullglob
+          copied=0
+          for f in **/build/test-results/test/*.xml; do
+            cp "$f" artifacts/xml/
+            copied=1
+          done
+          if [ "$copied" -eq 0 ]; then
+            echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > artifacts/xml/placeholder.xml
+          fi
+
+      - name: Upload JUnit XML reports (apc-${{ matrix.apc }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-xml-apc-${{ matrix.apc }}
+          path: artifacts/xml
+          retention-days: 14
+
+  differential:
+    # Step 6 of the generated-code safety harness (doc/agents/Gates.md,
+    # "Differential oracles: Java vs Go untyped dumps"): the Java and the Go
+    # untyped parser dump the same fixtures under the one canonical line
+    # format, and the dumps must be identical modulo the root-caused allowlist.
+    #
+    # This job cannot live in go-parser.yml: that workflow is path-filtered
+    # to go-parser/**, so a Java-side change under parser-core/ or
+    # parser-codegen/ — the other half of every comparison — would never
+    # trigger it (AC-6.5). The path gate below therefore lives here and
+    # covers both sides of the comparison.
+    name: Differential (Java vs Go untyped dumps)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # On pull_request the differential runs only when the diff touches one
+      # of the two parsers being compared; every other trigger (merge_group,
+      # workflow_dispatch) runs it unconditionally, so a required check stays
+      # meaningful there and the merge queue keeps the differential green.
+      - name: Gate (does this change touch the differential's inputs?)
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "event is '${{ github.event_name }}' (not pull_request): running the differential unconditionally"
+          else
+            base="origin/${{ github.base_ref }}"
+            if git diff --name-only "$base...HEAD" | grep -Eq '^(parser-core|parser-codegen|go-parser)/'; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              echo "differential inputs changed; running it for:"
+              git diff --name-only "$base...HEAD" | grep -E '^(parser-core|parser-codegen|go-parser)/'
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "skipping the differential: no file under parser-core/, parser-codegen/ or go-parser/ changed, so both untyped parsers are byte-identical to the base and the comparison would repeat its own result"
+            fi
+          fi
+
+      # Same reason as the tests job: the ubuntu-26.04 runner image has no
+      # preinstalled JDK 8, and configuring :parser needs the toolchain-8.
+      # JDK 21 stays the default.
+      - name: Install JDK 8 for Gradle toolchains
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up JDK 21
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Go 1.24
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          # As in go-parser.yml: the module has no dependencies, so there is
+          # nothing to cache.
+          cache: false
+
+      - name: Setup Gradle caching
+        if: steps.gate.outputs.run == 'true'
+        uses: gradle/actions/setup-gradle@v4
+
+      # --rerun for the same reason the concurrency-matrix job gives it:
+      # setup-gradle restores the build cache, and a test task restored
+      # FROM-CACHE reports a previous JVM's results instead of running the
+      # differential against this commit's parsers.
+      - name: Run the Java/Go differential
+        if: steps.gate.outputs.run == 'true'
+        run: ./gradlew --stacktrace --no-daemon :parser-core:differentialTest --rerun
+
+      # The dumps (both sides, plus the jfrdump stderr logs) are the only way
+      # to review a differential failure without re-running the whole task.
+      - name: Upload the differential dumps
+        if: failure() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: differential-dumps
+          path: parser-core/build/differential/
+          retention-days: 14
+
   tests:
     name: Tests (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
@@ -70,10 +390,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Ensure the runner uses JDK 21 as the default when matrix is '8',
-      # while JDK 8 is available for Gradle toolchains
-      - name: Install JDK 8 for Gradle toolchains (matrix=8)
-        if: matrix.java == '8'
+      # The runner image (ubuntu-latest since 2026-11, ubuntu-26.04) no longer
+      # preinstalls JDK 8, and the build's configure phase resolves the :parser
+      # toolchain-8 eagerly (the publishing block reads component artifacts at
+      # configuration time): without this step every Gradle invocation fails
+      # before running a single task. JDK 21 stays the runner default in both
+      # cells; JDK 8 only serves the Gradle toolchains.
+      - name: Install JDK 8 for Gradle toolchains
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -91,11 +414,14 @@ jobs:
       # No recording download: the build generates the test recordings
       # (:test-recordings:generateTestRecordings, a dependency of every test task).
 
+      # The JDK 21 cell's `build` runs the JDK 21 allocation tests through `check`
+      # (check dependsOn allocationTest); the JDK 8 cell names its allocation
+      # tasks explicitly because it never runs `build` (doc/agents/Gates.md).
       - name: Build and test (JDK ${{ matrix.java }})
         run: |
           java -version
           if [ "${{ matrix.java }}" = "8" ]; then
-            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser-core:compileJava :parser-core:test8 :parser-codegen:compileJava :parser-codegen:test8
+            ./gradlew --stacktrace --no-daemon -x spotlessCheck :parser-core:compileJava :parser-core:test8 :parser-codegen:compileJava :parser-codegen:test8 :parser-core:allocationTest8 :parser-codegen:allocationTest8
           else
             ./gradlew --stacktrace --no-daemon build
           fi
@@ -111,18 +437,10 @@ jobs:
             --tests '*McpAgentWorkflowEndToEndTest.otlpWorkflow*' \
             --tests '*McpAgentTaskEvalTest*'
 
-      - name: Check API compatibility (JDK 21)
-        if: matrix.java == '21'
-        run: |
-          ./gradlew --stacktrace --no-daemon :shell-core:japicmp --continue
-
-      - name: Upload japicmp report (JDK 21)
-        if: always() && matrix.java == '21'
-        uses: actions/upload-artifact@v4
-        with:
-          name: japicmp-report
-          path: shell-core/build/reports/japicmp.*
-          retention-days: 14
+      # The per-plane japicmp comparison moved out of this matrix job into the
+      # dedicated `api-compat` job (doc/agents/Gates.md): the old
+      # :shell-core:japicmp step skipped on PR builds anyway, and it only
+      # covered one surface against a hardcoded baseline.
 
       - name: Publish parser to mavenLocal for plugin tests (JDK 21)
         if: matrix.java == '21'
@@ -161,7 +479,10 @@ jobs:
           mkdir -p artifacts/xml artifacts/html
           shopt -s globstar nullglob
           copied=0
-          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml **/build/test-results/endToEndTest/*.xml; do
+          # allocationTest* covers allocationTest and allocationTest8 (the dedicated
+          # allocation tasks report under their own test-results dirs), so the
+          # named failing set and the combined report see those cells too.
+          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml **/build/test-results/endToEndTest/*.xml **/build/test-results/allocationTest*/*.xml; do
             cp "$f" artifacts/xml/
             copied=1
           done

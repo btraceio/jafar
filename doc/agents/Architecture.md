@@ -3,6 +3,21 @@
 The parser APIs, coding style, testing strategy, and the composite build.
 The module map is in [AGENTS.md](../../AGENTS.md#module-map).
 
+## Module boundaries are enforced
+
+Module boundaries are enforced, not just recommended: the `arch-tests` module
+imports the compiled classes of every covered module and runs frozen ArchUnit
+rules over them — nothing outside the parser plane (`parser-core`,
+`parser-codegen`) may depend on `io.jafar.parser.impl`/`internal_api`, nothing
+outside `hdump-parser` may depend on its `impl`/`internal`/`index` packages,
+`api` packages never depend on their module's implementation packages, parser
+modules and `shell-core` never depend on the consumer modules, and parser
+implementation code declares no mutable static fields. The rules run in every
+`./gradlew build` (the `tests` CI job), and a new violation fails the build —
+there is no escape statement; today's violations are grandfathered in a
+committed freeze store. The commands, the store's regeneration rules and the
+documented gaps are in [Gates.md](Gates.md).
+
 ## Coding Style & Naming Conventions
 - Language: Java 25 (shell/MCP modules), Java 8 bytecode (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
 - Packages: `io.jafar.*`. Classes `PascalCase`, methods/fields `camelCase`, constants `UPPER_SNAKE_CASE`.
@@ -104,7 +119,29 @@ Beyond the gates, the conventions the codebase already follows:
 ## Key Classes to Understand
 - `JafarParser`: Factory methods for creating typed/untyped parsers
 - `TypedJafarParserImpl`/`UntypedJafarParserImpl`: Core implementation classes
-- `ParsingContext`: Manages shared resources and metadata across parsing sessions
+- `ParsingContext`: Manages shared resources and metadata across parsing sessions.
+  `withParallelism(n)` returns a view sharing the caches whose parsers build their
+  `StreamingChunkParser` with `n` chunk threads; `withParallelism(1)` is the sequential,
+  file-ordered mode. The pool size is fixed when the `StreamingChunkParser` is constructed (typed:
+  in the parser's constructor; untyped: per `run()`), which is why it is a context property and
+  not a setter on the parser
+- `withParallelism` reaches only code that asks the context: the two parsers, and `JFRSession`'s
+  scans through `ParsingContext.parallelism()`. Code that builds a `StreamingChunkParser` with no
+  context in hand still uses the default pool: `JafarSources` (the backend SPI's metadata, chunk
+  and constant-pool sources are created without a context), `Scrubber` and `TypeGenerator`
+- Handlers live in `impl.HandlerRegistry`, one class for both parsers (untyped: one registry;
+  typed: one per event class in a `ConcurrentHashMap`). It is a copy-on-write array with a
+  registration count per handler: writers replace the array under the registry's lock, the
+  dispatch loop reads it once per event with `snapshot()`. Do not go back to iterating a mutable
+  collection there - a handler that deregisters during `run()` then throws
+  `ConcurrentModificationException` out of `run()` (regression tests:
+  `UntypedHandlerDeregistrationTest`, `TypedJafarParserLifecycleTest`), and the per-event iterator
+  costs 32 bytes per event on JDK 21 (measured; see `gradle/allocation-budgets.properties`)
+- A parser and its `withParserListener` copies share the registry (typed: also the type and
+  factory maps) and an owner count; the shared state is cleared when the last owner closes. The
+  typed copies also share one `StreamingChunkParser`, which is **not** owner-counted: closing any
+  of them shuts its pool (counting it would leak the pool in the common
+  `p.withParserListener(l).run()` pattern, where the copy is never closed)
 - `ChunkParserListener`: Low-level parsing lifecycle hooks. **Callbacks for different chunks run
   concurrently**: `StreamingChunkParser` submits every chunk to a pool of `max(nproc - 2, 1)`
   threads, and only the callbacks of one chunk run in sequence. A listener that collects into one

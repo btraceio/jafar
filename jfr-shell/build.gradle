@@ -88,6 +88,10 @@ dependencies {
     // Writes synthetic (and deliberately corrupted) recordings for tests that need no download
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
 
+    // ProcessorCount.assertExpected() (safety harness step 5): the determinism nets call it from
+    // @BeforeAll so a matrix run proves -Pjafar.activeProcessorCount=N reached the forked JVM.
+    testImplementation project(':test-support')
+
     // jqwik for property-based testing
     testImplementation 'net.jqwik:jqwik:1.8.2'
     testRuntimeOnly 'net.jqwik:jqwik-engine:1.8.2'

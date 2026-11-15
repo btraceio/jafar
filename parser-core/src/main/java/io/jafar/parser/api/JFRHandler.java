@@ -3,7 +3,10 @@ package io.jafar.parser.api;
 /**
  * Functional handler receiving deserialized typed JFR events.
  *
- * <p>Invoked synchronously on the parser thread; keep work minimal or offload.
+ * <p>Invoked on a chunk parsing thread. Chunks are parsed in parallel, so one handler can be called
+ * concurrently from several threads and must be thread-safe, unless the parser was created with
+ * {@link ParsingContext#withParallelism(int) ParsingContext.withParallelism(1)}. Keep work minimal
+ * or offload.
  *
  * @param <T> the type of JFR events this handler processes
  */

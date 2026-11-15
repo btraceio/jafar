@@ -1,6 +1,7 @@
 package io.jafar.testrecordings;
 
 import io.jafar.testrecordings.Shapes.Shape;
+import io.jafar.testrecordings.adversarial.AdversarialRecordings;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,6 +27,12 @@ import java.util.Arrays;
  *
  * benchmark &lt;output.jfr&gt; &lt;chunks&gt; [samples-per-chunk] [ap|jfr|dd]
  *     One recording of any size, written a chunk at a time.
+ *
+ * adversarial &lt;output-dir&gt;
+ *     The adversarial fuzz-corpus seeds (adv-&lt;case&gt;), one file per case of
+ *     io.jafar.testrecordings.adversarial.AdversarialRecordings, written with no .jfr extension
+ *     because .gitignore ignores *.jfr and the seeds must be committed for Jazzer's regression
+ *     corpus to replay.
  * </pre>
  *
  * <p>Every generated file gets a {@code .generated} marker next to it. A recording without a marker
@@ -57,13 +64,29 @@ public final class TestRecordingGenerator {
       System.out.printf(
           "Generated %s: %d chunk(s) of %s, %d bytes, %.1f s%n",
           out, chunks, shape, Files.size(out), (System.nanoTime() - t0) / 1e9);
+    } else if (args.length >= 2 && args[0].equals("adversarial")) {
+      adversarial(Paths.get(args[1]));
     } else {
       System.err.println(
           "usage: tests <demo-resources-dir> <parser-core-resources-dir> [test-dd-source.jfr]\n"
               + "       benchmark <output.jfr> <chunks> [samples-per-chunk] [ap|jfr|dd]\n"
+              + "       adversarial <output-dir>\n"
               + "got: "
               + Arrays.toString(args));
       System.exit(2);
+    }
+  }
+
+  /**
+   * Writes every adversarial case as {@code adv-<case>} into {@code outDir}, overwriting what is
+   * there: the committed seeds must always equal the generator's output.
+   */
+  private static void adversarial(Path outDir) throws IOException {
+    Files.createDirectories(outDir);
+    for (AdversarialRecordings recording : AdversarialRecordings.values()) {
+      Path out = outDir.resolve(recording.fileName());
+      Files.write(out, recording.bytes());
+      System.out.println("Generated " + out + " (" + Files.size(out) + " bytes)");
     }
   }
 

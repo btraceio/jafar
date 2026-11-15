@@ -1,0 +1,46 @@
+name: Nightly failure report
+
+# The scheduled nets (nightly-fuzz.yml, nightly-jmh.yml) are advisory: they can
+# see no PR, and doc/agents/Gates.md ("Nightly (advisory)") calls their
+# findings reports for humans. A red scheduled run is visible only to someone
+# who opens the Actions tab, so this workflow turns a failed run on main into
+# one tracking issue per workflow: it opens the issue on the first failure and
+# comments on it for every later one, until a human closes it.
+#
+# workflow_run fires only for workflows on the default branch, and the event
+# fields below come from GitHub, not from the PR or branch under test; they are
+# passed through env, never interpolated into the script.
+
+on:
+  workflow_run:
+    workflows: ["Nightly Fuzz", "Nightly JMH Benchmarks"]
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    name: Open or update the nightly tracking issue
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or comment on the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WF_NAME: ${{ github.event.workflow_run.name }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          title="Nightly red: ${WF_NAME}"
+          body="Scheduled run failed on main at ${HEAD_SHA}: ${RUN_URL}"
+          num=$(gh issue list --repo "$REPO" --state open --limit 100 --json number,title \
+            | TITLE="$title" python3 -c 'import json,os,sys; print(next((str(i["number"]) for i in json.load(sys.stdin) if i["title"] == os.environ["TITLE"]), ""))')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi
