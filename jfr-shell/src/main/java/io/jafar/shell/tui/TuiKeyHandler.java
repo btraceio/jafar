@@ -526,8 +526,7 @@ public final class TuiKeyHandler {
           }
         } else {
           if (ctx.sidebarFilteredIndices != null) {
-            ctx.sidebarSearchQuery = "";
-            ctx.sidebarFilteredIndices = null;
+            executor.applySidebarFilter("");
           } else {
             browser.exitBrowserMode();
             ctx.focus = Focus.INPUT;

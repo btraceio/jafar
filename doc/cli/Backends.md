@@ -62,6 +62,9 @@ API: symbol-backed strings appear as `java.lang.String`, rather than separate ra
 Types unreachable from event field descriptors, raw constant pools, and chunk headers are not
 exposed by this backend. A type's presence in metadata does not mean it emitted events.
 
+In the TUI metadata sidebar, `/` filters type names. Clearing or dismissing a filter keeps the
+selected type visible; canceling a search with no matches restores a selection in the full list.
+
 ## Writing a Custom Backend
 
 ### Prerequisites

@@ -168,6 +168,60 @@ class JdkMetadataEndToEndTest {
   }
 
   @Test
+  void cancelingSidebarSearchRestoresVisibleSelection() throws Exception {
+    checkSidebarSearchClearing("cancel");
+  }
+
+  @Test
+  void dismissingConfirmedSidebarSearchRestoresVisibleSelection() throws Exception {
+    checkSidebarSearchClearing("confirmed");
+  }
+
+  @Test
+  void backspacingSidebarSearchRestoresVisibleSelection() throws Exception {
+    checkSidebarSearchClearing("backspace");
+  }
+
+  private static void checkSidebarSearchClearing(String action) throws Exception {
+    for (String query : List.of("Type49", "missing")) {
+      TuiContext ctx = new TuiContext();
+      ctx.tabs.add(new TuiContext.ResultTab("metadata"));
+      ctx.sidebarTypes = new ArrayList<>();
+      for (int i = 0; i < 50; i++) ctx.sidebarTypes.add(Map.of("name", "Type" + i));
+      ctx.sidebarAreaHeight = 5;
+      ctx.browserMode = true;
+      ctx.sidebarFocused = true;
+      ctx.focus = TuiContext.Focus.RESULTS;
+      var executor = new TuiCommandExecutor(ctx, null);
+      var keys =
+          new TuiKeyHandler(ctx, timeout -> -2, null, executor, new TuiDetailBuilder(ctx), null);
+      keys.handleKey('/');
+      for (char c : query.toCharArray()) keys.handleKey(c);
+      switch (action) {
+        case "cancel" -> keys.handleKey(27);
+        case "confirmed" -> {
+          keys.handleKey(13);
+          keys.handleKey(27);
+        }
+        case "backspace" -> {
+          for (int i = 0; i < query.length(); i++) keys.handleKey(127);
+        }
+        default -> fail("Unknown action: " + action);
+      }
+      String scenario = action + " after " + query;
+      assertNull(ctx.sidebarFilteredIndices, scenario);
+      assertEquals("", ctx.sidebarSearchQuery, scenario);
+      assertTrue(
+          ctx.sidebarSelectedIndex >= 0 && ctx.sidebarSelectedIndex < ctx.sidebarTypes.size(),
+          scenario);
+      assertTrue(
+          ctx.sidebarSelectedIndex >= ctx.sidebarScrollOffset
+              && ctx.sidebarSelectedIndex < ctx.sidebarScrollOffset + ctx.sidebarAreaHeight,
+          scenario);
+    }
+  }
+
+  @Test
   void llmReceivesLaterEventAndNestedFieldsOverHttp() throws Exception {
     checkLlm(null);
   }

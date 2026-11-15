@@ -33,6 +33,10 @@ printf 'open rec.jfr\nas-query --dry-run which threads used the most CPU?\nexit\
 > Enter still opened `java.lang.Class`: the sidebar filter hid the old selection without moving
 > it to a matching row. The metadata E2E now types the sidebar search and both Enter keys through
 > the real key handler before asserting the late type's fields and annotations.
+> Review then caught the inverse: clearing a successful filter left `selected=49, scroll=0`,
+> while canceling a no-match search left `selected=-1` in a populated list. Three further key-handler
+> regressions fail before the fix and cover backspacing, canceling live search, and dismissing a
+> confirmed filter. Route filter removal through the same selection/scroll normalization as filtering.
 
 **Corollary:** offering something in completion, documenting it, or printing a confirmation are not
 evidence that it works. Confirmation messages lie — see R3.
@@ -363,6 +367,9 @@ home/config/plugin directories. It drives the real TUI browser and Enter-key han
 LLM HTTP requests using a loopback stub, including subprocess runs of the shaded JFR shell and the
 unified shell's thin JAR. It requires no downloaded recording or provider account. This is not a
 terminal screenshot test or a live model-quality evaluation.
+CI artifact collection must include custom Gradle Test tasks too: collecting only `test` and
+`test8` drops this task's XML/HTML even though its failures stop the build. The PR workflow now
+collects reports from all task directories under `build/test-results` and `build/reports/tests`.
 
 The recordings in this tree are stripped and several do not parse
 (`IllegalArgumentException: newPosition > limit`). To verify behaviour end to end, record a real one:

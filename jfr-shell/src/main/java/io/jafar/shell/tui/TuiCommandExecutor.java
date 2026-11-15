@@ -995,9 +995,7 @@ public final class TuiCommandExecutor {
     ctx.sidebarSearchQuery = query;
     if (query.isEmpty() || ctx.sidebarTypes == null) {
       ctx.sidebarFilteredIndices = null;
-      if (ctx.sidebarTypes != null && !ctx.sidebarTypes.isEmpty() && ctx.sidebarSelectedIndex < 0) {
-        ctx.sidebarSelectedIndex = 0;
-      }
+      normalizeSidebarSelection();
       return;
     }
     String lower = query.toLowerCase();
@@ -1012,6 +1010,33 @@ public final class TuiCommandExecutor {
     ctx.sidebarScrollOffset = 0;
     if (!indices.contains(ctx.sidebarSelectedIndex)) {
       ctx.sidebarSelectedIndex = indices.isEmpty() ? -1 : indices.get(0);
+    }
+    normalizeSidebarSelection();
+  }
+
+  private void normalizeSidebarSelection() {
+    int size = ctx.sidebarTypes == null ? 0 : ctx.sidebarTypes.size();
+    if (ctx.sidebarFilteredIndices != null) size = ctx.sidebarFilteredIndices.size();
+    if (size == 0) {
+      ctx.sidebarSelectedIndex = -1;
+      ctx.sidebarScrollOffset = 0;
+      return;
+    }
+    int visibleIndex =
+        ctx.sidebarFilteredIndices == null
+            ? ctx.sidebarSelectedIndex
+            : ctx.sidebarFilteredIndices.indexOf(ctx.sidebarSelectedIndex);
+    visibleIndex = Math.max(0, Math.min(visibleIndex, size - 1));
+    ctx.sidebarSelectedIndex =
+        ctx.sidebarFilteredIndices == null
+            ? visibleIndex
+            : ctx.sidebarFilteredIndices.get(visibleIndex);
+    int height = Math.max(1, ctx.sidebarAreaHeight);
+    ctx.sidebarScrollOffset = Math.max(0, Math.min(ctx.sidebarScrollOffset, size - height));
+    if (visibleIndex < ctx.sidebarScrollOffset) {
+      ctx.sidebarScrollOffset = visibleIndex;
+    } else if (visibleIndex >= ctx.sidebarScrollOffset + height) {
+      ctx.sidebarScrollOffset = visibleIndex - height + 1;
     }
   }
 
@@ -1034,8 +1059,7 @@ public final class TuiCommandExecutor {
     if (ctx.searchOriginFocus == Focus.DETAIL) {
       tab.detailSearchQuery = "";
     } else if (ctx.searchOriginSidebar) {
-      ctx.sidebarSearchQuery = "";
-      ctx.sidebarFilteredIndices = null;
+      applySidebarFilter("");
     } else {
       tab.searchQuery = "";
       tab.filteredIndices = null;

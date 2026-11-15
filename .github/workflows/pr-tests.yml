@@ -118,14 +118,14 @@ jobs:
           mkdir -p artifacts/xml artifacts/html
           shopt -s globstar nullglob
           copied=0
-          for f in **/build/test-results/test/*.xml **/build/test-results/test8/*.xml; do
+          for f in **/build/test-results/*/*.xml; do
             cp "$f" artifacts/xml/
             copied=1
           done
           if [ "$copied" -eq 0 ]; then
             echo '<testsuite name="placeholder" tests="0" failures="0" errors="0" skipped="0"/>' > artifacts/xml/placeholder.xml
           fi
-          for d in **/build/reports/tests/test **/build/reports/tests/test8; do
+          for d in **/build/reports/tests/*; do
             if [ -d "$d" ]; then
               dest="artifacts/html/$(basename "$d")"
               mkdir -p "$dest"
