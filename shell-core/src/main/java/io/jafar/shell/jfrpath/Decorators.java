@@ -13,7 +13,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Event decoration: temporal joins (decorateByTime) and correlation-key joins (decorateByKey). */
+/**
+ * Event decoration: temporal joins (decorateByTime) and correlation-key joins (decorateByKey).
+ *
+ * <p>The consumers passed to {@code streamEvents} run on several chunk-parsing threads at once, so
+ * each one serializes its writes to the collection it fills.
+ */
 final class Decorators {
   private final JfrPathEvaluator eval;
 
@@ -56,7 +61,9 @@ final class Decorators {
           Map<String, Object> decorated =
               new DecoratedEventMap(ev.value(), matchingDecorators, op.decoratorFields);
 
-          result.add(decorated);
+          synchronized (result) {
+            result.add(decorated);
+          }
         });
 
     return result;
@@ -87,7 +94,10 @@ final class Decorators {
           long duration = durationObj != null ? Coerce.toLong(durationObj) : 0;
           long endTime = startTime + duration;
 
-          decorators.add(new DecoratorTimeRange(threadId, startTime, endTime, event));
+          DecoratorTimeRange range = new DecoratorTimeRange(threadId, startTime, endTime, event);
+          synchronized (decorators) {
+            decorators.add(range);
+          }
         });
 
     // Sort by thread ID and start time for efficient lookup
@@ -162,7 +172,9 @@ final class Decorators {
           Map<String, Object> decorated =
               new DecoratedEventMap(ev.value(), matchingDecorators, op.decoratorFields);
 
-          result.add(decorated);
+          synchronized (result) {
+            result.add(decorated);
+          }
         });
 
     return result;
@@ -183,7 +195,9 @@ final class Decorators {
           Object key = evaluateKeyExpr(event, op.decoratorKey);
           if (key == null) return;
 
-          index.computeIfAbsent(key, k -> new ArrayList<>()).add(event);
+          synchronized (index) {
+            index.computeIfAbsent(key, k -> new ArrayList<>()).add(event);
+          }
         });
 
     return index;

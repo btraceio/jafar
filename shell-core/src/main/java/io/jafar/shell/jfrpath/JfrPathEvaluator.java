@@ -26,6 +26,11 @@ import java.util.function.Consumer;
  */
 public final class JfrPathEvaluator {
   public interface EventSource {
+    /**
+     * Streams every event of the recording to {@code consumer}. The consumer may be called from
+     * several chunk-parsing threads at once, in no particular order across chunks: it must guard
+     * any state it shares (a counter, a list, a map).
+     */
     void streamEvents(Path recording, Consumer<Event> consumer) throws Exception;
   }
 
@@ -161,8 +166,16 @@ public final class JfrPathEvaluator {
       // Validate event types exist
       validateEventTypes(session, query.eventTypes);
 
+      // Rows arrive from several chunk-parsing threads at once (see consume()).
       List<Map<String, Object>> out = new ArrayList<>();
-      streamMatching(session, query, out::add);
+      streamMatching(
+          session,
+          query,
+          row -> {
+            synchronized (out) {
+              out.add(row);
+            }
+          });
       return out;
     } else if (query.root == Root.METADATA) {
       // Handle metadata queries: metadata/Type or metadata/[filter] or metadata
@@ -266,9 +279,15 @@ public final class JfrPathEvaluator {
               @SuppressWarnings("unchecked")
               Map<String, Object> map = (Map<String, Object>) value;
               if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-                out.add(Values.resolvedShallow(map));
-                if (out.size() >= limit) {
-                  ctl.abort();
+                Map<String, Object> row = Values.resolvedShallow(map);
+                synchronized (out) {
+                  // Other chunks keep delivering until the abort takes hold.
+                  if (out.size() < limit) {
+                    out.add(row);
+                  }
+                  if (out.size() >= limit) {
+                    ctl.abort();
+                  }
                 }
               }
             });
@@ -281,9 +300,15 @@ public final class JfrPathEvaluator {
               @SuppressWarnings("unchecked")
               Map<String, Object> map = (Map<String, Object>) value;
               if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-                out.add(Values.resolvedShallow(map));
-                if (out.size() >= limit) {
-                  ctl.abort();
+                Map<String, Object> row = Values.resolvedShallow(map);
+                synchronized (out) {
+                  // Other chunks keep delivering until the abort takes hold.
+                  if (out.size() < limit) {
+                    out.add(row);
+                  }
+                  if (out.size() >= limit) {
+                    ctl.abort();
+                  }
                 }
               }
             });
@@ -315,7 +340,12 @@ public final class JfrPathEvaluator {
             if (!eventType.equals(ev.typeName)) return; // filter type
             Map<String, Object> map = ev.value;
             if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              PathValues.extractWithIndexing(map, proj, out);
+              // Called from several chunk-parsing threads: extract first, then append as one.
+              List<Object> vals = new ArrayList<>();
+              PathValues.extractWithIndexing(map, proj, vals);
+              synchronized (out) {
+                out.addAll(vals);
+              }
             }
           });
       return out;
@@ -596,9 +626,16 @@ public final class JfrPathEvaluator {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) value;
             if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              PathValues.extractWithIndexing(map, proj, out);
-              if (out.size() >= limit) {
-                ctl.abort();
+              List<Object> vals = new ArrayList<>();
+              PathValues.extractWithIndexing(map, proj, vals);
+              synchronized (out) {
+                // Other chunks keep delivering until the abort takes hold.
+                if (out.size() < limit) {
+                  out.addAll(vals);
+                }
+                if (out.size() >= limit) {
+                  ctl.abort();
+                }
               }
             }
           });

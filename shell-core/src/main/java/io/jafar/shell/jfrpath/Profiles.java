@@ -48,8 +48,11 @@ final class Profiles {
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
             if (!frames.isEmpty()) {
-              frames.replaceAll(f -> interner.computeIfAbsent(f, k -> k));
-              root.addPath(frames);
+              // Called from several chunk-parsing threads: the tree and the interner are shared.
+              synchronized (root) {
+                frames.replaceAll(f -> interner.computeIfAbsent(f, k -> k));
+                root.addPath(frames);
+              }
             }
           });
     } else {
@@ -62,8 +65,11 @@ final class Profiles {
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
             if (!frames.isEmpty()) {
-              frames.replaceAll(f -> interner.computeIfAbsent(f, k -> k));
-              root.addPath(frames);
+              // Called from several chunk-parsing threads: the tree and the interner are shared.
+              synchronized (root) {
+                frames.replaceAll(f -> interner.computeIfAbsent(f, k -> k));
+                root.addPath(frames);
+              }
             }
           });
     }
@@ -272,9 +278,11 @@ final class Profiles {
             if (!hasStackTraceFrames(map)) return;
             Object st = map.get("startTime");
             long ts = st instanceof Number n ? n.longValue() : 0L;
-            stats[0]++;
-            if (ts < stats[1]) stats[1] = ts;
-            if (ts > stats[2]) stats[2] = ts;
+            synchronized (stats) {
+              stats[0]++;
+              if (ts < stats[1]) stats[1] = ts;
+              if (ts > stats[2]) stats[2] = ts;
+            }
           });
     } else {
       String eventType = query.eventTypes.get(0);
@@ -287,9 +295,11 @@ final class Profiles {
             if (!hasStackTraceFrames(map)) return;
             Object st = map.get("startTime");
             long ts = st instanceof Number n ? n.longValue() : 0L;
-            stats[0]++;
-            if (ts < stats[1]) stats[1] = ts;
-            if (ts > stats[2]) stats[2] = ts;
+            synchronized (stats) {
+              stats[0]++;
+              if (ts < stats[1]) stats[1] = ts;
+              if (ts > stats[2]) stats[2] = ts;
+            }
           });
     }
     return stats;
@@ -340,30 +350,34 @@ final class Profiles {
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
             if (frames.isEmpty()) return;
-            for (int j = 0; j < frames.size(); j++) {
-              frames.set(j, interner.computeIfAbsent(frames.get(j), k -> k));
-            }
             Object st = map.get("startTime");
             long ts = st instanceof Number n ? n.longValue() : 0L;
             int bucketIdx = range == 0 ? 0 : (int) ((ts - minTime) * (buckets - 1) / range);
-            String threadName = extractThreadName(map);
-            threadName = interner.computeIfAbsent(threadName, k -> k);
-            root.addPath(frames, 0, bucketIdx, threadName);
-            eventCount[0]++;
-            if (eventCount[0] % 100_000 == 0) {
-              if (progress != null) {
-                progress.onProgress(
-                    1.0 + (double) eventCount[0] / tc,
-                    3,
-                    "Building profile tree: " + eventCount[0] + "/" + tc + " events");
+            String thread = extractThreadName(map);
+            // Called from several chunk-parsing threads: the tree, the interner, the event
+            // count and the prune state are shared, and pruning must not run under an insert.
+            synchronized (root) {
+              for (int j = 0; j < frames.size(); j++) {
+                frames.set(j, interner.computeIfAbsent(frames.get(j), k -> k));
               }
-              if (pruneState[0] > 0) {
-                pruneChildren(root, pruneState[0]);
-              } else {
-                int nodeCount = countNodes(root);
-                if (nodeCount > 500_000) {
-                  pruneState[0] = Math.max(1, eventCount[0] / 1000);
+              String threadName = interner.computeIfAbsent(thread, k -> k);
+              root.addPath(frames, 0, bucketIdx, threadName);
+              eventCount[0]++;
+              if (eventCount[0] % 100_000 == 0) {
+                if (progress != null) {
+                  progress.onProgress(
+                      1.0 + (double) eventCount[0] / tc,
+                      3,
+                      "Building profile tree: " + eventCount[0] + "/" + tc + " events");
+                }
+                if (pruneState[0] > 0) {
                   pruneChildren(root, pruneState[0]);
+                } else {
+                  int nodeCount = countNodes(root);
+                  if (nodeCount > 500_000) {
+                    pruneState[0] = Math.max(1, eventCount[0] / 1000);
+                    pruneChildren(root, pruneState[0]);
+                  }
                 }
               }
             }
@@ -378,30 +392,34 @@ final class Profiles {
             if (!matchesAll(map, query.predicates)) return;
             List<String> frames = extractFramesForProfile(map, direction);
             if (frames.isEmpty()) return;
-            for (int j = 0; j < frames.size(); j++) {
-              frames.set(j, interner.computeIfAbsent(frames.get(j), k -> k));
-            }
             Object st = map.get("startTime");
             long ts = st instanceof Number n ? n.longValue() : 0L;
             int bucketIdx = range == 0 ? 0 : (int) ((ts - minTime) * (buckets - 1) / range);
-            String threadName = extractThreadName(map);
-            threadName = interner.computeIfAbsent(threadName, k -> k);
-            root.addPath(frames, 0, bucketIdx, threadName);
-            eventCount[0]++;
-            if (eventCount[0] % 100_000 == 0) {
-              if (progress != null) {
-                progress.onProgress(
-                    1.0 + (double) eventCount[0] / tc,
-                    3,
-                    "Building profile tree: " + eventCount[0] + "/" + tc + " events");
+            String thread = extractThreadName(map);
+            // Called from several chunk-parsing threads: the tree, the interner, the event
+            // count and the prune state are shared, and pruning must not run under an insert.
+            synchronized (root) {
+              for (int j = 0; j < frames.size(); j++) {
+                frames.set(j, interner.computeIfAbsent(frames.get(j), k -> k));
               }
-              if (pruneState[0] > 0) {
-                pruneChildren(root, pruneState[0]);
-              } else {
-                int nodeCount = countNodes(root);
-                if (nodeCount > 500_000) {
-                  pruneState[0] = Math.max(1, eventCount[0] / 1000);
+              String threadName = interner.computeIfAbsent(thread, k -> k);
+              root.addPath(frames, 0, bucketIdx, threadName);
+              eventCount[0]++;
+              if (eventCount[0] % 100_000 == 0) {
+                if (progress != null) {
+                  progress.onProgress(
+                      1.0 + (double) eventCount[0] / tc,
+                      3,
+                      "Building profile tree: " + eventCount[0] + "/" + tc + " events");
+                }
+                if (pruneState[0] > 0) {
                   pruneChildren(root, pruneState[0]);
+                } else {
+                  int nodeCount = countNodes(root);
+                  if (nodeCount > 500_000) {
+                    pruneState[0] = Math.max(1, eventCount[0] / 1000);
+                    pruneChildren(root, pruneState[0]);
+                  }
                 }
               }
             }

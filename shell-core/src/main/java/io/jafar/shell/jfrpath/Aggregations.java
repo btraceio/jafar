@@ -19,6 +19,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.DoubleAdder;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 
 /** Pipeline operators that aggregate over the event stream (count, stats, groupBy, select, ...). */
@@ -203,12 +205,10 @@ final class Aggregations {
     }
 
     // Track min/max epoch-nanos values (including duration when given)
-    long[] minMax = {Long.MAX_VALUE, Long.MIN_VALUE};
-    long[] count = {0};
+    TimeRangeAgg range = new TimeRangeAgg();
 
     List<String> valuePath = op.valuePath;
     List<String> durationPath = op.durationPath;
-    boolean hasDuration = !durationPath.isEmpty();
 
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty()) {
@@ -226,21 +226,7 @@ final class Aggregations {
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
 
-              Object val = Values.get(map, valuePath.toArray());
-              if (val instanceof Number n) {
-                long epochNanos = n.longValue();
-                if (epochNanos < minMax[0]) minMax[0] = epochNanos;
-                // For max, if duration is specified, use startTime + duration
-                long endEpochNanos = epochNanos;
-                if (hasDuration) {
-                  Object durVal = Values.get(map, durationPath.toArray());
-                  if (durVal instanceof Number dn) {
-                    endEpochNanos = epochNanos + dn.longValue();
-                  }
-                }
-                if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
-                count[0]++;
-              }
+              range.offer(map, valuePath, durationPath);
             });
       } else {
         String eventType = query.eventTypes.get(0);
@@ -251,21 +237,7 @@ final class Aggregations {
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
 
-              Object val = Values.get(map, valuePath.toArray());
-              if (val instanceof Number n) {
-                long epochNanos = n.longValue();
-                if (epochNanos < minMax[0]) minMax[0] = epochNanos;
-                // For max, if duration is specified, use startTime + duration
-                long endEpochNanos = epochNanos;
-                if (hasDuration) {
-                  Object durVal = Values.get(map, durationPath.toArray());
-                  if (durVal instanceof Number dn) {
-                    endEpochNanos = epochNanos + dn.longValue();
-                  }
-                }
-                if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
-                count[0]++;
-              }
+              range.offer(map, valuePath, durationPath);
             });
       }
     } else {
@@ -273,25 +245,14 @@ final class Aggregations {
       List<Map<String, Object>> rows =
           eval.evaluate(session, new Query(query.root, query.segments, query.predicates));
       for (Map<String, Object> row : rows) {
-        Object val = Values.get(row, valuePath.toArray());
-        if (val instanceof Number n) {
-          long epochNanos = n.longValue();
-          if (epochNanos < minMax[0]) minMax[0] = epochNanos;
-          // For max, if duration is specified, use startTime + duration
-          long endEpochNanos = epochNanos;
-          if (hasDuration) {
-            Object durVal = Values.get(row, durationPath.toArray());
-            if (durVal instanceof Number dn) {
-              endEpochNanos = epochNanos + dn.longValue();
-            }
-          }
-          if (endEpochNanos > minMax[1]) minMax[1] = endEpochNanos;
-          count[0]++;
-        }
+        range.offer(row, valuePath, durationPath);
       }
     }
 
     // Build result
+    long[] minMax = new long[2];
+    long[] count = new long[1];
+    range.snapshot(minMax, count);
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("count", count[0]);
     result.put("field", String.join("/", valuePath));
@@ -341,7 +302,9 @@ final class Aggregations {
           } else {
             row.put("value", null);
           }
-          out.add(row);
+          synchronized (out) {
+            out.add(row);
+          }
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -385,7 +348,8 @@ final class Aggregations {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
 
-      final long[] c = new long[1];
+      // The consumer runs on several chunk-parsing threads at once: count with a LongAdder.
+      final LongAdder c = new LongAdder();
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
@@ -393,7 +357,7 @@ final class Aggregations {
             session.getRecordingPath(),
             ev -> {
               if (!typeSet.contains(ev.typeName())) return;
-              if (matchesAll(ev.value(), query.predicates)) c[0]++;
+              if (matchesAll(ev.value(), query.predicates)) c.increment();
             });
       } else {
         // Single-type query: use direct comparison (faster)
@@ -402,10 +366,10 @@ final class Aggregations {
             session.getRecordingPath(),
             ev -> {
               if (!eventType.equals(ev.typeName())) return;
-              if (matchesAll(ev.value(), query.predicates)) c[0]++;
+              if (matchesAll(ev.value(), query.predicates)) c.increment();
             });
       }
-      count = c[0];
+      count = c.sum();
     } else if (query.root == Root.METADATA) {
       if (query.segments.isEmpty())
         throw new IllegalArgumentException("metadata root requires type");
@@ -503,7 +467,11 @@ final class Aggregations {
             Map<String, Object> map = ev.value();
             if (!matchesAll(map, query.predicates)) return;
             Object val = Values.get(map, path.toArray());
-            if (val instanceof Number n) values.add(n.doubleValue());
+            if (val instanceof Number n) {
+              synchronized (values) {
+                values.add(n.doubleValue());
+              }
+            }
           });
     } else {
       List<Object> vals =
@@ -556,8 +524,8 @@ final class Aggregations {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
 
-      final double[] s = {0.0};
-      final long[] c = {0};
+      final DoubleAdder s = new DoubleAdder();
+      final LongAdder c = new LongAdder();
       if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
@@ -569,8 +537,8 @@ final class Aggregations {
               if (!matchesAll(map, query.predicates)) return;
               Object val = Values.get(map, path.toArray());
               if (val instanceof Number n) {
-                s[0] += n.doubleValue();
-                c[0]++;
+                s.add(n.doubleValue());
+                c.increment();
               }
             });
       } else {
@@ -584,13 +552,13 @@ final class Aggregations {
               if (!matchesAll(map, query.predicates)) return;
               Object val = Values.get(map, path.toArray());
               if (val instanceof Number n) {
-                s[0] += n.doubleValue();
-                c[0]++;
+                s.add(n.doubleValue());
+                c.increment();
               }
             });
       }
-      sum = s[0];
-      count = c[0];
+      sum = s.sum();
+      count = c.sum();
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
@@ -622,7 +590,7 @@ final class Aggregations {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
     // How many events the key was offered. Only used to tell "nothing matched the filter" apart
     // from "the key path matched nothing in events that were there" — see reportUnmatchedKey.
-    long[] offered = {0L};
+    LongAdder offered = new LongAdder();
 
     // Pre-build path tokens for array iteration support. A FieldRef key expression is folded into
     // keyPath by the parser, so indexed paths keep the plain-path fan-out behaviour.
@@ -649,32 +617,17 @@ final class Aggregations {
               if (!typeSet.contains(ev.typeName())) return;
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
-              offered[0]++;
-
-              List<Object> keys = groupKeys(map, keyTokens, keyExpr, pathKeyed);
-              for (Object key : keys) {
-                GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
-
-                if ("count".equals(aggFunc)) {
-                  acc.add(1);
-                } else if (valueExpr != null) {
-                  // Use expression evaluation
-                  Object val = ExpressionEvaluator.evaluateExpression(valueExpr, map);
-                  if (val instanceof Number n) {
-                    acc.add(n.doubleValue());
-                  }
-                } else {
-                  List<Object> vals =
-                      valueTokens == null
-                          ? List.of()
-                          : PathValues.extractAllValues(map, valueTokens);
-                  for (Object val : vals) {
-                    if (val instanceof Number n) {
-                      acc.add(n.doubleValue());
-                    }
-                  }
-                }
-              }
+              offered.increment();
+              addToGroups(
+                  groups,
+                  map,
+                  keyTokens,
+                  keyExpr,
+                  pathKeyed,
+                  aggFunc,
+                  keyDisplay,
+                  valueExpr,
+                  valueTokens);
             });
       } else {
         // Single-type query: use direct comparison (faster)
@@ -685,32 +638,17 @@ final class Aggregations {
               if (!eventType.equals(ev.typeName())) return;
               Map<String, Object> map = ev.value();
               if (!matchesAll(map, query.predicates)) return;
-              offered[0]++;
-
-              List<Object> keys = groupKeys(map, keyTokens, keyExpr, pathKeyed);
-              for (Object key : keys) {
-                GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
-
-                if ("count".equals(aggFunc)) {
-                  acc.add(1);
-                } else if (valueExpr != null) {
-                  // Use expression evaluation
-                  Object val = ExpressionEvaluator.evaluateExpression(valueExpr, map);
-                  if (val instanceof Number n) {
-                    acc.add(n.doubleValue());
-                  }
-                } else {
-                  List<Object> vals =
-                      valueTokens == null
-                          ? List.of()
-                          : PathValues.extractAllValues(map, valueTokens);
-                  for (Object val : vals) {
-                    if (val instanceof Number n) {
-                      acc.add(n.doubleValue());
-                    }
-                  }
-                }
-              }
+              offered.increment();
+              addToGroups(
+                  groups,
+                  map,
+                  keyTokens,
+                  keyExpr,
+                  pathKeyed,
+                  aggFunc,
+                  keyDisplay,
+                  valueExpr,
+                  valueTokens);
             });
       }
     } else {
@@ -718,33 +656,21 @@ final class Aggregations {
       List<Map<String, Object>> rows =
           eval.evaluate(session, new Query(query.root, query.segments, query.predicates));
       for (Map<String, Object> row : rows) {
-        List<Object> keys = groupKeys(row, keyTokens, keyExpr, pathKeyed);
-        for (Object key : keys) {
-          GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
-
-          if ("count".equals(aggFunc)) {
-            acc.add(1);
-          } else if (valueExpr != null) {
-            // Use expression evaluation
-            Object val = ExpressionEvaluator.evaluateExpression(valueExpr, row);
-            if (val instanceof Number n) {
-              acc.add(n.doubleValue());
-            }
-          } else {
-            List<Object> vals =
-                valueTokens == null ? List.of() : PathValues.extractAllValues(row, valueTokens);
-            for (Object val : vals) {
-              if (val instanceof Number n) {
-                acc.add(n.doubleValue());
-              }
-            }
-          }
-        }
+        addToGroups(
+            groups,
+            row,
+            keyTokens,
+            keyExpr,
+            pathKeyed,
+            aggFunc,
+            keyDisplay,
+            valueExpr,
+            valueTokens);
       }
     }
 
-    if (groups.isEmpty() && offered[0] > 0) {
-      reportUnmatchedKey(session, query, keyDisplay, offered[0]);
+    if (groups.isEmpty() && offered.sum() > 0) {
+      reportUnmatchedKey(session, query, keyDisplay, offered.sum());
     }
 
     List<Map<String, Object>> result = new ArrayList<>();
@@ -761,6 +687,54 @@ final class Aggregations {
     }
 
     return result;
+  }
+
+  /**
+   * Adds one event (or row) to the groups it belongs to.
+   *
+   * <p>Called from several chunk-parsing threads at once. Keys and values are worked out from the
+   * event first, without a lock; only the update of {@code groups} and its accumulators is
+   * serialized, on {@code groups}.
+   */
+  private static void addToGroups(
+      Map<Object, GroupAccumulator> groups,
+      Map<String, Object> map,
+      List<Object> keyTokens,
+      JfrPath.Expr keyExpr,
+      boolean pathKeyed,
+      String aggFunc,
+      String keyDisplay,
+      JfrPath.Expr valueExpr,
+      List<Object> valueTokens) {
+    List<Object> keys = groupKeys(map, keyTokens, keyExpr, pathKeyed);
+    if (keys.isEmpty()) return;
+
+    boolean counting = "count".equals(aggFunc);
+    List<Object> vals;
+    if (counting) {
+      vals = List.of();
+    } else if (valueExpr != null) {
+      // Use expression evaluation
+      Object val = ExpressionEvaluator.evaluateExpression(valueExpr, map);
+      vals = val instanceof Number ? List.of(val) : List.of();
+    } else {
+      vals = valueTokens == null ? List.of() : PathValues.extractAllValues(map, valueTokens);
+    }
+
+    synchronized (groups) {
+      for (Object key : keys) {
+        GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
+        if (counting) {
+          acc.add(1);
+        } else {
+          for (Object val : vals) {
+            if (val instanceof Number n) {
+              acc.add(n.doubleValue());
+            }
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -958,7 +932,9 @@ final class Aggregations {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
             row.put("len", null);
-            out.add(row);
+            synchronized (out) {
+              out.add(row);
+            }
             return;
           }
           Integer len = PathValues.valueLength(val);
@@ -968,7 +944,9 @@ final class Aggregations {
           }
           Map<String, Object> row = new HashMap<>();
           row.put("len", len);
-          out.add(row);
+          synchronized (out) {
+            out.add(row);
+          }
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1027,7 +1005,9 @@ final class Aggregations {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
             row.put("value", null);
-            out.add(row);
+            synchronized (out) {
+              out.add(row);
+            }
             return;
           }
           if (!(val instanceof CharSequence s)) {
@@ -1043,7 +1023,9 @@ final class Aggregations {
               };
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          out.add(row);
+          synchronized (out) {
+            out.add(row);
+          }
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1101,7 +1083,9 @@ final class Aggregations {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
             row.put("value", null);
-            out.add(row);
+            synchronized (out) {
+              out.add(row);
+            }
             return;
           }
           if (!(val instanceof Number n)) {
@@ -1128,7 +1112,9 @@ final class Aggregations {
           }
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          out.add(row);
+          synchronized (out) {
+            out.add(row);
+          }
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1185,7 +1171,9 @@ final class Aggregations {
           Map<String, Object> row = new HashMap<>();
           row.put(
               "value", val instanceof Number n ? TimeFormats.formatDuration(n.longValue()) : null);
-          out.add(row);
+          synchronized (out) {
+            out.add(row);
+          }
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1267,7 +1255,9 @@ final class Aggregations {
                 opName + "() expects string, got " + val.getClass().getName());
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          out.add(row);
+          synchronized (out) {
+            out.add(row);
+          }
         };
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
@@ -1311,7 +1301,9 @@ final class Aggregations {
                 "replace() expects string, got " + val.getClass().getName());
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          out.add(row);
+          synchronized (out) {
+            out.add(row);
+          }
         };
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
@@ -1358,6 +1350,47 @@ final class Aggregations {
     return sortedValues.get(rank - 1);
   }
 
+  /**
+   * Running statistics. {@link #add} is synchronized: the streaming path calls it from several
+   * chunk-parsing threads at once. The mean and variance are running values that round at every
+   * step, so their last bits depend on the order values arrive in; count, min and max do not.
+   */
+  /**
+   * Running first/last instant and count for {@code timerange()}. The streaming path offers events
+   * from several chunk-parsing threads at once: the values are read from the event without a lock
+   * and only the update is serialized.
+   */
+  private static final class TimeRangeAgg {
+    private long min = Long.MAX_VALUE;
+    private long max = Long.MIN_VALUE;
+    private long count;
+
+    void offer(Map<String, Object> map, List<String> valuePath, List<String> durationPath) {
+      Object val = Values.get(map, valuePath.toArray());
+      if (!(val instanceof Number n)) return;
+      long epochNanos = n.longValue();
+      // For max, if duration is specified, use startTime + duration
+      long endEpochNanos = epochNanos;
+      if (!durationPath.isEmpty()) {
+        Object durVal = Values.get(map, durationPath.toArray());
+        if (durVal instanceof Number dn) {
+          endEpochNanos = epochNanos + dn.longValue();
+        }
+      }
+      synchronized (this) {
+        if (epochNanos < min) min = epochNanos;
+        if (endEpochNanos > max) max = endEpochNanos;
+        count++;
+      }
+    }
+
+    synchronized void snapshot(long[] minMax, long[] count) {
+      minMax[0] = min;
+      minMax[1] = max;
+      count[0] = this.count;
+    }
+  }
+
   static final class StatsAgg {
     long count = 0;
     double min = Double.POSITIVE_INFINITY;
@@ -1365,7 +1398,7 @@ final class Aggregations {
     double mean = 0.0;
     double m2 = 0.0; // for variance via Welford
 
-    void add(double x) {
+    synchronized void add(double x) {
       count++;
       if (x < min) min = x;
       if (x > max) max = x;
@@ -1375,7 +1408,7 @@ final class Aggregations {
       m2 += delta * delta2;
     }
 
-    Map<String, Object> toRow() {
+    synchronized Map<String, Object> toRow() {
       Map<String, Object> row = new HashMap<>();
       row.put("count", count);
       row.put("min", count > 0 ? min : null);

@@ -598,3 +598,20 @@ take precedence over the generated ones.
 > pooled frames produced empty flame graphs with no error. A synthetic fixture is a model of a
 > producer: match its layout, not just its names, and when it fails a test, find out which of the two
 > is wrong before changing either.
+
+> **Case file — the fixtures have too few chunks to lose a race.** A consumer handed to
+> `EventSource.streamEvents` (or a handler given to the parser) is called from one thread per chunk,
+> concurrently. Every JfrPath operator kept its state in a plain `long[]`, `ArrayList` or `HashMap`
+> anyway, and the suite was green, because the test recordings hold one or two chunks. On a
+> generated 32-chunk recording with exactly 320,000 `bench.Sampled` events,
+> `events/bench.Sampled | count()` returned 317233, 316995 and 316700 on three consecutive runs.
+> `JfrPathConcurrentAggregationTest` now generates a 16-chunk recording of known contents and
+> asserts exact results five times over; against the unfixed code 90 of its 105 runs failed: counts
+> short by a few percent (`expected: <640000> but was: <613668>`), a
+> `ConcurrentModificationException` out of `decorateByKey`, and
+> `Index 34 out of bounds for length 33` out of a plain `events/<type>` listing. This is the
+> `JafarConstantPoolSource` bug above, found a second time. When you write a consumer, treat it as
+> concurrent with itself: read the event outside any lock, then update shared state through a
+> `LongAdder`, a `ConcurrentHashMap` or a short `synchronized` block. When you test one, use a
+> recording with many chunks and repeat the assertion; one green run on `test-jfr.jfr` says nothing.
+> The order in which rows from different chunks arrive is still not defined.
