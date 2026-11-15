@@ -2,7 +2,6 @@ package io.jafar.shell.backend.impl;
 
 import io.jafar.parser.api.ConstantPool;
 import io.jafar.parser.api.ParserContext;
-import io.jafar.parser.impl.MapValueBuilder;
 import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
@@ -23,6 +22,7 @@ import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -54,8 +54,9 @@ final class JafarSources {
 
       // Chunks are parsed in parallel; each chunk's onMetadata runs on a chunk thread. Collect
       // matches keyed by chunk index and pick the lowest-numbered chunk afterwards so the
-      // result is deterministic regardless of thread scheduling.
-      Map<Integer, Map<String, Object>> matches = new ConcurrentHashMap<>();
+      // result is deterministic regardless of thread scheduling. The raw MetadataClass is kept
+      // and converted only once, for the winning chunk, after parsing.
+      Map<Integer, MetadataClass> matches = new ConcurrentHashMap<>();
       try (StreamingChunkParser parser =
           new StreamingChunkParser(new UntypedParserContextFactory())) {
         parser.parse(
@@ -70,7 +71,7 @@ final class JafarSources {
 
                 MetadataClass clazz = byName.get(typeName);
                 if (clazz != null) {
-                  matches.put(context.getChunkIndex(), convertClass(clazz));
+                  matches.put(context.getChunkIndex(), clazz);
                 } else if (debug) {
                   System.err.println(
                       "[DEBUG]   Chunk " + context.getChunkIndex() + ": NOT found: " + typeName);
@@ -83,7 +84,7 @@ final class JafarSources {
       Map<String, Object> result =
           matches.entrySet().stream()
               .min(Map.Entry.comparingByKey())
-              .map(Map.Entry::getValue)
+              .map(entry -> convertClass(entry.getValue()))
               .orElse(null);
       if (debug) {
         System.err.println(
@@ -279,7 +280,8 @@ final class JafarSources {
     }
 
     /**
-     * Load chunks with optional filter and limit. Supports early termination when limit is reached.
+     * Load chunks with optional filter and limit. Rows are collected for every chunk and merged in
+     * chunk order; the limit then keeps the lowest-indexed matches.
      *
      * @param recording path to the JFR recording
      * @param filter optional predicate to filter chunks, null for all
@@ -304,16 +306,16 @@ final class JafarSources {
                 if (filter == null || filter.test(row)) {
                   rows.put(chunkIndex, row);
                 }
-                // Always return true so every chunk reports its row; skipping events below is
-                // only an optimization and cannot change which rows are collected.
+                // Always return true so every chunk reports its row; the events below are not
+                // needed and skipping them cannot change which rows are collected.
                 return true;
               }
 
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                // Stop parsing this chunk's events once enough chunks matched. Only affects how
-                // much of this chunk is parsed, never which rows are collected.
-                return limit <= 0 || rows.size() < limit;
+                // Rows are collected in onChunkStart; the limit selects the lowest-indexed
+                // matches after the sort, so skipping events cannot change which rows exist.
+                return false;
               }
             });
       }
@@ -344,7 +346,9 @@ final class JafarSources {
 
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                return true;
+                // Chunk summaries need only the header data collected in onChunkStart; returning
+                // false skips constant-pool parsing and the event walk for this chunk.
+                return false;
               }
             });
       }
@@ -422,7 +426,11 @@ final class JafarSources {
         m.put("totalSize", e.getValue());
         rows.add(m);
       }
-      rows.sort((a, b) -> Long.compare((long) b.get("totalSize"), (long) a.get("totalSize")));
+      rows.sort(
+          Comparator.comparingLong(
+                  (Map<String, Object> a) -> ((Number) a.get("totalSize")).longValue())
+              .reversed()
+              .thenComparing(a -> String.valueOf(a.get("name"))));
       return rows;
     }
 
@@ -460,17 +468,7 @@ final class JafarSources {
             recording,
             new ChunkParserListener() {
               @Override
-              public boolean onChunkStart(
-                  ParserContext context, int chunkIndex, ChunkHeader header) {
-                MapValueBuilder mvb = new MapValueBuilder(context);
-                GenericValueReader reader = new GenericValueReader(mvb);
-                context.put(GenericValueReader.class, reader);
-                return ChunkParserListener.super.onChunkStart(context, chunkIndex, header);
-              }
-
-              @Override
               public boolean onChunkEnd(ParserContext context, int chunkIndex, boolean skipped) {
-                context.remove(GenericValueReader.class);
                 if (!skipped) {
                   List<Map<String, Object>> rows = new ArrayList<>();
                   try {
@@ -591,8 +589,8 @@ final class JafarSources {
       // Per-event-type unique target IDs (direct refs only)
       Map<String, Set<Long>> idsByEventType = new ConcurrentHashMap<>();
 
-      // Metadata-derived ancestor types for transitive crossref counting
-      Set<String>[] ancestorTypes = new Set[] {Collections.emptySet()};
+      // Metadata-derived ancestor types for transitive crossref counting, keyed by chunk index
+      Map<Integer, Set<String>> ancestorTypes = new ConcurrentHashMap<>();
 
       // ThreadLocal: accumulates all CP refs (all types) seen in the current event
       ThreadLocal<Map<String, List<Long>>> currentEventAllRefs = new ThreadLocal<>();
@@ -616,7 +614,7 @@ final class JafarSources {
             new ChunkParserListener() {
               @Override
               public boolean onMetadata(ParserContext context, MetadataEvent metadata) {
-                ancestorTypes[0] = buildAncestorTypes(metadata, typeName);
+                ancestorTypes.put(context.getChunkIndex(), buildAncestorTypes(metadata, typeName));
                 return true;
               }
 
@@ -639,6 +637,7 @@ final class JafarSources {
                     chunkCpEdges.remove(chunkIndex);
                 Map<String, Set<Long>> eventRefs = chunkEventRefs.remove(chunkIndex);
                 edgeProcs.remove(chunkIndex);
+                ancestorTypes.remove(chunkIndex);
                 if (!skipped && edges != null) {
                   // Per-chunk BFS: which target-type IDs are reachable from events in this chunk?
                   Set<Long> chunkReachable =
@@ -650,11 +649,26 @@ final class JafarSources {
                         chunkReachable.stream().filter(allIds::contains).count());
                   }
                   // Merge this chunk's CP edges into the global graph for per-event-type BFS.
+                  // Deep-merge per id and ref type: an id defined in several chunks keeps the
+                  // union of edges. This assumes a (type, id) pair denotes the same CP entry
+                  // across this recording's chunks (true for delta-encoded CP state); a chunk
+                  // that reset its pool and reused an id would union unrelated edge sets.
                   edges.forEach(
-                      (type, idMap) ->
-                          cpEdges
-                              .computeIfAbsent(type, k -> new ConcurrentHashMap<>())
-                              .putAll(idMap));
+                      (type, idMap) -> {
+                        Map<Long, Map<String, Set<Long>>> globalIds =
+                            cpEdges.computeIfAbsent(type, k -> new ConcurrentHashMap<>());
+                        idMap.forEach(
+                            (id, refMap) -> {
+                              Map<String, Set<Long>> globalRefs =
+                                  globalIds.computeIfAbsent(id, k -> new ConcurrentHashMap<>());
+                              refMap.forEach(
+                                  (refType, refIds) ->
+                                      globalRefs
+                                          .computeIfAbsent(
+                                              refType, k -> ConcurrentHashMap.newKeySet())
+                                          .addAll(refIds));
+                            });
+                      });
                 }
                 context.remove(GenericValueReader.class);
                 return true;
@@ -744,10 +758,13 @@ final class JafarSources {
                       .addAll(directTarget);
                 } else {
                   // Check for transitive refs — count as candidate, confirmed after BFS
-                  for (String ancestor : ancestorTypes[0]) {
-                    if (allRefs.containsKey(ancestor)) {
-                      candidateTransitiveCounts.merge(eventType.getName(), 1L, Long::sum);
-                      break;
+                  Set<String> ancestors = ancestorTypes.get(context.getChunkIndex());
+                  if (ancestors != null) {
+                    for (String ancestor : ancestors) {
+                      if (allRefs.containsKey(ancestor)) {
+                        candidateTransitiveCounts.merge(eventType.getName(), 1L, Long::sum);
+                        break;
+                      }
                     }
                   }
                 }

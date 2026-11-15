@@ -11,6 +11,8 @@ public interface ChunkSource {
   /**
    * Load all chunks as metadata rows.
    *
+   * <p>Rows are returned in chunk order (ascending chunk index).
+   *
    * @param recording path to the JFR recording file
    * @return list of chunk metadata rows with index, offset, size, startNanos, duration, etc.
    * @throws Exception if parsing fails
@@ -19,6 +21,9 @@ public interface ChunkSource {
 
   /**
    * Load a specific chunk by index.
+   *
+   * <p>The index is a 0-based <em>position</em> into the ordered list returned by {@link
+   * #loadAllChunks(Path)} — not the 1-based {@code index} field inside the row.
    *
    * @param recording path to the JFR recording file
    * @param chunkIndex the chunk index to load

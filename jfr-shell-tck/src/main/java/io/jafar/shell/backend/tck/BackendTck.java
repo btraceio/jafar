@@ -318,7 +318,7 @@ public abstract class BackendTck {
     Path doubled = null;
     try {
       doubled = doubleRecording(getTestRecording());
-    } catch (Exception e) {
+    } catch (java.io.IOException e) {
       org.junit.jupiter.api.Assumptions.abort(
           "Could not prepare a doubled recording: " + e.getMessage());
       return;
