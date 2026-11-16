@@ -46,6 +46,12 @@ tasks.register('generateTestRecordings', JavaExec) {
     // test-dd.jfr is the checked-in TCK recording (a real Datadog profiler recording); see README.
     def ddSource = rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr')
     args 'tests', demoResources.absolutePath, parserResources.absolutePath, ddSource.absolutePath
+    // The JMC writer orders constant pools by iterating a hash map of types, and a type's hash
+    // includes an enum constant's identity hash (BuiltinType hashes its Types.Builtin). Identity
+    // hashes depend on how the JVM was launched, so without this the same generator on the same
+    // JDK writes different bytes through Gradle and from the command line (same events, pools in
+    // another order). hashCode=2 makes every identity hash the constant 1. See README.md.
+    jvmArgs '-XX:+UnlockExperimentalVMOptions', '-XX:hashCode=2'
     inputs.files(sourceSets.main.runtimeClasspath).withPropertyName('generator')
     inputs.file(ddSource).withPropertyName('ddSource')
     recordingNames.each { name ->
