@@ -886,13 +886,18 @@ public final class JfrPathEvaluator {
     /** The start times the caller wants; only meaningful with {@link #types}. */
     private final TimeRange startTime;
 
+    /** Who gets the events together with their chunk, or {@code null} for the plain consumer. */
+    private final ChunkConsumer chunks;
+
     DefaultEventSource() {
-      this(null, TimeRange.all());
+      this(null, TimeRange.all(), null);
     }
 
-    private DefaultEventSource(Collection<String> types, TimeRange startTime) {
+    private DefaultEventSource(
+        Collection<String> types, TimeRange startTime, ChunkConsumer chunks) {
       this.types = types;
       this.startTime = startTime;
+      this.chunks = chunks;
     }
 
     @Override
@@ -901,7 +906,14 @@ public final class JfrPathEvaluator {
           io.jafar.parser.api.ParsingContext.create().newUntypedParser(recording)) {
         // The one place this class names an event's type (see handleTypes on why that matters).
         UntypedJafarParser.EventHandler handler =
-            (type, value, ctl) -> consumer.accept(new Event(type.getName(), value));
+            (type, value, ctl) -> {
+              Event event = new Event(type.getName(), value);
+              if (chunks == null) {
+                consumer.accept(event);
+              } else {
+                chunks.accept(ctl.chunkInfo().chunkIndex(), event);
+              }
+            };
         if (types == null) {
           p.handle(handler);
         } else {
@@ -925,23 +937,14 @@ public final class JfrPathEvaluator {
     public void streamChunks(
         Path recording, Collection<String> types, TimeRange startTime, ChunkConsumer consumer)
         throws Exception {
-      try (UntypedJafarParser p =
-          io.jafar.parser.api.ParsingContext.create().newUntypedParser(recording)) {
-        handleTypes(
-            p,
-            types,
-            startTime,
-            (type, value, ctl) ->
-                consumer.accept(ctl.chunkInfo().chunkIndex(), new Event(type.getName(), value)));
-        p.run();
-      }
+      new DefaultEventSource(types, startTime, consumer).streamEvents(recording, ev -> {});
     }
 
     @Override
     public void streamEvents(
         Path recording, Collection<String> types, TimeRange startTime, Consumer<Event> consumer)
         throws Exception {
-      new DefaultEventSource(types, startTime).streamEvents(recording, consumer);
+      new DefaultEventSource(types, startTime, null).streamEvents(recording, consumer);
     }
   }
 
