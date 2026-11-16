@@ -421,7 +421,14 @@ case table and the file-naming rule.
   [test-recordings/README.md](../../test-recordings/README.md)), so a pinned sha
   fails on every machine but the one that generated the golden. The
   digest, which is JDK-independent, is the gate; the fixture-sha rule
-  survives only for the committed `tck-test.jfr`.
+  survives only for the committed `tck-test.jfr`. The bytes follow the
+  JVM's identity hashes, not the JDK build as such: one JDK binary wrote
+  different bytes through Gradle and from `java -cp` (the JMC writer
+  orders constant pools by a hash map whose keys hash an enum constant).
+  `:test-recordings:generateTestRecordings` now runs the generator with
+  `-XX:hashCode=2`, which gave identical bytes on every JVM it was tried
+  on; the pin stays off because the builds listed above were not among
+  them (same README).
 - `parser-core/src/test/resources/test-dd.jfr` is deliberately not in
   the corpus: it is a byte-for-byte copy of `test-jfr.jfr`, so a golden
   for it would be a permanently identical second file with no added
