@@ -323,6 +323,16 @@ metadata class and so per chunk (`GeneratedFactoryMultiChunkTest`). A handler ge
 this still reads its static ids, bound once per run: it is right on recordings whose chunks agree
 on those ids, and wrong on the others until it is regenerated.
 
+Two more nets hold this on a real recording (`tck-test.jfr`: `jdk.ActiveSetting` in both chunks,
+`java.lang.Thread` id 176 in one and 22 in the other). `GeneratedFactoryChunkBindingTest` adds the
+cases a single parse does not reach: a second `run()` of the same parser, which delivered 402
+`null` events while the "once" was per parser, and a parse of another recording started from a
+handler, which rebound the static ids for the whole JVM and left `eventThread()` `null` for 380
+events of the outer parse. `BuildTimeFactoryWithRuntimeCodegenTest`, in a `codegenTest` source set
+of its own, runs the same cases with `parser-codegen` on the classpath, where a chunk without a
+factory is decoded by a run-time generated handler: the values are right and only the
+implementation class says the build-time handlers are not in use, so the test records it.
+
 ---
 
 ## Before you trust a shape
