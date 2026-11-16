@@ -16,8 +16,9 @@ import java.util.Set;
 /**
  * Event decoration: temporal joins (decorateByTime) and correlation-key joins (decorateByKey).
  *
- * <p>The consumers passed to {@code streamEvents} run on several chunk-parsing threads at once, so
- * each one serializes its writes to the collection it fills.
+ * <p>Chunks are parsed in parallel. What is collected from the event stream is kept per chunk and
+ * put together in file order ({@link JfrPathEvaluator#foldPerChunk}), so the result is the same on
+ * every run.
  */
 final class Decorators {
   private final JfrPathEvaluator eval;
@@ -42,8 +43,7 @@ final class Decorators {
         collectTimeRangeDecorators(session.getRecordingPath(), op);
 
     // PASS 2: Stream primary events and decorate
-    List<Map<String, Object>> result = new ArrayList<>();
-    eval.forEachMatching(
+    return eval.collectInFileOrder(
         session.getRecordingPath(),
         List.of(primaryType),
         query.predicates,
@@ -53,45 +53,37 @@ final class Decorators {
               findTimeRangeMatches(event, decorators, op.threadPathPrimary);
 
           // Wrap event with decorators
-          Map<String, Object> decorated =
+          return (Map<String, Object>)
               new DecoratedEventMap(event, matchingDecorators, op.decoratorFields);
-
-          synchronized (result) {
-            result.add(decorated);
-          }
         });
-
-    return result;
   }
 
   List<DecoratorTimeRange> collectTimeRangeDecorators(Path recording, JfrPath.DecorateByTimeOp op)
       throws Exception {
-    List<DecoratorTimeRange> decorators = new ArrayList<>();
+    // In file order, so that decorators the sort below leaves equal keep the same order on every
+    // run, and with it the order of the matches each event is decorated with.
+    List<DecoratorTimeRange> decorators =
+        eval.collectInFileOrder(
+            recording,
+            List.of(op.decoratorEventType),
+            List.of(),
+            event -> {
+              // Extract thread ID
+              Object threadId = Values.get(event, op.threadPathDecorator.toArray());
+              if (threadId == null) return null;
 
-    eval.forEachMatching(
-        recording,
-        List.of(op.decoratorEventType),
-        List.of(),
-        event -> {
-          // Extract thread ID
-          Object threadId = Values.get(event, op.threadPathDecorator.toArray());
-          if (threadId == null) return;
+              // Extract startTime and duration
+              Object startTimeObj = event.get("startTime");
+              Object durationObj = event.get("duration");
 
-          // Extract startTime and duration
-          Object startTimeObj = event.get("startTime");
-          Object durationObj = event.get("duration");
+              if (startTimeObj == null) return null;
 
-          if (startTimeObj == null) return;
+              long startTime = Coerce.toLong(startTimeObj);
+              long duration = durationObj != null ? Coerce.toLong(durationObj) : 0;
+              long endTime = startTime + duration;
 
-          long startTime = Coerce.toLong(startTimeObj);
-          long duration = durationObj != null ? Coerce.toLong(durationObj) : 0;
-          long endTime = startTime + duration;
-
-          DecoratorTimeRange range = new DecoratorTimeRange(threadId, startTime, endTime, event);
-          synchronized (decorators) {
-            decorators.add(range);
-          }
-        });
+              return new DecoratorTimeRange(threadId, startTime, endTime, event);
+            });
 
     // Sort by thread ID and start time for efficient lookup
     decorators.sort(
@@ -149,8 +141,7 @@ final class Decorators {
         collectKeyedDecorators(session.getRecordingPath(), op);
 
     // PASS 2: Stream primary events and decorate
-    List<Map<String, Object>> result = new ArrayList<>();
-    eval.forEachMatching(
+    return eval.collectInFileOrder(
         session.getRecordingPath(),
         List.of(primaryType),
         query.predicates,
@@ -161,34 +152,32 @@ final class Decorators {
               primaryKey == null ? List.of() : decoratorIndex.getOrDefault(primaryKey, List.of());
 
           // Wrap event with decorators
-          Map<String, Object> decorated =
+          return (Map<String, Object>)
               new DecoratedEventMap(event, matchingDecorators, op.decoratorFields);
-
-          synchronized (result) {
-            result.add(decorated);
-          }
         });
-
-    return result;
   }
 
   Map<Object, List<Map<String, Object>>> collectKeyedDecorators(
       Path recording, JfrPath.DecorateByKeyOp op) throws Exception {
+    // One index per chunk, merged in file order: the decorators of a key are then listed in the
+    // order they appear in the recording, on every run.
     Map<Object, List<Map<String, Object>>> index = new HashMap<>();
-
-    eval.forEachMatching(
-        recording,
-        List.of(op.decoratorEventType),
-        List.of(),
-        event -> {
-          // Compute correlation key
-          Object key = evaluateKeyExpr(event, op.decoratorKey);
-          if (key == null) return;
-
-          synchronized (index) {
-            index.computeIfAbsent(key, k -> new ArrayList<>()).add(event);
-          }
-        });
+    for (Map<Object, List<Map<String, Object>>> part :
+        eval.foldPerChunk(
+            recording,
+            List.of(op.decoratorEventType),
+            List.of(),
+            () -> new java.util.LinkedHashMap<Object, List<Map<String, Object>>>(),
+            (chunk, event) -> {
+              // Compute correlation key
+              Object key = evaluateKeyExpr(event, op.decoratorKey);
+              if (key != null) {
+                chunk.computeIfAbsent(key, k -> new ArrayList<>()).add(event);
+              }
+            })) {
+      part.forEach(
+          (key, events) -> index.computeIfAbsent(key, k -> new ArrayList<>()).addAll(events));
+    }
 
     return index;
   }

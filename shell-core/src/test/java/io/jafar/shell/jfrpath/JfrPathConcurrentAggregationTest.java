@@ -1,6 +1,7 @@
 package io.jafar.shell.jfrpath;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.Mockito.when;
 
 import io.jafar.shell.JFRSession;
@@ -9,6 +10,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import jdk.jfr.Event;
@@ -65,6 +67,7 @@ class JfrPathConcurrentAggregationTest {
     int bucket;
     long negative;
     String label;
+    double ratio;
   }
 
   @Name(SPAN)
@@ -103,6 +106,8 @@ class JfrPathConcurrentAggregationTest {
     session = Mockito.mock(JFRSession.class);
     when(session.getRecordingPath()).thenReturn(recording);
     eval = new JfrPathEvaluator();
+    sampleSeqInFileOrder = readSampleSeqInFileOrder();
+    assertEquals(SAMPLES, sampleSeqInFileOrder.size());
   }
 
   private static void generate(Path out) throws IOException {
@@ -129,6 +134,7 @@ class JfrPathConcurrentAggregationTest {
               s.bucket = (int) (sample % BUCKETS);
               s.negative = -sample;
               s.label = "ab";
+              s.ratio = sample / 3.0;
               s.commit();
               sample++;
             }
@@ -345,5 +351,154 @@ class JfrPathConcurrentAggregationTest {
 
     assertEquals(
         SAMPLES, run("events/" + SAMPLE + " | decorateByTime(" + SPAN + ", fields=seq)").size());
+  }
+
+  // --- The same result on every run, and rows in file order ---------------------------------
+  //
+  // Chunks are parsed in parallel, so which chunk delivers first changes from run to run. Rows
+  // must come out in the order of the recording all the same, and anything whose value depends on
+  // the order of its terms (a double sum, a running mean) must be put together in that order.
+
+  /**
+   * The {@code seq} of every {@value #SAMPLE} event in the order the events are in the file, read
+   * by a parser that takes the chunks one after the other. It is not 0, 1, 2, ...: within a chunk
+   * JFR does not write events in the order they were committed.
+   */
+  private static List<Long> sampleSeqInFileOrder;
+
+  private static List<Long> readSampleSeqInFileOrder() throws Exception {
+    List<Long> seq = java.util.Collections.synchronizedList(new ArrayList<>());
+    try (io.jafar.parser.api.UntypedJafarParser parser =
+        io.jafar.parser.api.ParsingContext.create()
+            .withParallelism(1)
+            .newUntypedParser(recording)) {
+      parser.handle(
+          (type, event, ctl) -> {
+            if (SAMPLE.equals(type.getName())) {
+              seq.add(num(event.get("seq")));
+            }
+          });
+      parser.run();
+    }
+    return new ArrayList<>(seq);
+  }
+
+  /** 0, 1, 2, ... n-1. */
+  private static List<Long> upTo(long n) {
+    List<Long> expected = new ArrayList<>();
+    for (long i = 0; i < n; i++) {
+      expected.add(i);
+    }
+    return expected;
+  }
+
+  private static List<Long> seqOf(List<Map<String, Object>> rows, String column) {
+    List<Long> seq = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      seq.add(num(row.get(column)));
+    }
+    return seq;
+  }
+
+  @RepeatedTest(REPETITIONS)
+  void rowsAreInFileOrder() throws Exception {
+    assertEquals(sampleSeqInFileOrder, seqOf(run("events/" + SAMPLE), "seq"));
+    assertEquals(sampleSeqInFileOrder, seqOf(run("events/" + SAMPLE + " | select(seq)"), "seq"));
+    // Two types: each one's rows keep their own order, whatever the interleaving in the file.
+    List<Map<String, Object>> both = run("events/(" + SAMPLE + "|" + SPAN + ")");
+    List<Map<String, Object>> samples = new ArrayList<>();
+    for (Map<String, Object> row : both) {
+      if (row.containsKey("label")) {
+        samples.add(row);
+      }
+    }
+    assertEquals(sampleSeqInFileOrder, seqOf(samples, "seq"));
+  }
+
+  @RepeatedTest(REPETITIONS)
+  void projectedValuesAreInFileOrder() throws Exception {
+    JfrPath.Query query = JfrPathParser.parse("events/" + SAMPLE + "/seq");
+    List<Long> values = new ArrayList<>();
+    for (Object v : eval.evaluateValues(session, query)) {
+      values.add(num(v));
+    }
+    assertEquals(sampleSeqInFileOrder, values);
+  }
+
+  @RepeatedTest(REPETITIONS)
+  void transformedRowsAreInFileOrder() throws Exception {
+    // abs(negative) is seq again.
+    assertEquals(
+        sampleSeqInFileOrder, seqOf(run("events/" + SAMPLE + " | abs(negative)"), "value"));
+  }
+
+  @RepeatedTest(REPETITIONS)
+  void limitedRowsAreTheFirstOfTheRecording() throws Exception {
+    JfrPath.Query rows = JfrPathParser.parse("events/" + SAMPLE);
+    assertEquals(
+        sampleSeqInFileOrder.subList(0, 100),
+        seqOf(eval.evaluateWithLimit(session, rows, 100), "seq"));
+
+    JfrPath.Query values = JfrPathParser.parse("events/" + SAMPLE + "/seq");
+    List<Long> first = new ArrayList<>();
+    for (Object v : eval.evaluateValuesWithLimit(session, values, 100)) {
+      first.add(num(v));
+    }
+    assertEquals(sampleSeqInFileOrder.subList(0, 100), first);
+  }
+
+  @RepeatedTest(REPETITIONS)
+  void decoratedRowsAreInFileOrder() throws Exception {
+    assertEquals(
+        sampleSeqInFileOrder,
+        seqOf(run("events/" + SAMPLE + " | decorateByTime(" + SPAN + ", fields=seq)"), "seq"));
+  }
+
+  @RepeatedTest(REPETITIONS)
+  void groupsAreInOrderOfFirstAppearance() throws Exception {
+    // A group appears where its first event is in the file; bucket is seq modulo BUCKETS.
+    List<Long> firstAppearance = new ArrayList<>();
+    for (Long seq : sampleSeqInFileOrder) {
+      long bucket = seq % BUCKETS;
+      if (!firstAppearance.contains(bucket)) {
+        firstAppearance.add(bucket);
+      }
+    }
+    assertEquals(upTo(BUCKETS), new ArrayList<>(new java.util.TreeSet<>(firstAppearance)));
+    assertEquals(
+        firstAppearance, seqOf(run("events/" + SAMPLE + " | groupBy(bucket, agg=count)"), "key"));
+  }
+
+  /** The first results of the order-dependent aggregations; every later run must equal them. */
+  private static volatile List<Object> firstOrderDependentResults;
+
+  @RepeatedTest(REPETITIONS)
+  void orderDependentAggregationsAreTheSameOnEveryRun() throws Exception {
+    List<Object> results = new ArrayList<>();
+    // ratio is seq / 3.0: its partial sums are not exact, so their order shows in the last bits.
+    Map<String, Object> stats = single("events/" + SAMPLE + " | stats(ratio)");
+    results.add(stats.get("avg"));
+    results.add(stats.get("stddev"));
+    results.add(single("events/" + SAMPLE + " | sum(ratio)").get("sum"));
+    for (Map<String, Object> row :
+        run("events/" + SAMPLE + " | groupBy(bucket, agg=sum, value=ratio)")) {
+      results.add(row.get("sum"));
+    }
+    for (Map<String, Object> row :
+        run("events/" + SAMPLE + " | groupBy(bucket, agg=avg, value=ratio)")) {
+      results.add(row.get("avg"));
+    }
+
+    // Not vacuous: the values are there and are not all one number.
+    assertEquals(3 + 2 * BUCKETS, results.size());
+    assertNotEquals(results.get(0), results.get(1));
+    assertEquals((SAMPLES - 1) / 3.0 / 2, (Double) stats.get("avg"), 1e-6);
+
+    synchronized (JfrPathConcurrentAggregationTest.class) {
+      if (firstOrderDependentResults == null) {
+        firstOrderDependentResults = results;
+      }
+    }
+    assertEquals(firstOrderDependentResults, results);
   }
 }

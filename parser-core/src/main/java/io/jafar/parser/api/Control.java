@@ -27,6 +27,17 @@ public interface Control {
     }
 
     /**
+     * The position of the chunk in the recording: 1 for the first chunk of the file, 2 for the
+     * next, and so on. Unlike {@link #chunkId()} it is the same on every parse of a recording, so
+     * state kept per chunk can be put back in file order once the parse is over.
+     *
+     * @return the 1-based position of the chunk in the recording, or 0 if it is not available
+     */
+    default int chunkIndex() {
+      return 0;
+    }
+
+    /**
      * Chunk start time, as recorded
      *
      * @return the chunk start time or 0 epoch millis if info is not available

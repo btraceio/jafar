@@ -16,6 +16,7 @@ final class ChunkInfoImpl implements Control.ChunkInfo {
   private final long size;
   private final double nanosPerTick;
   private final long id;
+  private final int index;
 
   ChunkInfoImpl(ChunkHeader header) {
     this.startNanos = header.startNanos;
@@ -26,6 +27,12 @@ final class ChunkInfoImpl implements Control.ChunkInfo {
     this.duration = Duration.ofNanos(header.duration);
     this.size = header.size;
     this.id = CHUNK_COUNTER.incrementAndGet();
+    this.index = header.order;
+  }
+
+  @Override
+  public int chunkIndex() {
+    return index;
   }
 
   @Override

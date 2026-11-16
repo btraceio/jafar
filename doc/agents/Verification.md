@@ -664,7 +664,9 @@ take precedence over the generated ones.
 > concurrent with itself: read the event outside any lock, then update shared state through a
 > `LongAdder`, a `ConcurrentHashMap` or a short `synchronized` block. When you test one, use a
 > recording with many chunks and repeat the assertion; one green run on `test-jfr.jfr` says nothing.
-> The order in which rows from different chunks arrive is still not defined.
+> Events of different chunks still arrive in any order: an operator whose result depends on order
+> keeps its state per chunk and combines the chunks in file order (see
+> [Shells.md](Shells.md#jfr-shell-interactive-analysis-tool)).
 
 > **Case file — download size matters too.** Before downloads became optional and atomic, a
 > metadata E2E run exhausted disk space partway through a 1.7 GB `test-jfr.jfr`, after fetching

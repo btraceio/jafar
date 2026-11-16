@@ -19,9 +19,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /** Pipeline operators that aggregate over the event stream (count, stats, groupBy, select, ...). */
 final class Aggregations {
@@ -285,8 +284,8 @@ final class Aggregations {
     DateTimeFormatter formatter = TimeFormats.getFormatter(format);
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = valuePath;
-    Consumer<Object> addFormatted =
-        (val) -> {
+    BiConsumer<List<Map<String, Object>>, Object> addFormatted =
+        (rows, val) -> {
           Map<String, Object> row = new HashMap<>();
           if (val instanceof Number n) {
             Instant instant = Instant.ofEpochSecond(0, n.longValue());
@@ -294,37 +293,27 @@ final class Aggregations {
           } else {
             row.put("value", null);
           }
-          synchronized (out) {
-            out.add(row);
-          }
+          rows.add(row);
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
         throw new IllegalArgumentException("events root requires type");
       eval.validateEventTypes(session, query.eventTypes);
-      if (query.isMultiType) {
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              addFormatted.accept(Values.get(map, path.toArray()));
-            });
-      } else {
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              addFormatted.accept(Values.get(map, path.toArray()));
-            });
-      }
+      // One list per chunk, put together in file order: the rows come out the same every run.
+      out.addAll(
+          JfrPathEvaluator.concat(
+              eval.foldPerChunk(
+                  session.getRecordingPath(),
+                  JfrPathEvaluator.typesOf(query),
+                  query.predicates,
+                  ArrayList::new,
+                  (List<Map<String, Object>> rows, Map<String, Object> map) -> {
+                    addFormatted.accept(rows, Values.get(map, path.toArray()));
+                  })));
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-      for (Object v : vals) addFormatted.accept(v);
+      for (Object v : vals) addFormatted.accept(out, v);
     }
     return out;
   }
@@ -391,28 +380,19 @@ final class Aggregations {
       eval.validateEventTypes(session, query.eventTypes);
 
       List<String> path = vpath;
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              if (val instanceof Number n) agg.add(n.doubleValue());
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              if (val instanceof Number n) agg.add(n.doubleValue());
-            });
+      // One accumulator per chunk, merged in file order: the running mean and variance round at
+      // every step, so they are the same on every run only if the steps are.
+      for (StatsAgg part :
+          eval.foldPerChunk(
+              session.getRecordingPath(),
+              JfrPathEvaluator.typesOf(query),
+              query.predicates,
+              StatsAgg::new,
+              (StatsAgg chunk, Map<String, Object> map) -> {
+                Object val = Values.get(map, path.toArray());
+                if (val instanceof Number n) chunk.add(n.doubleValue());
+              })) {
+        agg.merge(part);
       }
     } else {
       // For non-events: derive values from the original query
@@ -503,39 +483,24 @@ final class Aggregations {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
 
-      final DoubleAdder s = new DoubleAdder();
-      final LongAdder c = new LongAdder();
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              if (val instanceof Number n) {
-                s.add(n.doubleValue());
-                c.increment();
-              }
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              if (val instanceof Number n) {
-                s.add(n.doubleValue());
-                c.increment();
-              }
-            });
+      // One sum per chunk, added up in file order: a double sum depends on the order of its
+      // terms, and this order is the same on every run.
+      for (double[] part :
+          eval.foldPerChunk(
+              session.getRecordingPath(),
+              JfrPathEvaluator.typesOf(query),
+              query.predicates,
+              () -> new double[2],
+              (double[] chunk, Map<String, Object> map) -> {
+                Object val = Values.get(map, path.toArray());
+                if (val instanceof Number n) {
+                  chunk[0] += n.doubleValue();
+                  chunk[1]++;
+                }
+              })) {
+        sum += part[0];
+        count += (long) part[1];
       }
-      sum = s.sum();
-      count = c.sum();
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
@@ -567,7 +532,7 @@ final class Aggregations {
     Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
     // How many events the key was offered. Only used to tell "nothing matched the filter" apart
     // from "the key path matched nothing in events that were there" — see reportUnmatchedKey.
-    LongAdder offered = new LongAdder();
+    long offered = 0;
 
     // Pre-build path tokens for array iteration support. A FieldRef key expression is folded into
     // keyPath by the parser, so indexed paths keep the plain-path fan-out behaviour.
@@ -585,46 +550,31 @@ final class Aggregations {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
 
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              offered.increment();
-              addToGroups(
-                  groups,
-                  map,
-                  keyTokens,
-                  keyExpr,
-                  pathKeyed,
-                  aggFunc,
-                  keyDisplay,
-                  valueExpr,
-                  valueTokens);
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              offered.increment();
-              addToGroups(
-                  groups,
-                  map,
-                  keyTokens,
-                  keyExpr,
-                  pathKeyed,
-                  aggFunc,
-                  keyDisplay,
-                  valueExpr,
-                  valueTokens);
-            });
+      // One set of groups per chunk, merged in file order: groups then appear in the order of
+      // their first event in the recording, and their sums are added in that order too.
+      for (ChunkGroups part :
+          eval.foldPerChunk(
+              session.getRecordingPath(),
+              JfrPathEvaluator.typesOf(query),
+              query.predicates,
+              ChunkGroups::new,
+              (ChunkGroups chunk, Map<String, Object> map) -> {
+                chunk.offered++;
+                addToGroups(
+                    chunk.groups,
+                    map,
+                    keyTokens,
+                    keyExpr,
+                    pathKeyed,
+                    aggFunc,
+                    keyDisplay,
+                    valueExpr,
+                    valueTokens);
+              })) {
+        offered += part.offered;
+        for (Map.Entry<Object, GroupAccumulator> e : part.groups.entrySet()) {
+          groupFor(groups, e.getKey(), aggFunc, keyDisplay).merge(e.getValue());
+        }
       }
     } else {
       // For metadata/chunks/cp: materialize rows first
@@ -644,8 +594,8 @@ final class Aggregations {
       }
     }
 
-    if (groups.isEmpty() && offered.sum() > 0) {
-      reportUnmatchedKey(session, query, keyDisplay, offered.sum());
+    if (groups.isEmpty() && offered > 0) {
+      reportUnmatchedKey(session, query, keyDisplay, offered);
     }
 
     List<Map<String, Object>> result = new ArrayList<>();
@@ -667,9 +617,8 @@ final class Aggregations {
   /**
    * Adds one event (or row) to the groups it belongs to.
    *
-   * <p>Called from several chunk-parsing threads at once. Keys and values are worked out from the
-   * event first, without a lock; only the update of {@code groups} and its accumulators is
-   * serialized, on {@code groups}.
+   * <p>Not synchronized: the streaming path keeps one {@code groups} per chunk, which only that
+   * chunk's thread writes ({@link JfrPathEvaluator#foldPerChunk}).
    */
   private static void addToGroups(
       Map<Object, GroupAccumulator> groups,
@@ -696,20 +645,24 @@ final class Aggregations {
       vals = valueTokens == null ? List.of() : PathValues.extractAllValues(map, valueTokens);
     }
 
-    synchronized (groups) {
-      for (Object key : keys) {
-        GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
-        if (counting) {
-          acc.add(1);
-        } else {
-          for (Object val : vals) {
-            if (val instanceof Number n) {
-              acc.add(n.doubleValue());
-            }
+    for (Object key : keys) {
+      GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
+      if (counting) {
+        acc.add(1);
+      } else {
+        for (Object val : vals) {
+          if (val instanceof Number n) {
+            acc.add(n.doubleValue());
           }
         }
       }
     }
+  }
+
+  /** The groups of one chunk, and how many of its events the key was offered. */
+  private static final class ChunkGroups {
+    final Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
+    long offered;
   }
 
   /**
@@ -875,6 +828,14 @@ final class Aggregations {
       max = Math.max(max, value);
     }
 
+    /** Adds what {@code other} accumulated, as if its values had been added after this one's. */
+    void merge(GroupAccumulator other) {
+      count += other.count;
+      sum += other.sum;
+      min = Math.min(min, other.min);
+      max = Math.max(max, other.max);
+    }
+
     Object getResult() {
       return switch (func) {
         case "count" -> count;
@@ -902,14 +863,12 @@ final class Aggregations {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    Consumer<Object> addLen =
-        (val) -> {
+    BiConsumer<List<Map<String, Object>>, Object> addLen =
+        (rows, val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
             row.put("len", null);
-            synchronized (out) {
-              out.add(row);
-            }
+            rows.add(row);
             return;
           }
           Integer len = PathValues.valueLength(val);
@@ -919,9 +878,7 @@ final class Aggregations {
           }
           Map<String, Object> row = new HashMap<>();
           row.put("len", len);
-          synchronized (out) {
-            out.add(row);
-          }
+          rows.add(row);
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -930,34 +887,23 @@ final class Aggregations {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
 
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              addLen.accept(val);
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              addLen.accept(val);
-            });
-      }
+      // One list per chunk, put together in file order: the rows come out the same every run.
+      out.addAll(
+          JfrPathEvaluator.concat(
+              eval.foldPerChunk(
+                  session.getRecordingPath(),
+                  JfrPathEvaluator.typesOf(query),
+                  query.predicates,
+                  ArrayList::new,
+                  (List<Map<String, Object>> rows, Map<String, Object> map) -> {
+                    Object val = Values.get(map, path.toArray());
+                    addLen.accept(rows, val);
+                  })));
     } else {
       // For non-events, leverage evaluateValues with the original query to get a list of values
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-      for (Object v : vals) addLen.accept(v);
+      for (Object v : vals) addLen.accept(out, v);
     }
     return out;
   }
@@ -973,14 +919,12 @@ final class Aggregations {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    Consumer<Object> addTransformed =
-        (val) -> {
+    BiConsumer<List<Map<String, Object>>, Object> addTransformed =
+        (rows, val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
             row.put("value", null);
-            synchronized (out) {
-              out.add(row);
-            }
+            rows.add(row);
             return;
           }
           if (!(val instanceof CharSequence s)) {
@@ -996,9 +940,7 @@ final class Aggregations {
               };
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          synchronized (out) {
-            out.add(row);
-          }
+          rows.add(row);
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1007,33 +949,22 @@ final class Aggregations {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
 
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              addTransformed.accept(val);
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              addTransformed.accept(val);
-            });
-      }
+      // One list per chunk, put together in file order: the rows come out the same every run.
+      out.addAll(
+          JfrPathEvaluator.concat(
+              eval.foldPerChunk(
+                  session.getRecordingPath(),
+                  JfrPathEvaluator.typesOf(query),
+                  query.predicates,
+                  ArrayList::new,
+                  (List<Map<String, Object>> rows, Map<String, Object> map) -> {
+                    Object val = Values.get(map, path.toArray());
+                    addTransformed.accept(rows, val);
+                  })));
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-      for (Object v : vals) addTransformed.accept(v);
+      for (Object v : vals) addTransformed.accept(out, v);
     }
     return out;
   }
@@ -1049,14 +980,12 @@ final class Aggregations {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    Consumer<Object> addTransformed =
-        (val) -> {
+    BiConsumer<List<Map<String, Object>>, Object> addTransformed =
+        (rows, val) -> {
           if (val == null) {
             Map<String, Object> row = new HashMap<>();
             row.put("value", null);
-            synchronized (out) {
-              out.add(row);
-            }
+            rows.add(row);
             return;
           }
           if (!(val instanceof Number n)) {
@@ -1083,9 +1012,7 @@ final class Aggregations {
           }
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          synchronized (out) {
-            out.add(row);
-          }
+          rows.add(row);
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
@@ -1094,33 +1021,22 @@ final class Aggregations {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
 
-      if (query.isMultiType) {
-        // Multi-type query: use Set for O(1) lookup
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              addTransformed.accept(val);
-            });
-      } else {
-        // Single-type query: use direct comparison (faster)
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              Object val = Values.get(map, path.toArray());
-              addTransformed.accept(val);
-            });
-      }
+      // One list per chunk, put together in file order: the rows come out the same every run.
+      out.addAll(
+          JfrPathEvaluator.concat(
+              eval.foldPerChunk(
+                  session.getRecordingPath(),
+                  JfrPathEvaluator.typesOf(query),
+                  query.predicates,
+                  ArrayList::new,
+                  (List<Map<String, Object>> rows, Map<String, Object> map) -> {
+                    Object val = Values.get(map, path.toArray());
+                    addTransformed.accept(rows, val);
+                  })));
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-      for (Object v : vals) addTransformed.accept(v);
+      for (Object v : vals) addTransformed.accept(out, v);
     }
     return out;
   }
@@ -1135,42 +1051,32 @@ final class Aggregations {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    Consumer<Object> addFormatted =
-        (val) -> {
+    BiConsumer<List<Map<String, Object>>, Object> addFormatted =
+        (rows, val) -> {
           Map<String, Object> row = new HashMap<>();
           row.put(
               "value", val instanceof Number n ? TimeFormats.formatDuration(n.longValue()) : null);
-          synchronized (out) {
-            out.add(row);
-          }
+          rows.add(row);
         };
     if (query.root == Root.EVENTS) {
       if (query.eventTypes.isEmpty())
         throw new IllegalArgumentException("events root requires type");
       eval.validateEventTypes(session, query.eventTypes);
-      if (query.isMultiType) {
-        Set<String> typeSet = new HashSet<>(query.eventTypes);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            typeSet,
-            query.predicates,
-            map -> {
-              addFormatted.accept(Values.get(map, path.toArray()));
-            });
-      } else {
-        String eventType = query.eventTypes.get(0);
-        eval.forEachMatching(
-            session.getRecordingPath(),
-            List.of(eventType),
-            query.predicates,
-            map -> {
-              addFormatted.accept(Values.get(map, path.toArray()));
-            });
-      }
+      // One list per chunk, put together in file order: the rows come out the same every run.
+      out.addAll(
+          JfrPathEvaluator.concat(
+              eval.foldPerChunk(
+                  session.getRecordingPath(),
+                  JfrPathEvaluator.typesOf(query),
+                  query.predicates,
+                  ArrayList::new,
+                  (List<Map<String, Object>> rows, Map<String, Object> map) -> {
+                    addFormatted.accept(rows, Values.get(map, path.toArray()));
+                  })));
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-      for (Object v : vals) addFormatted.accept(v);
+      for (Object v : vals) addFormatted.accept(out, v);
     }
     return out;
   }
@@ -1212,8 +1118,8 @@ final class Aggregations {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    Consumer<Object> add =
-        (val) -> {
+    BiConsumer<List<Map<String, Object>>, Object> add =
+        (rows, val) -> {
           Boolean res = null;
           if (val == null) res = null;
           else if (val instanceof CharSequence s) res = s.toString().contains(arg);
@@ -1222,24 +1128,25 @@ final class Aggregations {
                 opName + "() expects string, got " + val.getClass().getName());
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          synchronized (out) {
-            out.add(row);
-          }
+          rows.add(row);
         };
     if (query.root == Root.EVENTS) {
-      String eventType = query.segments.get(0);
-      eval.forEachMatching(
-          session.getRecordingPath(),
-          List.of(eventType),
-          query.predicates,
-          map -> {
-            Object val = Values.get(map, path.toArray());
-            add.accept(val);
-          });
+      // One list per chunk, put together in file order: the rows come out the same every run.
+      out.addAll(
+          JfrPathEvaluator.concat(
+              eval.foldPerChunk(
+                  session.getRecordingPath(),
+                  List.of(query.segments.get(0)),
+                  query.predicates,
+                  ArrayList::new,
+                  (List<Map<String, Object>> rows, Map<String, Object> map) -> {
+                    Object val = Values.get(map, path.toArray());
+                    add.accept(rows, val);
+                  })));
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-      for (Object v : vals) add.accept(v);
+      for (Object v : vals) add.accept(out, v);
     }
     return out;
   }
@@ -1257,8 +1164,8 @@ final class Aggregations {
     }
     List<Map<String, Object>> out = new ArrayList<>();
     final List<String> path = vpath;
-    Consumer<Object> add =
-        (val) -> {
+    BiConsumer<List<Map<String, Object>>, Object> add =
+        (rows, val) -> {
           String res = null;
           if (val == null) res = null;
           else if (val instanceof CharSequence s) res = s.toString().replace(target, repl);
@@ -1267,24 +1174,25 @@ final class Aggregations {
                 "replace() expects string, got " + val.getClass().getName());
           Map<String, Object> row = new HashMap<>();
           row.put("value", res);
-          synchronized (out) {
-            out.add(row);
-          }
+          rows.add(row);
         };
     if (query.root == Root.EVENTS) {
-      String eventType = query.segments.get(0);
-      eval.forEachMatching(
-          session.getRecordingPath(),
-          List.of(eventType),
-          query.predicates,
-          map -> {
-            Object val = Values.get(map, path.toArray());
-            add.accept(val);
-          });
+      // One list per chunk, put together in file order: the rows come out the same every run.
+      out.addAll(
+          JfrPathEvaluator.concat(
+              eval.foldPerChunk(
+                  session.getRecordingPath(),
+                  List.of(query.segments.get(0)),
+                  query.predicates,
+                  ArrayList::new,
+                  (List<Map<String, Object>> rows, Map<String, Object> map) -> {
+                    Object val = Values.get(map, path.toArray());
+                    add.accept(rows, val);
+                  })));
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-      for (Object v : vals) add.accept(v);
+      for (Object v : vals) add.accept(out, v);
     }
     return out;
   }
@@ -1315,11 +1223,6 @@ final class Aggregations {
     return sortedValues.get(rank - 1);
   }
 
-  /**
-   * Running statistics. {@link #add} is synchronized: the streaming path calls it from several
-   * chunk-parsing threads at once. The mean and variance are running values that round at every
-   * step, so their last bits depend on the order values arrive in; count, min and max do not.
-   */
   /**
    * Running first/last instant and count for {@code timerange()}. The streaming path offers events
    * from several chunk-parsing threads at once: the values are read from the event without a lock
@@ -1356,6 +1259,12 @@ final class Aggregations {
     }
   }
 
+  /**
+   * Running statistics (Welford). The mean and variance round at every step, so their last bits
+   * depend on the order values arrive in: the streaming path keeps one instance per chunk, which
+   * only that chunk's thread writes, and {@link #merge merges} them in file order. Not
+   * synchronized.
+   */
   static final class StatsAgg {
     long count = 0;
     double min = Double.POSITIVE_INFINITY;
@@ -1363,7 +1272,7 @@ final class Aggregations {
     double mean = 0.0;
     double m2 = 0.0; // for variance via Welford
 
-    synchronized void add(double x) {
+    void add(double x) {
       count++;
       if (x < min) min = x;
       if (x > max) max = x;
@@ -1373,7 +1282,27 @@ final class Aggregations {
       m2 += delta * delta2;
     }
 
-    synchronized Map<String, Object> toRow() {
+    /** Adds what {@code other} accumulated (the pairwise form of the same update). */
+    void merge(StatsAgg other) {
+      if (other.count == 0) return;
+      if (count == 0) {
+        count = other.count;
+        min = other.min;
+        max = other.max;
+        mean = other.mean;
+        m2 = other.m2;
+        return;
+      }
+      long total = count + other.count;
+      double delta = other.mean - mean;
+      m2 += other.m2 + delta * delta * ((double) count * other.count / total);
+      mean += delta * other.count / total;
+      count = total;
+      if (other.min < min) min = other.min;
+      if (other.max > max) max = other.max;
+    }
+
+    Map<String, Object> toRow() {
       Map<String, Object> row = new HashMap<>();
       row.put("count", count);
       row.put("min", count > 0 ? min : null);

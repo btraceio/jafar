@@ -65,7 +65,18 @@ shares; the case file is in [Verification.md](Verification.md). Operators read e
 the consumer, still concurrently. `ParallelEventSourceTest` delivers from eight threads at once and
 `JfrPathConcurrentAggregationTest` from a 16-chunk recording.
 
-Rows come back in no particular order across chunks; sort if order matters.
+Results do not depend on which chunk happened to be parsed first. An operator whose result
+depends on order (rows, `groupBy` rows, a double `sum`, the running mean and variance of `stats`)
+keeps its state per chunk and combines the chunks in file order, through
+`JfrPathEvaluator.foldPerChunk` or `collectInFileOrder`: the events of one chunk arrive one after
+the other on that chunk's thread, so a per-chunk state needs no lock and is built the same way on
+every run. The chunk's position comes from `Control.ChunkInfo.chunkIndex()` (1 for the first chunk),
+not from `chunkId()`, which counts chunks as the JVM parses them. `evaluateWithLimit` and
+`evaluateValuesWithLimit` read the chunks one after the other (`ParsingContext.withParallelism(1)`),
+so they return the first rows of the recording and stop at the last of them. File order is not
+commit order: within a chunk JFR does not write events in the order they were committed. Use
+`forEachMatching` only for what is commutative (a count, a minimum); `flamegraph()` and
+`stackprofile()` still build their trees in arrival order.
 
 `forEachMatching` is also where a query's event types reach the parser:
 `EventSource.streamEvents(recording, types, consumer)` registers a type filter, so events of other

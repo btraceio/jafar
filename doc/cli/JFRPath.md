@@ -23,6 +23,9 @@ JfrPath queries start with one of four roots:
 Access event data from the recording.
 - **Requires**: Event type name (e.g., `jdk.ExecutionSample`, `jdk.FileRead`)
 - **Returns**: Event instances with all fields
+- **Order**: the order the events have in the recording, the same on every run. That is not the
+  order they were committed in: within a chunk the JVM does not write events in commit order. Sort
+  (`sortBy(startTime)`) when time order matters.
 - **Example**: `events/jdk.FileRead`
 
 ### `metadata/<type>`
@@ -1178,7 +1181,8 @@ events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorC
 
 1. **Streaming First**: All operations use streaming parser when possible
 2. **Lazy Evaluation**: Events processed incrementally, not loaded into memory
-3. **Early Abort**: `--limit` stops parsing once enough matches collected
+3. **Early Abort**: `--limit` returns the first matches of the recording and stops parsing at the
+   last of them; for that it reads the chunks one after the other instead of in parallel
 4. **Type Pushdown**: only the event types a query names are decoded; every other event is skipped
    at the cost of reading its header
 5. **Chunk Skipping**: a lower bound on `startTime` in a query's brackets skips the chunks that end

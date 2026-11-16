@@ -18,7 +18,8 @@ import java.nio.file.Paths;
  * parser-owned threads and must be thread-safe. Events are delivered in file order within one
  * chunk; there is no order between chunks. {@link Control.ChunkInfo#chunkId()} is unique per parsed
  * chunk within the JVM, so it can key per-chunk state; it is not the chunk's position in the file.
- * Every handler call has completed when {@code run()} returns. For strictly sequential,
+ * {@link Control.ChunkInfo#chunkIndex()} is: 1 for the first chunk of the file, the same on every
+ * parse. Every handler call has completed when {@code run()} returns. For strictly sequential,
  * file-ordered delivery create the parser from {@link ParsingContext#withParallelism(int)
  * ParsingContext.withParallelism(1)}.
  */

@@ -66,6 +66,41 @@ public final class JfrPathEvaluator {
         throws Exception {
       streamEvents(recording, types, consumer);
     }
+
+    /**
+     * Streams the events of {@code types} like {@link #streamEvents(Path, Collection, TimeRange,
+     * Consumer)}, telling the consumer which chunk each event comes from, so that what a caller
+     * keeps per chunk can be put back in file order when the stream is over.
+     *
+     * <p>The contract a source must keep: the chunk number is the chunk's 1-based position in the
+     * recording, the events of one chunk are delivered one after the other, in file order, and
+     * never two at a time, and every call has completed when this method returns. Events of
+     * different chunks may be delivered at the same time, in any order.
+     *
+     * <p>The default knows nothing about chunks: it delivers every event as chunk 1, one at a time,
+     * in the order the source produces them. That is file order for a source that reads
+     * sequentially, and for any other it is safe but no more ordered than the source.
+     */
+    default void streamChunks(
+        Path recording, Collection<String> types, TimeRange startTime, ChunkConsumer consumer)
+        throws Exception {
+      Object oneAtATime = new Object();
+      streamEvents(
+          recording,
+          types,
+          startTime,
+          ev -> {
+            synchronized (oneAtATime) {
+              consumer.accept(1, ev);
+            }
+          });
+    }
+  }
+
+  /** Receives events together with the 1-based file position of the chunk they come from. */
+  @FunctionalInterface
+  public interface ChunkConsumer {
+    void accept(int chunk, Event event);
   }
 
   /**
@@ -228,6 +263,90 @@ public final class JfrPathEvaluator {
         });
   }
 
+  /**
+   * Folds the events of {@code types} that match {@code predicates} into one state per chunk, and
+   * returns those states in file order.
+   *
+   * <p>This is how an operator gets a result that does not depend on which chunk happened to be
+   * parsed first: chunks are parsed in parallel, but the events of one chunk arrive one after the
+   * other, in file order, so a state that belongs to one chunk is built the same way on every run
+   * and needs no lock. Combining the returned states in the order they come in then gives the same
+   * rows in the same order, and the same floating-point sums, every time.
+   *
+   * @param newState makes the state of a chunk; called once per chunk that has a matching event
+   * @param add adds one matching event to its chunk's state; called on the chunk's thread
+   */
+  <S> List<S> foldPerChunk(
+      Path recording,
+      Collection<String> types,
+      List<JfrPath.Predicate> predicates,
+      java.util.function.Supplier<S> newState,
+      java.util.function.BiConsumer<S, Map<String, Object>> add)
+      throws Exception {
+    java.util.concurrent.ConcurrentHashMap<Integer, S> states =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    source.streamChunks(
+        recording,
+        types,
+        StartTimeBounds.of(predicates),
+        (chunk, ev) -> {
+          Map<String, Object> map = ev.value();
+          if (predicates.isEmpty()
+              || MatchEngine.matchesAll(map, predicates, defaultListMatchMode)) {
+            S state = states.get(chunk);
+            if (state == null) {
+              state = states.computeIfAbsent(chunk, k -> newState.get());
+            }
+            add.accept(state, map);
+          }
+        });
+    return new ArrayList<>(new java.util.TreeMap<>(states).values());
+  }
+
+  /**
+   * Maps every event of {@code types} that matches {@code predicates} to a row, and returns the
+   * rows in file order; an event {@code toRow} maps to {@code null} contributes none. See {@link
+   * #foldPerChunk}.
+   */
+  <R> List<R> collectInFileOrder(
+      Path recording,
+      Collection<String> types,
+      List<JfrPath.Predicate> predicates,
+      java.util.function.Function<Map<String, Object>, R> toRow)
+      throws Exception {
+    List<List<R>> perChunk =
+        foldPerChunk(
+            recording,
+            types,
+            predicates,
+            ArrayList::new,
+            (rows, map) -> {
+              R row = toRow.apply(map);
+              if (row != null) {
+                rows.add(row);
+              }
+            });
+    return concat(perChunk);
+  }
+
+  /** The elements of {@code lists}, list after list. */
+  static <R> List<R> concat(List<? extends List<R>> lists) {
+    int size = 0;
+    for (List<R> list : lists) {
+      size += list.size();
+    }
+    List<R> all = new ArrayList<>(size);
+    for (List<R> list : lists) {
+      all.addAll(list);
+    }
+    return all;
+  }
+
+  /** The event types a query reads: all it names, or the one it names. */
+  static Collection<String> typesOf(Query query) {
+    return query.isMultiType ? new HashSet<>(query.eventTypes) : List.of(query.eventTypes.get(0));
+  }
+
   public List<Map<String, Object>> evaluate(JFRSession session, Query query) throws Exception {
     return evaluate(session, query, null);
   }
@@ -245,19 +364,8 @@ public final class JfrPathEvaluator {
       // Validate event types exist
       validateEventTypes(session, query.eventTypes);
 
-      List<Map<String, Object>> out = new ArrayList<>();
-      // Rows arrive from several chunk-parsing threads at once (see consume()).
-      forEachMatching(
-          session.getRecordingPath(),
-          query.eventTypes,
-          query.predicates,
-          map -> {
-            Map<String, Object> row = Values.resolvedShallow(map);
-            synchronized (out) {
-              out.add(row);
-            }
-          });
-      return out;
+      return collectInFileOrder(
+          session.getRecordingPath(), query.eventTypes, query.predicates, Values::resolvedShallow);
     } else if (query.root == Root.METADATA) {
       // Handle metadata queries: metadata/Type or metadata/[filter] or metadata
       if (query.segments.isEmpty()) {
@@ -348,9 +456,11 @@ public final class JfrPathEvaluator {
     // Validate event types exist
     validateEventTypes(session, query.eventTypes);
 
+    // The first `limit` rows of the recording, the same on every run: chunks are read one after
+    // the other, so rows arrive in file order and the parse stops at the row that fills the
+    // limit. Synchronized all the same: the parser's thread writes, this one reads afterwards.
     List<Map<String, Object>> out = new ArrayList<>();
-    try (UntypedJafarParser p =
-        io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
+    try (UntypedJafarParser p = sequentialParser(session.getRecordingPath())) {
       handleTypes(
           p,
           query.eventTypes,
@@ -359,7 +469,6 @@ public final class JfrPathEvaluator {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) value;
             if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              // Handlers run on several chunk-parsing threads at once (see consume()).
               synchronized (out) {
                 if (out.size() < limit) {
                   out.add(Values.resolvedShallow(map));
@@ -372,7 +481,20 @@ public final class JfrPathEvaluator {
           });
       p.run();
     }
-    return out;
+    synchronized (out) {
+      return out;
+    }
+  }
+
+  /**
+   * A parser that reads the recording's chunks one after the other, so that events are delivered in
+   * file order. For the queries that stop after a number of rows: the rows are then the first ones
+   * of the recording, and the parse can stop at the last of them.
+   */
+  private static UntypedJafarParser sequentialParser(Path recording) throws java.io.IOException {
+    return io.jafar.parser.api.ParsingContext.create()
+        .withParallelism(1)
+        .newUntypedParser(recording);
   }
 
   /** Evaluate a query projecting a specific attribute path after the event type. */
@@ -390,20 +512,14 @@ public final class JfrPathEvaluator {
       }
       String eventType = query.segments.get(0);
       List<String> proj = query.segments.subList(1, query.segments.size());
-      List<Object> out = new ArrayList<>();
-      forEachMatching(
-          session.getRecordingPath(),
-          List.of(eventType),
-          query.predicates,
-          map -> {
-            // Called from several chunk-parsing threads: extract first, then append as one.
-            List<Object> vals = new ArrayList<>();
-            PathValues.extractWithIndexing(map, proj, vals);
-            synchronized (out) {
-              out.addAll(vals);
-            }
-          });
-      return out;
+      List<List<Object>> perChunk =
+          foldPerChunk(
+              session.getRecordingPath(),
+              List.of(eventType),
+              query.predicates,
+              ArrayList::new,
+              (vals, map) -> PathValues.extractWithIndexing(map, proj, vals));
+      return concat(perChunk);
     } else if (query.root == Root.METADATA) {
       if (query.segments.isEmpty()) {
         throw new IllegalArgumentException("Expected type segment after 'metadata/'");
@@ -672,9 +788,9 @@ public final class JfrPathEvaluator {
     }
     String eventType = query.segments.get(0);
     List<String> proj = query.segments.subList(1, query.segments.size());
+    // In file order, like evaluateWithLimit: one chunk after the other.
     List<Object> out = new ArrayList<>();
-    try (UntypedJafarParser p =
-        io.jafar.parser.api.ParsingContext.create().newUntypedParser(session.getRecordingPath())) {
+    try (UntypedJafarParser p = sequentialParser(session.getRecordingPath())) {
       handleTypes(
           p,
           List.of(eventType),
@@ -683,7 +799,6 @@ public final class JfrPathEvaluator {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) value;
             if (MatchEngine.matchesAll(map, query.predicates, defaultListMatchMode)) {
-              // Handlers run on several chunk-parsing threads at once (see consume()).
               synchronized (out) {
                 if (out.size() < limit) {
                   PathValues.extractWithIndexing(map, proj, out);
@@ -800,6 +915,26 @@ public final class JfrPathEvaluator {
     public void streamEvents(Path recording, Collection<String> types, Consumer<Event> consumer)
         throws Exception {
       streamEvents(recording, types, TimeRange.all(), consumer);
+    }
+
+    /**
+     * The parser reads one chunk on one thread, event after event, and says which chunk it is: the
+     * contract of {@link EventSource#streamChunks} without any locking.
+     */
+    @Override
+    public void streamChunks(
+        Path recording, Collection<String> types, TimeRange startTime, ChunkConsumer consumer)
+        throws Exception {
+      try (UntypedJafarParser p =
+          io.jafar.parser.api.ParsingContext.create().newUntypedParser(recording)) {
+        handleTypes(
+            p,
+            types,
+            startTime,
+            (type, value, ctl) ->
+                consumer.accept(ctl.chunkInfo().chunkIndex(), new Event(type.getName(), value)));
+        p.run();
+      }
     }
 
     @Override
