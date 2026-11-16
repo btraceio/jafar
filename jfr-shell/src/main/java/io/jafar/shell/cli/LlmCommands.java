@@ -1,6 +1,7 @@
 package io.jafar.shell.cli;
 
 import io.jafar.shell.backend.BackendRegistry;
+import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.llm.LlmBackend;
 import io.jafar.shell.core.llm.LlmConfig;
 import io.jafar.shell.core.llm.LlmException;
@@ -441,6 +442,11 @@ public final class LlmCommands {
     host.println("");
   }
 
+  /** Calls {@code call}, returning {@code fallback} if the provider throws — for display paths. */
+  private static <T> T callOr(T fallback, java.util.function.Supplier<T> call) {
+    return ProviderDiscovery.call(call, fallback);
+  }
+
   private static String describe(LlmConfig.Source source, String envVar) {
     return switch (source) {
       case SHELL_VARIABLE -> "a 'set' command in this shell";
@@ -479,29 +485,45 @@ public final class LlmCommands {
 
     reportSettingsFile(config);
 
-    List<LlmBackend> backends = LlmBackend.discover();
+    ProviderDiscovery.Outcome<LlmBackend> discovery = LlmBackend.discoverWithFailures();
+    List<LlmBackend> backends = discovery.providers();
     host.println("Backends");
     host.println("--------");
-    if (backends.isEmpty()) {
+    if (backends.isEmpty() && discovery.failures().isEmpty()) {
       host.println(
           "  none installed — select one (set llm.backend = anthropic | openai | ollama) and it"
               + " installs from the plugin catalog on first use; see doc/cli/LlmSetup.md");
       return;
     }
+    if (backends.isEmpty()) {
+      host.println("  none usable — every installed provider failed to load (see below)");
+    }
     for (LlmBackend backend : backends) {
-      LlmBackend.Readiness readiness = backend.readiness(config);
+      // A provider that loads can still be broken at call time; report, don't crash.
+      String id = callOr("?", backend::id);
+      String name = callOr(backend.getClass().getSimpleName(), backend::displayName);
+      String model = callOr("(unavailable)", backend::defaultModel);
+      LlmBackend.Readiness readiness = LlmBackend.probeReadiness(backend, config);
       host.println(
-          "  %-12s %-34s %s"
-              .formatted(
-                  backend.id(), backend.displayName(), readiness.ready() ? "READY" : "NOT READY"));
+          "  %-12s %-34s %s".formatted(id, name, readiness.ready() ? "READY" : "NOT READY"));
       host.println("               " + readiness.detail());
-      host.println("               default model: " + backend.defaultModel());
+      host.println("               default model: " + model);
       if (!readiness.ready()) {
-        String remedy = readiness.remedy() != null ? readiness.remedy() : backend.credentialHelp();
+        String remedy =
+            readiness.remedy() != null ? readiness.remedy() : callOr(null, backend::credentialHelp);
         if (remedy != null) {
           host.println("               -> " + remedy);
         }
       }
+    }
+    if (!discovery.failures().isEmpty()) {
+      host.println("Failed to load");
+      host.println("--------------");
+      for (ProviderDiscovery.Failure failure : discovery.failures()) {
+        host.println("  " + failure);
+      }
+      host.println(
+          "  Reinstall or remove the jar from ~/.jfr-shell/plugins, then restart the shell.");
     }
   }
 

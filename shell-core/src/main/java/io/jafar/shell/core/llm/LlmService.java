@@ -1,5 +1,6 @@
 package io.jafar.shell.core.llm;
 
+import io.jafar.shell.core.discovery.ProviderDiscovery;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -57,10 +58,21 @@ public final class LlmService {
     if (!config.enabled()) {
       return Result.failure("LLM support is disabled.", "Enable it with: set llm.enabled = true");
     }
-    Optional<LlmBackend> backend = LlmBackend.select(config.backendId(), config);
+    ProviderDiscovery.Outcome<LlmBackend> discovery = LlmBackend.discoverWithFailures();
+    List<LlmBackend> available = discovery.providers();
+    Optional<LlmBackend> backend = LlmBackend.select(config.backendId(), config, available);
     if (backend.isEmpty()) {
-      List<LlmBackend> available = LlmBackend.discover();
+      List<ProviderDiscovery.Failure> failures = discovery.failures();
       if (available.isEmpty()) {
+        if (!failures.isEmpty()) {
+          // Something was installed but nothing could be loaded — say so, and say what.
+          return Result.failure(
+              "No LLM backend could be loaded.",
+              "Broken provider(s) skipped: "
+                  + ProviderDiscovery.summarize(failures)
+                  + ". Reinstall or remove the jar (plugins live in ~/.jfr-shell/plugins), "
+                  + "or see 'llm status'.");
+        }
         return Result.failure(
             "No LLM backend is installed.",
             "The backends install from the plugin catalog on first explicit use — set"
@@ -70,13 +82,27 @@ public final class LlmService {
       // Distinguishing these two matters: a typo in llm.backend and a missing module need
       // completely different fixes, and reporting both as "not installed" sends the user hunting
       // through their classpath for a problem that is one setting away.
+      StringBuilder remedy = new StringBuilder();
+      remedy
+          .append("Available: ")
+          .append(
+              available.stream()
+                  .map(b -> ProviderDiscovery.call(b::id, "?"))
+                  .collect(java.util.stream.Collectors.joining(", ")))
+          .append(" — set llm.backend to one of these, or 'auto'.");
+      if (!failures.isEmpty()) {
+        // The backend the user asked for may be one of the ones that failed to load.
+        remedy.append(
+            " Note: "
+                + failures.size()
+                + " provider(s) failed to load ("
+                + ProviderDiscovery.summarize(failures)
+                + "); '"
+                + config.backendId()
+                + "' may be among them — reinstall or remove the jar in ~/.jfr-shell/plugins.");
+      }
       return Result.failure(
-          "No LLM backend with id '" + config.backendId() + "'.",
-          "Available: "
-              + available.stream()
-                  .map(LlmBackend::id)
-                  .collect(java.util.stream.Collectors.joining(", "))
-              + " — set llm.backend to one of these, or 'auto'.");
+          "No LLM backend with id '" + config.backendId() + "'.", remedy.toString());
     }
     return Result.success(new LlmService(backend.get(), config));
   }
@@ -537,7 +563,7 @@ public final class LlmService {
   }
 
   private LlmResponse send(LlmRequest request) throws LlmException {
-    LlmBackend.Readiness readiness = backend.readiness(config);
+    LlmBackend.Readiness readiness = LlmBackend.probeReadiness(backend, config);
     if (!readiness.ready()) {
       throw new LlmException(readiness.detail(), readiness.remedy());
     }

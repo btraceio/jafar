@@ -6,6 +6,7 @@ import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.live.TailRunner;
 import io.jafar.shell.plugin.PluginManager;
@@ -150,6 +151,19 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  /** Prints providers skipped during backend discovery, if any, with a fix hint. */
+  private static void printBackendFailures(BackendRegistry registry) {
+    var failures = registry.discoveryFailures();
+    if (failures.isEmpty()) {
+      return;
+    }
+    System.err.println("Failed to load " + failures.size() + " backend provider(s):");
+    for (var failure : failures) {
+      System.err.println("  " + failure);
+    }
+    System.err.println("Reinstall or remove the broken jar(s) from ~/.jfr-shell/plugins.");
+  }
+
   private boolean validateBackend() {
     try {
       BackendRegistry registry = BackendRegistry.getInstance();
@@ -157,6 +171,7 @@ public final class Main implements Callable<Integer> {
       // Auto-install default backend if none available
       if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
         System.err.println("Error: No JFR backends available");
+        printBackendFailures(registry);
         return false;
       }
 
@@ -185,8 +200,9 @@ public final class Main implements Callable<Integer> {
         System.err.println(
             "Available backends: "
                 + registry.listAll().stream()
-                    .map(JfrBackend::getId)
+                    .map(b -> ProviderDiscovery.call(b::getId, "?"))
                     .collect(Collectors.joining(", ")));
+        printBackendFailures(registry);
         return false;
       }
       return true;
@@ -292,6 +308,7 @@ public final class Main implements Callable<Integer> {
 
       if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
         System.err.println("Error: No JFR backends available");
+        printBackendFailures(registry);
         return 1;
       }
 
@@ -315,8 +332,9 @@ public final class Main implements Callable<Integer> {
         System.err.println(
             "Available backends: "
                 + registry.listAll().stream()
-                    .map(JfrBackend::getId)
+                    .map(b -> ProviderDiscovery.call(b::getId, "?"))
                     .collect(Collectors.joining(", ")));
+        printBackendFailures(registry);
         return 1;
       }
     } catch (IllegalStateException e) {

@@ -4,12 +4,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.jafar.shell.core.llm.LlmBackend;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.jar.JarOutputStream;
+import java.util.zip.ZipEntry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Command-level behaviour with a fake host.
@@ -185,6 +192,35 @@ class LlmCommandsTest {
     host.settings.put("llm.redact", "false");
     new LlmCommands(host).status();
     assertTrue(host.text().contains("OFF"));
+  }
+
+  @TempDir Path tempDir;
+
+  @Test
+  void statusReportsTheFailedToLoadSectionForABrokenProviderJar() throws Exception {
+    // A fixture jar whose service file names a provider class that cannot initialize — the shape
+    // of a broken installed plugin jar. Installed as a local override jar the same way
+    // StartupLogTest does it, so the test does not care whether the plugin system was already
+    // initialized by an earlier test in this JVM (test order is not guaranteed).
+    Path jar = tempDir.resolve("broken-llm-provider.jar");
+    try (JarOutputStream out = new JarOutputStream(new FileOutputStream(jar.toFile()))) {
+      out.putNextEntry(new ZipEntry("META-INF/services/" + LlmBackend.class.getName()));
+      out.write((BrokenPluginLlmBackend.class.getName() + "\n").getBytes(StandardCharsets.UTF_8));
+      out.closeEntry();
+    }
+    System.setProperty("jfr.shell.backend.jars", jar.toAbsolutePath().toString());
+    try {
+      io.jafar.shell.plugin.PluginManager
+          .reinitialize(); // rebuild the plugin loader with the override
+      FakeHost host = new FakeHost();
+      new LlmCommands(host).status();
+      String text = host.text();
+      assertTrue(text.contains("Failed to load"), text);
+      assertTrue(text.contains(BrokenPluginLlmBackend.class.getName()), text);
+    } finally {
+      System.clearProperty("jfr.shell.backend.jars");
+      io.jafar.shell.plugin.PluginManager.reinitialize(); // drop the override for later tests
+    }
   }
 
   @Test
