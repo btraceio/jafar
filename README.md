@@ -287,9 +287,17 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
 
 **That's it!** The annotation processor generates factories and registers them via ServiceLoader. No manual registration required.
 
+A factory is used for the interface it was generated for. A handler for another interface with the
+same `@JfrType` gets that type decoded at runtime instead. One parser decodes each JFR type into
+one interface, so `handle` throws an `IllegalArgumentException` naming both interfaces when a
+handler's interface, or one its accessors return, would decode a type the parser already decodes
+as another interface. Use one interface per JFR type in a parser, or separate parsers.
+
 ### Runtime Generation (Default)
 
-If you don't register factories, JAFAR falls back to **runtime bytecode generation** (existing behavior):
+If you don't register factories, JAFAR falls back to **runtime bytecode generation** (existing behavior).
+To make one parser generate at runtime even though factories are on the classpath, call
+`p.ignoreDiscoveredFactories()` before `run()`:
 
 ```java
 try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recording.jfr"))) {

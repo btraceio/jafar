@@ -19,6 +19,16 @@ import io.jafar.parser.internal_api.metadata.MetadataClass;
  *   <li>Returns cached handler instances populated with event data
  * </ul>
  *
+ * <p><b>When a factory is used.</b> A {@link TypedJafarParser} uses a factory for its JFR type only
+ * when the parser's handlers use the factory's {@link #getInterfaceClass() interface} for that type,
+ * as the handled interface or as the return type of an accessor. A handler for another interface
+ * annotated with the same {@link JfrType} gets the type decoded by a runtime-generated class
+ * instead, and the factory's {@link #get} and {@link #create} are not called. {@link #bind} is
+ * called for every registered factory. A parser decodes each JFR type into one interface, so it
+ * cannot use two interfaces of one type at once; see {@link TypedJafarParser#handle}. To keep one
+ * parser from using the factories found through {@link java.util.ServiceLoader}, call {@link
+ * TypedJafarParser#ignoreDiscoveredFactories()}.
+ *
  * @param <T> the handler interface type
  */
 public interface HandlerFactory<T> {
