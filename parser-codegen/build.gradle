@@ -219,12 +219,26 @@ test {
     usesService(rootProject.ext.largeHeapTestSlot)
 }
 
+// The JMH classes without the build-time handler factories' ServiceLoader registration. The typed
+// parser registers every factory it finds, so on the normal JMH classpath the @JfrType interfaces
+// of BuildTimeHandlerBenchmark are always decoded by their jafar-processor handlers; this copy is
+// the runtime-generation baseline (-PjmhRuntimeGeneration).
+def jmhClassesWithoutFactories = tasks.register('jmhClassesWithoutFactories', Sync) {
+    from sourceSets.jmh.output.classesDirs
+    exclude 'META-INF/services/io.jafar.parser.api.HandlerFactory'
+    into layout.buildDirectory.dir('jmh-classes-without-factories')
+}
+
 // JMH benchmark task
 tasks.register('jmh', JavaExec) {
     description = 'Runs JMH benchmarks'
     group = 'verification'
     dependsOn compileJmhJava, testClasses
     classpath = sourceSets.jmh.runtimeClasspath
+    if (project.hasProperty('jmhRuntimeGeneration')) {
+        classpath = files(jmhClassesWithoutFactories) +
+            (sourceSets.jmh.runtimeClasspath - sourceSets.jmh.output.classesDirs)
+    }
     mainClass.set('org.openjdk.jmh.Main')
     javaLauncher.set(j21LauncherProvider)
     workingDir = rootProject.projectDir

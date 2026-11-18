@@ -13,7 +13,9 @@ import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
@@ -45,7 +47,21 @@ import org.openjdk.jmh.infra.Blackhole;
  *   <li>GraalVM native-image compatible
  * </ul>
  *
- * <p>To run: {@code ./gradlew jmh -Pjmh.include=BuildTimeHandlerBenchmark}
+ * <p><b>The two halves run on different classpaths.</b> The typed parser registers every build-time
+ * factory {@code ServiceLoader} finds, and a handler registered for another interface of the same
+ * JFR type is then never called. So one JVM cannot run both approaches: on the classpath {@code
+ * jafar-processor} builds for this source set, every {@code @JfrType} interface below is decoded by
+ * its generated {@code ...Handler}. The {@code *RuntimeGeneration} methods therefore need the same
+ * classes without the factory registration ({@code
+ * META-INF/services/io.jafar.parser.api.HandlerFactory}), which {@code -PjmhRuntimeGeneration}
+ * selects. {@link #setup} checks which implementation actually decodes the events and fails a
+ * method run on the other one, so a mislabelled number cannot be reported.
+ *
+ * <pre>
+ * ./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark.*BuildTimeGeneration -prof gc"
+ * ./gradlew :parser-codegen:jmh -PjmhRuntimeGeneration \
+ *     -PjmhArgs="BuildTimeHandlerBenchmark.*RuntimeGeneration -prof gc"
+ * </pre>
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.Throughput)
@@ -61,7 +77,7 @@ public class BuildTimeHandlerBenchmark {
   private MemoryPoolMXBean metaspacePool;
 
   @Setup(Level.Trial)
-  public void setup() throws Exception {
+  public void setup(BenchmarkParams params) throws Exception {
     // Use test file with ExecutionSample events
     URL resource = getClass().getClassLoader().getResource("test-ap.jfr");
     if (resource == null) {
@@ -69,9 +85,31 @@ public class BuildTimeHandlerBenchmark {
     }
     testFile = Paths.get(resource.toURI());
 
-    // Warm up file system caching
+    // Warm up file system caching, and find out which implementation decodes the events: the
+    // method names promise one, the classpath decides (see the class comment).
+    AtomicReference<String> decodedBy = new AtomicReference<>();
     try (TypedJafarParser parser = TypedJafarParser.open(testFile)) {
+      parser.handle(
+          JFRExecutionSample.class,
+          (event, ctl) -> decodedBy.compareAndSet(null, event.getClass().getName()));
       parser.run();
+    }
+    String impl = decodedBy.get();
+    boolean buildTime = impl != null && impl.endsWith("Handler");
+    System.out.println(
+        "jdk.ExecutionSample decoded by "
+            + (buildTime ? "the build-time handler " : "a runtime-generated class ")
+            + impl);
+    String method = params.getBenchmark();
+    if (impl == null
+        || (method.endsWith("RuntimeGeneration") && buildTime)
+        || (method.endsWith("BuildTimeGeneration") && !buildTime)) {
+      throw new IllegalStateException(
+          method
+              + " would measure "
+              + (impl == null ? "nothing (no event was decoded)" : impl)
+              + ". The *BuildTimeGeneration methods run on the default classpath, the"
+              + " *RuntimeGeneration methods with -PjmhRuntimeGeneration (see the class comment).");
     }
 
     // Find metaspace memory pool for tracking
@@ -170,7 +208,7 @@ public class BuildTimeHandlerBenchmark {
    *   <li>No runtime bytecode generation
    *   <li>Handlers already loaded and JIT-compiled
    *   <li>Thread-local caching reduces allocations
-   *   <li>Static type IDs injected at binding time
+   *   <li>Constant pool type ids taken from each chunk's metadata
    *   <li>Auto-discovery via ServiceLoader - no manual registration needed
    * </ul>
    */
@@ -225,8 +263,8 @@ public class BuildTimeHandlerBenchmark {
   /**
    * Allocation profile for runtime generation.
    *
-   * <p>Run with: {@code ./gradlew jmh
-   * -Pjmh.include=BuildTimeHandlerBenchmark.allocationRuntimeGeneration -Pjmh.prof=gc}
+   * <p>Run with: {@code ./gradlew :parser-codegen:jmh -PjmhRuntimeGeneration
+   * -PjmhArgs="BuildTimeHandlerBenchmark.allocationRuntimeGeneration -prof gc"}
    */
   @Benchmark
   public void allocationRuntimeGeneration(Blackhole bh) throws Exception {
@@ -249,8 +287,8 @@ public class BuildTimeHandlerBenchmark {
   /**
    * Allocation profile for build-time generation.
    *
-   * <p>Run with: {@code ./gradlew jmh
-   * -Pjmh.include=BuildTimeHandlerBenchmark.allocationBuildTimeGeneration -Pjmh.prof=gc}
+   * <p>Run with: {@code ./gradlew :parser-codegen:jmh
+   * -PjmhArgs="BuildTimeHandlerBenchmark.allocationBuildTimeGeneration -prof gc"}
    *
    * <p>Expected: Lower allocation rate due to thread-local caching and no reflection/bytecode
    * generation. Factories are auto-discovered via ServiceLoader.
