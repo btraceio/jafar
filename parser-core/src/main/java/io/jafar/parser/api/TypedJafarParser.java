@@ -106,10 +106,10 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
    * @param <T> the type of JFR events this handler processes
    * @param clz JFR event interface to handle
    * @param handler callback receiving deserialized events and parse {@link Control}
-   * <p>{@code clz} decides how its JFR type, and the types its accessors return, are decoded in this
-   * parser (see "One interface per JFR type" in the class description). A build-time {@link
-   * HandlerFactory} is used for a type only if it implements the interface given for that type.
-   *
+   *     <p>{@code clz} decides how its JFR type, and the types its accessors return, are decoded in
+   *     this parser (see "One interface per JFR type" in the class description). A build-time
+   *     {@link HandlerFactory} is used for a type only if it implements the interface given for
+   *     that type.
    * @return a registration that can be closed to stop receiving events
    * @throws IllegalArgumentException if {@code clz} is invalid, or if it or an interface its
    *     accessors return would decode a JFR type that this parser already decodes as another
@@ -134,8 +134,8 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
    * register factories programmatically or override auto-discovered factories. Factories are kept
    * per interface: a factory replaces the one registered for the same interface.
    *
-   * <p>Registering a factory does not decide how its JFR type is decoded. The factory is used when a
-   * handler registered with {@link #handle} uses its interface for that type, directly or as the
+   * <p>Registering a factory does not decide how its JFR type is decoded. The factory is used when
+   * a handler registered with {@link #handle} uses its interface for that type, directly or as the
    * return type of an accessor; otherwise it is not used, and {@link HandlerFactory#get} is never
    * called.
    *

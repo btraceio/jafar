@@ -236,7 +236,15 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       // Registered by an earlier handle() call, together with everything it reaches.
       return;
     }
+    // An interface a registered factory serves is read by its generated handler, which supports
+    // accessor types the runtime-generated path rejects (a boxed Integer, for one). Only the
+    // types it reaches through @JfrType interfaces need a mapping here: their constant pool
+    // entries are decoded by the parser, for every field that refers to them.
+    boolean servedByFactory = factoryMap.containsKey(clz);
     for (Method m : clz.getMethods()) {
+      if (servedByFactory && !isDecodedByParser(m.getReturnType())) {
+        continue;
+      }
       if (m.getAnnotation(JfrIgnore.class) == null) {
         collectTypes(
             root,
@@ -246,6 +254,13 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             reachedThrough);
       }
     }
+  }
+
+  private static boolean isDecodedByParser(Class<?> type) {
+    Class<?> c = type.isArray() ? type.getComponentType() : type;
+    return c.isPrimitive()
+        || String.class.equals(c)
+        || (c.isInterface() && c.isAnnotationPresent(JfrType.class));
   }
 
   private static IllegalArgumentException conflict(

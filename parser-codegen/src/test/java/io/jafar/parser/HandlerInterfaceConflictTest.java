@@ -31,10 +31,11 @@ import org.openjdk.jmc.flightrecorder.writer.api.Types;
  * interface as soon as it was registered (every factory {@code ServiceLoader} finds is registered
  * when a parser is created), and {@code handle} kept whichever interface was there first. So {@code
  * handle(B.class, h)} for a type a factory of interface {@code A} had claimed, or that an earlier
- * {@code handle(A.class, ...)} had claimed, returned normally and {@code h} was never called: events
- * are dispatched to the handlers of the claiming interface only. Now a factory decodes its type
- * only for the interface the handlers use, and a second interface for a type is rejected by {@code
- * handle}. {@link DiscoveredHandlerFactoryTest} covers the factory found by {@code ServiceLoader}.
+ * {@code handle(A.class, ...)} had claimed, returned normally and {@code h} was never called:
+ * events are dispatched to the handlers of the claiming interface only. Now a factory decodes its
+ * type only for the interface the handlers use, and a second interface for a type is rejected by
+ * {@code handle}. {@link DiscoveredHandlerFactoryTest} covers the factory found by {@code
+ * ServiceLoader}.
  */
 public class HandlerInterfaceConflictTest {
   static final String SAMPLE = "test.Sample";
@@ -44,7 +45,9 @@ public class HandlerInterfaceConflictTest {
   /** Events of each of {@value #SAMPLE} and {@value #OTHER}; {@code seq} runs 0 to N - 1. */
   static final int EVENTS = 40;
 
-  /** What {@link SampleAFactory} returns for {@code seq()}, never a {@code seq} in the recording. */
+  /**
+   * What {@link SampleAFactory} returns for {@code seq()}, never a {@code seq} in the recording.
+   */
   static final int FROM_FACTORY = -1;
 
   @JfrType(SAMPLE)
@@ -146,7 +149,8 @@ public class HandlerInterfaceConflictTest {
       // unwraps to that field's value.
       Type label =
           types.getOrAdd(
-              LABEL, t -> t.addField("name", Types.Builtin.STRING).addField("id", Types.Builtin.INT));
+              LABEL,
+              t -> t.addField("name", Types.Builtin.STRING).addField("id", Types.Builtin.INT));
       Type sample =
           r.registerEventType(
               SAMPLE, t -> t.addField("seq", Types.Builtin.INT).addField("label", label));
