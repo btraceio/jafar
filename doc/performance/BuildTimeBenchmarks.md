@@ -30,28 +30,24 @@ The benchmarks in `BuildTimeHandlerBenchmark` measure the performance characteri
 
 ## Running the Benchmarks
 
-### All Benchmarks
+The two halves run on **different classpaths**. The typed parser registers every build-time factory
+`ServiceLoader` finds, and on the JMH classpath `jafar-processor` has generated one for every
+interface the benchmark uses, so in that JVM all of them are decoded by the generated handlers,
+including in the `*RuntimeGeneration` methods. (A handler registered for another interface of the
+same JFR type is never called, so there is no switch inside one JVM.) `-PjmhRuntimeGeneration` runs
+the same classes without `META-INF/services/io.jafar.parser.api.HandlerFactory`, where the
+runtime-generated handlers decode them. The benchmark's setup prints which implementation decodes
+`jdk.ExecutionSample` and fails a method run on the other classpath, so run each half with its flag:
+
 ```bash
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark"
+# build-time handlers
+./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark.*BuildTimeGeneration -prof gc"
+# runtime-generated handlers
+./gradlew :parser-codegen:jmh -PjmhRuntimeGeneration -PjmhArgs="BuildTimeHandlerBenchmark.*RuntimeGeneration -prof gc"
 ```
 
-### Specific Benchmarks
-
-#### Throughput Comparison
-```bash
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark.parseWithRuntimeGeneration"
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark.parseWithBuildTimeGeneration"
-```
-
-#### Allocation Profile
-```bash
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark.allocation.* -prof gc"
-```
-
-#### Cold Start Performance
-```bash
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark.coldStart.*"
-```
+Running the whole class on one classpath runs all six methods on that classpath's implementation;
+the three whose name names the other one fail in setup.
 
 ## Benchmark Descriptions
 
@@ -76,12 +72,12 @@ The benchmarks in `BuildTimeHandlerBenchmark` measure the performance characteri
 - Zero runtime bytecode generation (handlers pre-compiled)
 - Direct handler instantiation (no reflection)
 - Factory-based thread-local caching
-- Static type ID binding at recording open
+- Constant pool type ids taken from each chunk's metadata
 - Parsing throughput with pre-compiled handlers
 
 **Handler lifecycle**:
 1. Compile time → Annotation processor generates handlers + factories
-2. Runtime → Register factories → Bind type IDs → Parse (use thread-local cached instances)
+2. Runtime → Register factories → Attach them to each chunk's metadata → Parse (use thread-local cached instances)
 
 ### 3. Allocation Benchmarks
 
@@ -116,6 +112,9 @@ Measures time to parse immediately after JVM startup:
 **Expected improvement**: 30-50% faster first-iteration performance
 
 ## Expected Performance Characteristics
+
+These are the expectations the benchmark was written to test, not measurements; see [Benchmark
+Results](#benchmark-results).
 
 ### Throughput (ops/s)
 | Scenario | Runtime Gen | Build-Time Gen | Improvement |
@@ -312,31 +311,40 @@ Then add it and the parser to the processor path:
 ## Benchmark Results
 
 > **Note**: Run the benchmarks yourself to get results specific to your hardware and JVM version.
+> Earlier versions of this page showed "sample results" (+23% throughput, −24% allocation, −39%
+> cold start for build-time handlers). The benchmark could not have produced them: until the runs
+> were split by classpath, each `*RuntimeGeneration` method decoded with the build-time handlers too,
+> and on `main` before that change the two `parseWith*` methods failed on their first event
+> (`JFRThreadGroup` was declared as `java.lang.ThreadGroup`; the recording's type is
+> `jdk.types.ThreadGroup`).
 
-### Sample Results (Example Hardware: Apple M2 Max, JDK 21)
+### Measured on 2026-11-18
 
-```
-Benchmark                                                      Mode  Cnt    Score    Error   Units
-BuildTimeHandlerBenchmark.parseWithRuntimeGeneration          thrpt   10  185.423 ± 5.123   ops/s
-BuildTimeHandlerBenchmark.parseWithBuildTimeGeneration        thrpt   10  227.856 ± 4.892   ops/s  (+23%)
+Linux container, 4 vCPUs (Intel Xeon @ 2.10GHz), OpenJDK 21.0.12, JMH 1.37 defaults of the class
+(1 fork, `-Xms2g -Xmx2g`, 5×2 s warmup, 10×2 s measurement; cold start: no warmup, 5 iterations),
+`-prof gc`. `test-ap.jfr` as built by `test-recordings`: 8000 `jdk.ExecutionSample` events, 65,735
+stack frames. Both runs were checked to decode with the implementation named on the left.
 
-BuildTimeHandlerBenchmark.allocationRuntimeGeneration         thrpt   10  892.445 ± 12.34  MB/s
-BuildTimeHandlerBenchmark.allocationBuildTimeGeneration       thrpt   10  678.123 ± 10.45  MB/s   (-24%)
+| Benchmark | Build-time handlers | Runtime-generated | Build-time vs runtime |
+|---|---|---|---|
+| `parseWith*` (reads thread, stack, frames, methods, classes) | 219.0 ± 12.6 ops/s, 510,195 B/op | 367.4 ± 20.9 ops/s, 787,673 B/op | 40% fewer ops/s, 35% fewer bytes/op |
+| `allocation*` (consumes the event only) | 834.5 ± 39.5 ops/s, 408,510 B/op | 1181.1 ± 53.3 ops/s, 731,632 B/op | 29% fewer ops/s, 44% fewer bytes/op |
+| `coldStart*` (no warmup) | 689 ± 317 ops/s | 978 ± 897 ops/s | errors overlap; no conclusion |
 
-BuildTimeHandlerBenchmark.coldStartRuntimeGeneration           ss     5   62.345 ± 3.456   ms
-BuildTimeHandlerBenchmark.coldStartBuildTimeGeneration         ss     5   38.123 ± 2.123   ms    (-39%)
-```
+Each run also executed the other method of each pair on the same implementation, as a control: on
+the build-time classpath `parseWith*` gave 219.0 ± 12.6 and 203.5 ± 15.4 ops/s, on the runtime one
+369.2 ± 29.1 and 367.4 ± 20.9 ops/s. One machine, one fork per method; the JMH error is the 99.9%
+interval over iterations, not over machines or forks. JMH's stack profiler did not attribute the
+throughput difference: on both paths the decode is inlined into its caller and about half of the
+runnable samples have an empty filtered stack.
 
 ## Conclusion
 
-Build-time handler generation provides:
-- **15-25% throughput improvement** in steady-state performance
-- **~25% allocation reduction** (less GC pressure)
-- **~40% faster cold start** (critical for short-lived processes)
-- **Stable metaspace usage** (no growth with context churn)
-- **GraalVM native image support** (future-proof)
-
-The trade-off is minimal: slightly longer build time. For performance-critical applications, the benefits far outweigh the costs.
+On this measurement, build-time handlers allocate 35–44% less per parse and are 29–40% slower than
+the runtime-generated ones. The throughput expectation in [Expected Performance
+Characteristics](#expected-performance-characteristics) does not hold here; the allocation one does.
+Build-time handlers remain the only option without runtime bytecode generation (GraalVM native
+image).
 
 ## See Also
 
