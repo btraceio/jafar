@@ -258,21 +258,19 @@ Build-Time Generation:
 
 ### Running the Benchmarks Yourself
 
+The runtime half needs a classpath without the build-time factories' registration; see
+[BuildTimeBenchmarks.md](BuildTimeBenchmarks.md#running-the-benchmarks). On one classpath every
+method decodes with the same implementation, and the three named for the other fail in setup.
+
 ```bash
-# Full benchmark suite (takes ~5 minutes)
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark"
+# Build-time handlers, with GC metrics
+./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark.*BuildTimeGeneration -prof gc"
 
-# Throughput only
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark.parseWith.*"
+# Runtime-generated handlers, with GC metrics
+./gradlew :parser-codegen:jmh -PjmhRuntimeGeneration -PjmhArgs="BuildTimeHandlerBenchmark.*RuntimeGeneration -prof gc"
 
-# Allocation profiling with GC metrics
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark.allocation.* -prof gc"
-
-# Cold start
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark.coldStart.*"
-
-# Full results with verbose output
-./gradlew jmh -PjmhArgs="BuildTimeHandlerBenchmark -rf json -rff results.json -v EXTRA"
+# Full results as JSON
+./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark.*BuildTimeGeneration -rf json -rff results.json"
 ```
 
 ### Expected Variability
@@ -334,6 +332,11 @@ The choice between runtime and build-time generation depends on your use case:
 - **When in doubt** → Build-time generation (better default)
 
 ## Appendix: Full Benchmark Results
+
+> These results predate the split by classpath: the build-time factories were on the classpath of
+> both methods of each pair, so how the "runtime" rows were produced cannot be told from this page.
+> A measurement of both implementations on the current benchmark is in
+> [BuildTimeBenchmarks.md](BuildTimeBenchmarks.md#benchmark-results).
 
 ### Environment
 
