@@ -211,8 +211,8 @@ throws. Use one interface per JFR type in a parser, or a separate parser.
 
 Build-time generated factories (see the README) follow the handlers: a factory decodes its type only
 when the handlers use the interface it was generated for, and a handler for another interface of
-that type gets it decoded at runtime. `parser.ignoreDiscoveredFactories()` makes a parser ignore the
-factories found on the classpath.
+that type gets it decoded at runtime. `parser.ignoreDiscoveredFactories()`, called before any `handle()`, makes a
+parser ignore the factories found on the classpath.
 
 ### Early Termination
 

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.ConstantPools;
 import io.jafar.parser.api.HandlerFactory;
+import io.jafar.parser.api.JfrField;
 import io.jafar.parser.api.JfrType;
 import io.jafar.parser.api.MetadataLookup;
 import io.jafar.parser.api.TypedJafarParser;
@@ -119,6 +120,64 @@ public class HandlerInterfaceConflictTest {
     @Override
     public Class<SampleA> getInterfaceClass() {
       return SampleA.class;
+    }
+  }
+
+  /** {@value #SAMPLE} reaching {@value #LABEL} through two interfaces. */
+  @JfrType(SAMPLE)
+  public interface SampleWithTwoLabelViews {
+    LabelA label();
+
+    @JfrField("label")
+    LabelB sameLabel();
+  }
+
+  /** A label view whose accessor a generated handler supports and the runtime path rejects. */
+  @JfrType(LABEL)
+  public interface BoxedLabel {
+    Integer id();
+  }
+
+  @JfrType(SAMPLE)
+  public interface SampleWithBoxedLabel {
+    int seq();
+
+    BoxedLabel label();
+  }
+
+  /** A stand-in factory for {@code iface} that decodes nothing and returns {@code value}. */
+  static final class FixedFactory<T> implements HandlerFactory<T> {
+    private final Class<T> iface;
+    private final String type;
+    private final T value;
+
+    FixedFactory(Class<T> iface, String type, T value) {
+      this.iface = iface;
+      this.type = type;
+      this.value = value;
+    }
+
+    @Override
+    public void bind(MetadataLookup metadata) {}
+
+    @Override
+    public T get(RecordingStream stream, MetadataClass metadata, ConstantPools pools) {
+      return value;
+    }
+
+    @Override
+    public T create(RecordingStream stream, MetadataClass metadata, ConstantPools pools) {
+      return value;
+    }
+
+    @Override
+    public String getJfrTypeName() {
+      return type;
+    }
+
+    @Override
+    public Class<T> getInterfaceClass() {
+      return iface;
     }
   }
 
@@ -277,5 +336,85 @@ public class HandlerInterfaceConflictTest {
         assertTrue(got.contains(expected), expected + " missing");
       }
     }
+  }
+
+  @Test
+  void oneInterfaceReachingATypeThroughTwoInterfacesIsRejectedAndNothingIsRegistered()
+      throws Exception {
+    Path jfr = writeRecording(dir);
+    List<Integer> seqs = Collections.synchronizedList(new ArrayList<>());
+    try (TypedJafarParser p = TypedJafarParser.open(jfr)) {
+      IllegalArgumentException thrown =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> p.handle(SampleWithTwoLabelViews.class, (e, ctl) -> {}));
+      String message = thrown.getMessage();
+      assertTrue(message.contains("'" + LABEL + "'"), message);
+      assertTrue(message.contains(LabelA.class.getName()), message);
+      assertTrue(message.contains(LabelB.class.getName()), message);
+      // Nothing was registered before the clash, so nothing "already" decodes the type.
+      assertTrue(
+          message.contains("also reaches the type through SampleWithTwoLabelViews."), message);
+      assertTrue(!message.contains("already decodes"), message);
+      // test.Sample was not claimed by the rejected interface.
+      p.handle(SampleA.class, (e, ctl) -> seqs.add(e.seq()));
+      p.run();
+    }
+    assertEquals(allSeqs(), sorted(seqs), "seq of every event the SampleA handler got");
+  }
+
+  @Test
+  void aFactoryForAReferencedTypeIsUsedOnlyForItsInterface() throws Exception {
+    Path jfr = writeRecording(dir);
+    LabelA fromFactory = () -> "from-factory";
+    List<String> got = Collections.synchronizedList(new ArrayList<>());
+    try (TypedJafarParser p = TypedJafarParser.open(jfr)) {
+      p.registerFactory(new FixedFactory<>(LabelA.class, LABEL, fromFactory));
+      p.handle(SampleWithLabelA.class, (e, ctl) -> got.add(e.label().name()));
+      p.run();
+    }
+    assertEquals(Collections.nCopies(EVENTS, "from-factory"), got, "LabelA values");
+
+    got.clear();
+    try (TypedJafarParser p = TypedJafarParser.open(jfr)) {
+      p.registerFactory(new FixedFactory<>(LabelA.class, LABEL, fromFactory));
+      p.handle(OtherWithLabelB.class, (e, ctl) -> got.add(e.label().name()));
+      p.run();
+    }
+    List<String> expected = new ArrayList<>();
+    for (int i = 0; i < EVENTS; i++) {
+      expected.add("label-" + i);
+    }
+    Collections.sort(expected);
+    List<String> actual = new ArrayList<>(got);
+    Collections.sort(actual);
+    assertEquals(expected, actual, "LabelB values, decoded at runtime");
+  }
+
+  @Test
+  void aFactoryServedInterfaceMayReachAnInterfaceOnlyAGeneratedHandlerCanRead() throws Exception {
+    // BoxedLabel.id() returns Integer, which the runtime path rejects; the generated handler of
+    // SampleWithBoxedLabel reads an inline label with the generated handler of BoxedLabel, so
+    // handle() must not demand a runtime-decodable BoxedLabel when no factory for it is registered.
+    Path jfr = writeRecording(dir);
+    SampleWithBoxedLabel fixed =
+        new SampleWithBoxedLabel() {
+          @Override
+          public int seq() {
+            return FROM_FACTORY;
+          }
+
+          @Override
+          public BoxedLabel label() {
+            return null;
+          }
+        };
+    List<Integer> seqs = Collections.synchronizedList(new ArrayList<>());
+    try (TypedJafarParser p = TypedJafarParser.open(jfr)) {
+      p.registerFactory(new FixedFactory<>(SampleWithBoxedLabel.class, SAMPLE, fixed));
+      p.handle(SampleWithBoxedLabel.class, (e, ctl) -> seqs.add(e.seq()));
+      p.run();
+    }
+    assertEquals(Collections.nCopies(EVENTS, FROM_FACTORY), seqs, "events from the factory");
   }
 }

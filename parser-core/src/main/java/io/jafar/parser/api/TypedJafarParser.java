@@ -111,10 +111,13 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
    *     {@link HandlerFactory} is used for a type only if it implements the interface given for
    *     that type.
    * @return a registration that can be closed to stop receiving events
-   * @throws IllegalArgumentException if {@code clz} is invalid, or if it or an interface its
-   *     accessors return would decode a JFR type that this parser already decodes as another
-   *     interface (registered by an earlier call), or that {@code clz} reaches through two
-   *     interfaces. Nothing is registered then.
+   * @throws IllegalArgumentException if {@code clz} or an interface its accessors return would
+   *     decode a JFR type that this parser already decodes as another interface (registered by an
+   *     earlier call), or that {@code clz} reaches through two interfaces. Nothing is registered
+   *     then.
+   * @throws RuntimeException wrapping a {@link JafarConfigurationException} if {@code clz} or
+   *     {@code handler} is null, or {@code clz} or a type its accessors return is not a valid
+   *     {@link JfrType} interface
    */
   <T> HandlerRegistration<T> handle(Class<T> clz, JFRHandler<T> handler);
 
@@ -162,10 +165,17 @@ public interface TypedJafarParser extends JafarParser, AutoCloseable {
    * runtime-generated class, as when no factory is on the classpath. Factories passed to {@link
    * #registerFactory} are not affected.
    *
-   * <p>Call it before {@link #run()}. Parsers made from this one with {@link #withParserListener}
-   * share its handlers and factories, and so are affected too.
+   * <p>Call it before {@link #handle} registers an interface that a discovered factory serves,
+   * directly or as the return type of an accessor; after that it throws and changes nothing.
+   * Parsers made from this one with {@link #withParserListener} share its handlers and factories,
+   * and so are affected too.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; parsers created by {@link #open} support it.
    *
    * @return this parser
+   * @throws IllegalStateException if a handler registered on this parser, or on a parser sharing
+   *     its handlers, already uses an interface that a discovered factory serves
    */
   default TypedJafarParser ignoreDiscoveredFactories() {
     throw new UnsupportedOperationException(

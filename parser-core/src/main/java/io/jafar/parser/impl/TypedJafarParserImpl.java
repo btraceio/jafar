@@ -191,7 +191,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     synchronized (globalHandlerMap) {
       Map<String, Class<?>> closure = new LinkedHashMap<>();
       Map<String, String> reachedThrough = new HashMap<>();
-      collectTypes(root, root, null, closure, reachedThrough);
+      collectTypes(root, root, null, false, closure, reachedThrough);
       for (Map.Entry<String, Class<?>> e : closure.entrySet()) {
         globalHandlerMap.putIfAbsent(e.getKey(), e.getValue());
       }
@@ -202,6 +202,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
       Class<?> root,
       Class<?> clz,
       String path,
+      boolean underFactory,
       Map<String, Class<?>> closure,
       Map<String, String> reachedThrough)
       throws JafarConfigurationException {
@@ -222,13 +223,27 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     if (inClosure != null) {
       if (inClosure != clz) {
         throw conflict(
-            root, typeName, clz, path, inClosure, "through " + reachedThrough.get(typeName));
+            root,
+            typeName,
+            clz,
+            path,
+            ", but it also reaches the type through "
+                + reachedThrough.get(typeName)
+                + " as "
+                + inClosure.getName());
       }
       return;
     }
     Class<?> registered = globalHandlerMap.get(typeName);
     if (registered != null && registered != clz) {
-      throw conflict(root, typeName, clz, path, registered, "by an earlier handle() call");
+      throw conflict(
+          root,
+          typeName,
+          clz,
+          path,
+          ", but this parser already decodes it as "
+              + registered.getName()
+              + ", registered by an earlier handle() call");
     }
     closure.put(typeName, clz);
     reachedThrough.put(typeName, path == null ? root.getSimpleName() : path);
@@ -239,10 +254,14 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
     // An interface a registered factory serves is read by its generated handler, which supports
     // accessor types the runtime-generated path rejects (a boxed Integer, for one). Only the
     // types it reaches through @JfrType interfaces need a mapping here: their constant pool
-    // entries are decoded by the parser, for every field that refers to them.
-    boolean servedByFactory = factoryMap.containsKey(clz);
+    // entries are decoded by the parser, for every field that refers to them. The same holds
+    // below such an interface: a nested interface stored inline is read by the generated handler
+    // of its own type, whether or not a factory for that type is registered.
+    // ignoreDiscoveredFactories() refuses to remove a factory once its interface is used, so
+    // these skipped accessors never reach the runtime-generated path through it.
+    boolean generated = underFactory || factoryMap.containsKey(clz);
     for (Method m : clz.getMethods()) {
-      if (servedByFactory && !isDecodedByParser(m.getReturnType())) {
+      if (generated && !isDecodedByParser(m.getReturnType())) {
         continue;
       }
       if (m.getAnnotation(JfrIgnore.class) == null) {
@@ -250,6 +269,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             root,
             m.getReturnType(),
             (path == null ? clz.getSimpleName() : path) + "." + m.getName() + "()",
+            generated,
             closure,
             reachedThrough);
       }
@@ -264,12 +284,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
   }
 
   private static IllegalArgumentException conflict(
-      Class<?> root,
-      String typeName,
-      Class<?> clz,
-      String path,
-      Class<?> existing,
-      String existingSource) {
+      Class<?> root, String typeName, Class<?> clz, String path, String clash) {
     return new IllegalArgumentException(
         "Cannot handle "
             + root.getName()
@@ -279,10 +294,7 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
             + (path == null ? "" : " (reached through " + path + ")")
             + " would be decoded as "
             + clz.getName()
-            + ", but this parser already decodes it as "
-            + existing.getName()
-            + ", registered "
-            + existingSource
+            + clash
             + ". A parser decodes each JFR type into one interface, shared by every handler and"
             + " every field that refers to the type: use one interface for '"
             + typeName
@@ -522,8 +534,25 @@ public final class TypedJafarParserImpl implements TypedJafarParser {
 
   @Override
   public TypedJafarParserImpl ignoreDiscoveredFactories() {
-    for (HandlerFactory<?> factory : DISCOVERED_FACTORIES) {
-      factoryMap.remove(factory.getInterfaceClass(), factory);
+    synchronized (globalHandlerMap) {
+      // handle() skipped the accessors of an interface a factory serves that the runtime path
+      // cannot decode; removing that factory now would leave them to that path, to fail while
+      // parsing. Refuse instead, and remove nothing.
+      for (HandlerFactory<?> factory : DISCOVERED_FACTORIES) {
+        Class<?> iface = factory.getInterfaceClass();
+        if (factoryMap.get(iface) == factory && globalHandlerMap.containsValue(iface)) {
+          throw new IllegalStateException(
+              "ignoreDiscoveredFactories() must be called before handle() registers an interface"
+                  + " that a discovered factory serves: "
+                  + iface.getName()
+                  + " is already decoded by "
+                  + factory.getClass().getName()
+                  + " in this parser");
+        }
+      }
+      for (HandlerFactory<?> factory : DISCOVERED_FACTORIES) {
+        factoryMap.remove(factory.getInterfaceClass(), factory);
+      }
     }
     return this;
   }

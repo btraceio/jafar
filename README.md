@@ -295,9 +295,7 @@ as another interface. Use one interface per JFR type in a parser, or separate pa
 
 ### Runtime Generation (Default)
 
-If you don't register factories, JAFAR falls back to **runtime bytecode generation** (existing behavior).
-To make one parser generate at runtime even though factories are on the classpath, call
-`p.ignoreDiscoveredFactories()` before `run()`:
+If you don't register factories, JAFAR falls back to **runtime bytecode generation** (existing behavior):
 
 ```java
 try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recording.jfr"))) {
@@ -307,6 +305,18 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
         System.out.println("Event: " + event.startTime());
     });
 
+    p.run();
+}
+```
+
+To make one parser generate at runtime even though factories are on the classpath, call
+`ignoreDiscoveredFactories()` before registering handlers. Called after `handle()` has registered an
+interface a discovered factory serves, it throws `IllegalStateException`.
+
+```java
+try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recording.jfr"))) {
+    p.ignoreDiscoveredFactories(); // factories passed to registerFactory are kept
+    p.handle(JFRExecutionSample.class, (event, ctl) -> System.out.println(event.startTime()));
     p.run();
 }
 ```
