@@ -35,7 +35,8 @@ class LlmSettingsFileTest {
   }
 
   private static LlmConfig configWith(Map<String, String> shellVars, LlmSettingsFile file) {
-    return new LlmConfig(shellVars::get, () -> Optional.ofNullable(file));
+    return new LlmConfig(
+        shellVars::get, () -> Optional.ofNullable(file), Map.<String, String>of()::get);
   }
 
   @Test

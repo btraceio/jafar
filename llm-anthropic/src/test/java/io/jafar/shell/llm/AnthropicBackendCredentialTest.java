@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.jafar.shell.core.llm.LlmBackend;
 import io.jafar.shell.core.llm.LlmConfig;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -23,7 +24,7 @@ class AnthropicBackendCredentialTest {
 
   /** A config with no shell variables, so only the explicit lookup below can supply a value. */
   private static LlmConfig configWith(Map<String, String> settings) {
-    return new LlmConfig(settings::get);
+    return new LlmConfig(settings::get, Optional::empty, Map.<String, String>of()::get);
   }
 
   @Test

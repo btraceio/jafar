@@ -77,6 +77,7 @@ public final class LlmConfig {
 
   private final Function<String, String> lookup;
   private final java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile;
+  private final Function<String, String> env;
 
   /**
    * @param lookup resolves a setting name (e.g. {@code llm.model}) to a value, or {@code null}
@@ -89,13 +90,31 @@ public final class LlmConfig {
    * Creates a config with an explicitly supplied settings-file source.
    *
    * <p>This seam lets integrations and tests control settings-file discovery without mutating
-   * process-wide environment variables.
+   * process-wide environment variables. The process environment is consulted as before; use {@link
+   * #LlmConfig(Function, java.util.function.Supplier, Function)} to control it too.
    */
   public LlmConfig(
       Function<String, String> lookup,
       java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile) {
+    this(lookup, settingsFile, System::getenv);
+  }
+
+  /**
+   * Creates a config with an explicitly supplied settings-file source and environment.
+   *
+   * <p>This seam lets tests pin the environment instead of inheriting the process one — a developer
+   * shell (or a CI runner) may well export {@code JAFAR_LLM_*} or any other variable a test would
+   * otherwise pick up. Pass {@code name -> null} for no environment variables at all, mirroring how
+   * {@code null} {@code lookup} means no shell variables; {@code null} {@code settingsFile} means
+   * no settings file, likewise.
+   */
+  public LlmConfig(
+      Function<String, String> lookup,
+      java.util.function.Supplier<java.util.Optional<LlmSettingsFile>> settingsFile,
+      Function<String, String> env) {
     this.lookup = lookup == null ? name -> null : lookup;
-    this.settingsFile = settingsFile;
+    this.settingsFile = settingsFile == null ? () -> java.util.Optional.empty() : settingsFile;
+    this.env = env == null ? name -> null : env;
   }
 
   /** A config backed only by environment variables and defaults. */
@@ -262,7 +281,7 @@ public final class LlmConfig {
     if (value != null && !value.isBlank()) {
       return value.trim();
     }
-    value = System.getenv(envVar);
+    value = env.apply(envVar);
     if (value != null && !value.isBlank()) {
       return value.trim();
     }
@@ -296,7 +315,7 @@ public final class LlmConfig {
     if (value != null && !value.isBlank()) {
       return Source.SHELL_VARIABLE;
     }
-    value = System.getenv(envVar);
+    value = env.apply(envVar);
     if (value != null && !value.isBlank()) {
       return Source.ENVIRONMENT;
     }

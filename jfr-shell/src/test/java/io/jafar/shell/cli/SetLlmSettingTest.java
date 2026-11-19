@@ -60,7 +60,10 @@ class SetLlmSettingTest {
   private LlmConfig config() {
     LlmCommands commands = dispatcher.llmCommands();
     assertNotNull(commands);
-    return new LlmConfig(commands.host()::setting);
+    return new LlmConfig(
+        commands.host()::setting,
+        java.util.Optional::empty,
+        java.util.Map.<String, String>of()::get);
   }
 
   @Test
