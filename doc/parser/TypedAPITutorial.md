@@ -192,6 +192,28 @@ try (TypedJafarParser parser = JafarParser.newTypedParser(Paths.get("recording.j
 }
 ```
 
+### One Interface per JFR Type
+
+A parser decodes each JFR type into one interface: the type of every interface passed to `handle`,
+and of every interface their accessors return. Events and constant pool entries are decoded once and
+shared by all handlers, so several handlers can use the same interface, but two interfaces with the
+same `@JfrType` cannot both be used in one parser. The second `handle` call throws an
+`IllegalArgumentException` naming the JFR type and both interfaces, and registers nothing:
+
+```java
+parser.handle(ExecutionSample.class, (event, ctl) -> {});      // jdk.ExecutionSample
+parser.handle(MyExecutionSample.class, (event, ctl) -> {});    // also jdk.ExecutionSample: throws
+```
+
+The same applies to referenced types: if `ExecutionSample.eventThread()` returns `JFRJavaLangThread`
+and another handled interface returns its own `java.lang.Thread` interface, the second `handle` call
+throws. Use one interface per JFR type in a parser, or a separate parser.
+
+Build-time generated factories (see the README) follow the handlers: a factory decodes its type only
+when the handlers use the interface it was generated for, and a handler for another interface of
+that type gets it decoded at runtime. `parser.ignoreDiscoveredFactories()`, called before any `handle()`, makes a
+parser ignore the factories found on the classpath.
+
 ### Early Termination
 
 Stop parsing when you've collected enough data:

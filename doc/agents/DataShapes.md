@@ -236,9 +236,25 @@ Watch the comparison, not the values: each value looked right. The comparison th
 record with `java -XX:StartFlightRecording=filename=rec.jfr,settings=profile` running a small
 workload, read every `jdk.ExecutionSample`'s thread, state and frames (method and class names,
 line numbers) through the same interfaces with build-time and with runtime handlers, and diff the
-output. Delete the generated `META-INF/services/io.jafar.parser.api.HandlerFactory` for the
-runtime run, or the parser discovers the factories and both runs are build-time; print the class
-of one event to be sure which ran.
+output. Call `ignoreDiscoveredFactories()` on the parser of the runtime run, or it uses the
+factories it discovers and both runs are build-time; print the class of one event to be sure which
+ran.
+
+### Two interfaces for one JFR type in one parser
+
+The typed parser decodes each JFR type into one interface: `MetadataClass` holds one deserializer
+and one factory, and a constant pool caches each entry decoded once for every field that refers to
+it. `TypedJafarParserImpl` kept the first interface it saw for a type in `globalHandlerMap` and
+ignored later ones, and a registered factory put its own interface there when the parser was
+created. A handler for a second interface was registered under a class no event is dispatched to:
+on `parser-codegen`'s JMH classpath, where `jafar-processor` builds factories for
+`io.jafar.parser.benchmark.events.*`, a handler for the test interface
+`io.jafar.parser.types.JFRExecutionSample` received 0 of 8000 events, with no error. Now a factory
+is bound to a chunk's metadata class only when `globalHandlerMap` names its interface for that type
+(handlers decide), and `handle` throws when an interface, or one its accessors return, would
+decode a type the parser already decodes as another interface (`HandlerInterfaceConflictTest`,
+`DiscoveredHandlerFactoryTest`). A map that keeps the first writer and drops the rest needs the
+dropped writer told, or it is this bug again.
 
 ### A chunk's time span is not its events' time span
 
