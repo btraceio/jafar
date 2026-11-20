@@ -91,8 +91,8 @@ public class UntypedParserBenchmark {
   /**
    * Benchmark measuring allocation profile for untyped parsing.
    *
-   * <p>Run with: {@code ./gradlew jmh -Pjmh.include=UntypedParserBenchmark.allocationProfile
-   * -Pjmh.prof=gc}
+   * <p>Run with: {@code ./gradlew :parser-codegen:jmh
+   * -PjmhArgs="UntypedParserBenchmark.allocationProfile$ -prof gc"}
    *
    * <p>Key metrics to watch:
    *
@@ -253,8 +253,8 @@ public class UntypedParserBenchmark {
    * <p>Measures allocation rates with standard HashMap approach. Compare with {@link
    * #allocationProfile()} to quantify memory savings from flyweight pattern.
    *
-   * <p>Run with: {@code ./gradlew jmh
-   * -Pjmh.include=UntypedParserBenchmark.allocationProfile_Baseline -Pjmh.prof=gc}
+   * <p>Run with: {@code ./gradlew :parser-codegen:jmh
+   * -PjmhArgs="UntypedParserBenchmark.allocationProfile_Baseline -prof gc"}
    */
   @Benchmark
   public void allocationProfile_Baseline(Blackhole bh) throws Exception {
@@ -414,8 +414,8 @@ public class UntypedParserBenchmark {
   /**
    * Tier 2 allocation profile benchmark.
    *
-   * <p>Run with: {@code ./gradlew jmh
-   * -Pjmh.include=UntypedParserBenchmark.allocationProfile_Tier2Lazy -Pjmh.prof=gc}
+   * <p>Run with: {@code ./gradlew :parser-codegen:jmh
+   * -PjmhArgs="UntypedParserBenchmark.allocationProfile_Tier2Lazy -prof gc"}
    *
    * <p>Compare with {@link #allocationProfile_Baseline(Blackhole)} to quantify memory savings.
    */
@@ -648,8 +648,8 @@ public class UntypedParserBenchmark {
   /**
    * Tier 3 allocation profile benchmark.
    *
-   * <p>Run with: {@code ./gradlew jmh
-   * -Pjmh.include=UntypedParserBenchmark.allocationProfile_Tier3Generated -Pjmh.prof=gc}
+   * <p>Run with: {@code ./gradlew :parser-codegen:jmh
+   * -PjmhArgs="UntypedParserBenchmark.allocationProfile_Tier3Generated -prof gc"}
    *
    * <p>Compare with {@link #allocationProfile_Baseline(Blackhole)} and {@link
    * #allocationProfile_Tier2Lazy(Blackhole)} to quantify memory savings from bytecode generation

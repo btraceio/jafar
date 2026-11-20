@@ -6,6 +6,14 @@
 **Heap:** 2GB (-Xms2g -Xmx2g)
 **Test File:** test-ap.jfr (JDK profiling recording with ExecutionSample events)
 
+> **Superseded.** The figures on this page come from an earlier version of `BuildTimeHandlerBenchmark`
+> and an earlier recording (0.19 ops/s and 37–224 MB per operation, against roughly 160–850 ops/s and
+> 0.4–0.8 MB per operation now), and are not comparable with current results. The page does not record
+> how its "runtime" rows were obtained. As of November 2026, before the benchmark was reworked, its
+> runtime and build-time methods were the same code and both used the build-time handlers. A measurement of both
+> implementations is in [BuildTimeBenchmarks.md](BuildTimeBenchmarks.md#benchmark-results): there,
+> build-time handlers allocate less per parse but have **lower** throughput, not equivalent throughput.
+
 ## Executive Summary
 
 Build-time handler generation provides **massive memory allocation reduction (85% less)** with **equivalent throughput** compared to runtime bytecode generation. The key benefit is dramatically reduced GC pressure, making it ideal for high-throughput JFR analysis pipelines and memory-constrained environments.
@@ -258,19 +266,15 @@ Build-Time Generation:
 
 ### Running the Benchmarks Yourself
 
-The runtime half needs a classpath without the build-time factories' registration; see
-[BuildTimeBenchmarks.md](BuildTimeBenchmarks.md#running-the-benchmarks). On one classpath every
-method decodes with the same implementation, and the three named for the other fail in setup.
+Both implementations run from one command; each `decoder` parameter value runs in forks of its own.
+See [BuildTimeBenchmarks.md](BuildTimeBenchmarks.md#running-the-benchmarks).
 
 ```bash
-# Build-time handlers, with GC metrics
-./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark.*BuildTimeGeneration -prof gc"
+# All methods, both decoders, with GC metrics
+./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark -prof gc"
 
-# Runtime-generated handlers, with GC metrics
-./gradlew :parser-codegen:jmh -PjmhRuntimeGeneration -PjmhArgs="BuildTimeHandlerBenchmark.*RuntimeGeneration -prof gc"
-
-# Full results as JSON
-./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark.*BuildTimeGeneration -rf json -rff results.json"
+# The same, with the results as JSON
+./gradlew :parser-codegen:jmh -PjmhArgs="BuildTimeHandlerBenchmark -prof gc -rf json -rff results.json"
 ```
 
 ### Expected Variability
@@ -318,7 +322,7 @@ try (TypedJafarParser parser = ctx.newTypedParser(jfrFile)) {
 ### Key Implementation Details
 
 1. **Thread-Local Caching**: Each parser gets factory instance, factory provides thread-local cached handler
-2. **Static Type ID Binding**: Type IDs injected at recording open (runtime binding)
+2. **Per-chunk type ids**: constant pool type ids are taken from each chunk's metadata
 3. **Zero Reflection**: Direct field access, no reflection overhead
 4. **Pre-Compiled**: Handlers compiled during build, not at runtime
 
@@ -333,10 +337,9 @@ The choice between runtime and build-time generation depends on your use case:
 
 ## Appendix: Full Benchmark Results
 
-> These results predate the split by classpath: the build-time factories were on the classpath of
-> both methods of each pair, so how the "runtime" rows were produced cannot be told from this page.
-> A measurement of both implementations on the current benchmark is in
-> [BuildTimeBenchmarks.md](BuildTimeBenchmarks.md#benchmark-results).
+> These results come from an earlier benchmark and recording and are not comparable with current
+> ones (see the note at the top of this page). A measurement of both implementations on the current
+> benchmark is in [BuildTimeBenchmarks.md](BuildTimeBenchmarks.md#benchmark-results).
 
 ### Environment
 
