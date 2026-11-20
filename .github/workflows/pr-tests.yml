@@ -57,6 +57,31 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/parity-body.md
           scripts/parity-check.sh --files-from /tmp/parity-files.txt --body-file /tmp/parity-body.md
 
+  typed-parity:
+    # The blocking typed-generator parity statement (build-time jafar-processor vs runtime
+    # CodeGenerator; AGENTS.md). Same shape as `parity`: pull_request only, because the
+    # statement lives in the PR body.
+    name: Typed parity (build-time/runtime generators)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the typed parity statement
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json files -q '.files[].path' > /tmp/typed-parity-files.txt
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/typed-parity-body.md
+          scripts/typed-parity-check.sh --files-from /tmp/typed-parity-files.txt --body-file /tmp/typed-parity-body.md
+
   api-compat:
     # The per-plane japicmp comparison, step 1 of the generated-code safety
     # harness (doc/agents/Gates.md). Runs on every trigger, like `tests`: the

@@ -15,6 +15,10 @@ repositories {
 // parser-core must be configured first for its sourceSets (test helpers) to exist
 evaluationDependsOn(':parser-core')
 
+configurations {
+    typedRuntime
+}
+
 dependencies {
     implementation project(':parser-core')
 
@@ -29,11 +33,20 @@ dependencies {
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
     // NestedArrayFixture, built with parser-core's SyntheticRecording test helper
     testImplementation project(':parser-core').sourceSets.test.output
+    // BuildTimeRuntimeParityTest only: the runtime generator, for the probe's own class loader
+    typedRuntime project(':parser-codegen')
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {
     useJUnitPlatform()
+    // BuildTimeRuntimeParityTest decodes with runtime-generated classes in a class loader of its
+    // own. parser-codegen stays off the test class path: with it there, the parser generates a
+    // runtime deserializer for every bound type, which cannot see interfaces in the in-memory
+    // loader the other tests compile into, and their parses fail.
+    def typedRuntime = configurations.typedRuntime
+    inputs.files(typedRuntime).withNormalizer(ClasspathNormalizer)
+    jvmArgumentProviders.add({ ["-Djafar.test.typedRuntimeClasspath=" + typedRuntime.asPath] } as CommandLineArgumentProvider)
 }
 
 java {

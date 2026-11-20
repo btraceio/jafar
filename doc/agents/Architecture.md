@@ -96,6 +96,27 @@ Beyond the gates, the conventions the codebase already follows:
   `GeneratedDeserializerSupport` rather than re-implementing them. Generated deserializers are
   shared across chunks only by structural key, never by class id — see
   [DataShapes.md](DataShapes.md#a-type-id-is-not-a-type).
+- **Typed parser: two generators.** The typed parser decodes an `@JfrType` interface with a handler
+  from one of two generators. `jafar-processor` generates one at build time (a `<Interface>Handler`
+  and its `HandlerFactory`, found by `ServiceLoader` or passed to `registerFactory`).
+  `parser-codegen`'s `CodeGenerator` generates one at runtime, from the chunk's metadata, when no
+  factory serves the interface or the parser was told `ignoreDiscoveredFactories()`. They must read
+  the same values and do comparable work per value; `BuildTimeRuntimeParityTest` compares their
+  values on the generated fixtures, and AGENTS.md has the rule and its gate. Kept differences:
+  - The build-time handler is reused: `HandlerFactory.get` hands every event of a thread the same
+    instance after `reset()`, so an event must not be kept past its handler call. The runtime
+    class is a new object per event. Pool entries are new objects on both sides.
+  - A runtime-generated class is defined with `CodeGenerator` as its lookup host, so it lives in
+    `parser-codegen`'s class loader and can implement only interfaces that loader sees; an
+    interface in a child loader fails with `NoClassDefFoundError`. A build-time handler is
+    compiled with its interface and has no such limit, but not if `parser-codegen` is on the class
+    path too: `MutableMetadataLookup.bindDeserializers` then generates a runtime deserializer for
+    every bound type, including one a build-time factory serves, and that generation fails the
+    parse for an interface in a child loader.
+  - An accessor typed with an interface for a simple type (`PState state()` for a pooled
+    `jdk.types.ThreadState`) is read at build time; the runtime class does not implement it
+    (`AbstractMethodError`) because `CodeGenerator` unwraps simple types to their value. Pinned as a
+    known difference in `BuildTimeRuntimeParityTest`, to be deleted when the runtime reads it.
 - Both APIs support handler registration and synchronous event processing
 
 ## Key Classes to Understand
