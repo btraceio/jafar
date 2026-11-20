@@ -272,39 +272,42 @@ Then add it and the parser to the processor path:
 
 > **Note**: Run the benchmarks yourself to get results specific to your hardware and JVM version.
 > Earlier versions of this page showed "sample results" (+23% throughput, −24% allocation, −39%
-> cold start for build-time handlers). The benchmark could not have produced them: until the runs
-> were split by classpath, each `*RuntimeGeneration` method decoded with the build-time handlers too,
-> and on `main` before that change the two `parseWith*` methods failed on their first event
-> (`JFRThreadGroup` was declared as `java.lang.ThreadGroup`; the recording's type is
-> `jdk.types.ThreadGroup`).
+> cold start for build-time handlers). They could not have come from this benchmark: it reports
+> throughput in ops/s, never allocation in MB/s or cold start in single-shot ms; as of November 2026,
+> before it was reworked, its "runtime" methods were the same code as its "build-time" ones and both
+> used the build-time handlers, and its two `parseWith*` methods failed on their first event
+> (`JFRThreadGroup` was declared as `java.lang.ThreadGroup`; recordings have `jdk.types.ThreadGroup`).
 
-### Measured on 2026-11-18
+### Measured on 2026-11-20
 
-Linux container, 4 vCPUs (Intel Xeon @ 2.10GHz), OpenJDK 21.0.12, JMH 1.37 defaults of the class
-(1 fork, `-Xms2g -Xmx2g`, 5×2 s warmup, 10×2 s measurement; cold start: no warmup, 5 iterations),
-`-prof gc`. `test-ap.jfr` as built by `test-recordings`: 8000 `jdk.ExecutionSample` events, 65,735
-stack frames. Both runs were checked to decode with the implementation named on the left.
+Linux container, 4 vCPUs (Intel Xeon @ 2.10GHz), OpenJDK 21.0.12, JMH 1.37, the class's own settings
+(see [Benchmark Configuration](#benchmark-configuration)), `-prof gc`, the command in [Running the
+Benchmarks](#running-the-benchmarks) run twice in a row. Every fork's teardown confirmed that it decoded
+with the implementation its `decoder` names (60 forks per round). Errors are JMH's 99.9% intervals over all
+iterations of all forks of one round.
 
-| Benchmark | Build-time handlers | Runtime-generated | Build-time vs runtime |
+| Method | `buildTime` (round 1 / round 2) | `runtime` (round 1 / round 2) | `buildTime` vs `runtime` |
 |---|---|---|---|
-| `parseWith*` (reads thread, stack, frames, methods, classes) | 219.0 ± 12.6 ops/s, 510,195 B/op | 367.4 ± 20.9 ops/s, 787,673 B/op | 40% fewer ops/s, 35% fewer bytes/op |
-| `allocation*` (consumes the event only) | 834.5 ± 39.5 ops/s, 408,510 B/op | 1181.1 ± 53.3 ops/s, 731,632 B/op | 29% fewer ops/s, 44% fewer bytes/op |
-| `coldStart*` (no warmup) | 689 ± 317 ops/s | 978 ± 897 ops/s | errors overlap; no conclusion |
+| `parseAndReadReferences` | 163.1 ± 5.2 / 167.6 ± 4.0 ops/s | 266.0 ± 10.9 / 248.8 ± 21.9 ops/s | 33–39% lower throughput |
+| | 532,333 / 529,055 B/op | 801,387 / 801,594 B/op | 34% fewer bytes per parse |
+| `parseAndConsumeEvent` | 625.9 ± 39.2 / 642.4 ± 45.6 ops/s | 854.1 ± 45.8 / 929.5 ± 34.6 ops/s | 27–31% lower throughput |
+| | 425,546 / 425,535 B/op | 745,093 / 745,036 B/op | 43% fewer bytes per parse |
+| `coldStartParse` | 132.8 ± 6.7 / 145.2 ± 9.9 ms | 137.1 ± 8.0 / 133.5 ± 5.8 ms | −3% / +9%: no resolvable difference |
+| | 7,254,314 / 7,254,598 B/op | 7,194,554 / 7,194,633 B/op | 0.8% more bytes |
 
-Each run also executed the other method of each pair on the same implementation, as a control: on
-the build-time classpath `parseWith*` gave 219.0 ± 12.6 and 203.5 ± 15.4 ops/s, on the runtime one
-369.2 ± 29.1 and 367.4 ± 20.9 ops/s. One machine, one fork per method; the JMH error is the 99.9%
-interval over iterations, not over machines or forks. JMH's stack profiler did not attribute the
-throughput difference: on both paths the decode is inlined into its caller and about half of the
-runnable samples have an empty filtered stack.
+Read the throughput rows with the run-to-run spread in mind: the same method and decoder moved by up to 9%
+between the two rounds (`parseAndConsumeEvent` `runtime`: 854.1 and 929.5 ops/s), more than JMH's interval
+within a round. Differences of a few percent, such as the cold-start one, are not resolvable with this setup;
+the 27–39% throughput and 34–43% allocation differences are, in both rounds. An operation is a whole parse
+(see [What an operation is](#what-an-operation-is)), so these are not per-event decoding costs, and no profile
+here attributes the throughput difference to a cause.
 
 ## Conclusion
 
-On this measurement, build-time handlers allocate 35–44% less per parse and are 29–40% slower than
-the runtime-generated ones. The throughput expectation in [Expected Performance
-Characteristics](#expected-performance-characteristics) does not hold here; the allocation one does.
-Build-time handlers remain the only option without runtime bytecode generation (GraalVM native
-image).
+On this benchmark — one 117 KB single-chunk recording parsed end to end per operation — build-time handlers
+allocate 34–43% less per parse and have 27–39% lower throughput than runtime-generated handlers on the same
+interfaces; their first parse in a new JVM is not measurably faster. The allocation expectation holds in
+direction and exceeds the ~25% expected; the throughput and cold-start expectations do not hold here.
 
 ## See Also
 
