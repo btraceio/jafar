@@ -172,17 +172,17 @@ full value model, error handling contract and the differences from the Java pars
 
 ## Build-Time Handler Generation
 
-JAFAR now supports **build-time handler generation** via annotation processor, providing massive performance benefits for production applications.
+JAFAR supports **build-time handler generation** via annotation processor: the typed handlers are generated
+when your code compiles instead of at runtime.
 
 ### Why Build-Time Generation?
 
-**Benchmark Results:**
-- **85% less memory allocation** (35.5 MB/sec vs 237.2 MB/sec)
-- **Eliminates GC collections** (0 vs 3 GC pauses per benchmark)
-- **Equivalent throughput** (no performance penalty)
-- **Predictable latency** (no GC jitter)
+- **No runtime bytecode generation** for the interfaces you annotate
+- **Less allocation**: on `BuildTimeHandlerBenchmark`, 34–43% fewer bytes per parse than runtime-generated handlers
+- **Lower throughput on the same benchmark**: 27–39% fewer parses per second; the first parse in a new JVM is not
+  measurably faster
 
-[→ See Full Performance Report](doc/performance/PerformanceReport.md)
+[→ Benchmark, method and results](doc/performance/BuildTimeBenchmarks.md#benchmark-results)
 
 ### How It Works
 

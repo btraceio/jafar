@@ -231,6 +231,15 @@ tasks.register('test8', Test) {
 // so the budget is the bytecode-level truth of what the parse allocates, not what the JIT happens
 // to eliminate on a given run — and escape-analysis elimination is not a guarantee the parser
 // may rely on anyway (AC-3.2/AC-3.3; spec Q6 anticipated exactly this trade-off).
+//
+// JDK 8 only: -Xms2g -Xmn1g, so that no garbage collection runs during the test. On JDK 8 a
+// pool thread's allocated-bytes counter reads higher when a collection happens while it parses:
+// with -Xmn16m (23 collections) the pool sum was 45,321,080-45,478,152 bytes in six runs instead of
+// 44,510,280, while JDK 21 stayed at 44,135,944 through 10 collections. With only -Xmx2g the JVM
+// starts with a small heap and collects about twice during the test; where those collections land
+// depends on what else it allocated first, and on CI one landed in the measured parse in 3 of 25
+// PR runs (45,255,192-45,440,912 bytes, over budget). With the young generation at 1 GB the test
+// JVM collected 0 times and measured 44,510,280 bytes, the budgeted figure.
 def allocationBudgetsFile = rootProject.file('gradle/allocation-budgets.properties')
 
 tasks.register('allocationTest', Test) {
@@ -267,7 +276,8 @@ tasks.register('allocationTest8', Test) {
     javaLauncher.set(j8LauncherProvider)
     dependsOn tasks.named('compileTest8JavaCompat')
     useJUnitPlatform()
-    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    // -Xms2g -Xmn1g: no collection during the test (see the comment above allocationBudgetsFile)
+    jvmArgs '-XX:ActiveProcessorCount=4', '-Xms2g', '-Xmx2g', '-Xmn1g', '-XX:TieredStopAtLevel=1'
     systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
     inputs.file(allocationBudgetsFile)
     inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
