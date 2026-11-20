@@ -45,7 +45,6 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
    * @throws IOException if reading fails
    */
   public void read(RecordingStream stream, MetadataClass metadata, ConstantPools constantPools) throws IOException {
-    this.constantPools = constantPools;
     Plan p = this.plan;
     if (p == null || p.metadata != metadata) {
       p = lastPlan;
@@ -53,17 +52,45 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
         p = new Plan(metadata);
         lastPlan = p;
       }
-      this.plan = p;
     }
-    List<MetadataField> metaFields = metadata.getFields();
-    for (MetadataField metaField : metaFields) {
-      String fieldName = metaField.getName();
-      switch (fieldName) {
+    if (p != this.plan || constantPools != this.constantPools) {
+      // the pools the getters resolved belong to the previous chunk or metadata class
+{{CP_MEMO_CLEAR}}
+      this.plan = p;
+      this.constantPools = constantPools;
+    }
+    // The metadata fields in recording order, each resolved once per metadata class (Plan) to
+    // what reads it: an int switch, like the straight-line code CodeGenerator emits per layout,
+    // instead of a name switch over metadata.getFields() for every value.
+    MetadataField[] fields = p.fields;
+    int[] ops = p.ops;
+    for (int fieldIndex = 0; fieldIndex < ops.length; fieldIndex++) {
+      MetadataField metaField = fields[fieldIndex];
+      switch (ops[fieldIndex]) {
 {{SWITCH_CASES}}
+        case SKIP_REFERENCE:
+          stream.readVarint();
+          break;
         default:
           TypeSkipper.skip(metaField, stream);
           break;
       }
+    }
+  }
+
+  /**
+   * The op of a field no accessor reads that holds one constant pool reference: a varint, skipped
+   * as {@code CodeGenerator.addFieldSkipper} skips it ({@code skipSimpleRef}). Every other field no
+   * accessor reads is op {@code 0}, skipped by its {@link TypeSkipper}.
+   */
+  private static final int SKIP_REFERENCE = -1;
+
+  /** The op of the declared field named {@code name}: its 1-based declaration index, or 0. */
+  private static int opOf(String name) {
+    switch (name) {
+{{OP_CASES}}
+      default:
+        return 0;
     }
   }
 
@@ -76,10 +103,26 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
    */
   private static final class Plan {
     final MetadataClass metadata;
+    /** The metadata class's fields, in the order the recording stores them. */
+    final MetadataField[] fields;
+    /** What reads each of {@link #fields}: a declared field's op, {@link #SKIP_REFERENCE} or 0. */
+    final int[] ops;
 {{PLAN_FIELDS}}
 
     Plan(MetadataClass metadata) throws IOException {
       this.metadata = metadata;
+      List<MetadataField> all = metadata.getFields();
+      this.fields = all.toArray(new MetadataField[0]);
+      this.ops = new int[fields.length];
+      for (int i = 0; i < fields.length; i++) {
+        MetadataField f = fields[i];
+        int op = opOf(f.getName());
+        // a scalar field: getDimension() is -1 (CodeGenerator tests "> 0" for an array)
+        if (op == 0 && f.hasConstantPool() && f.getDimension() <= 0) {
+          op = SKIP_REFERENCE;
+        }
+        ops[i] = op;
+      }
 {{PLAN_DEFAULTS}}
       for (MetadataField metaField : metadata.getFields()) {
         switch (metaField.getName()) {

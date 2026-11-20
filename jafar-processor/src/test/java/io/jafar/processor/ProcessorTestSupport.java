@@ -7,10 +7,12 @@ import com.google.testing.compile.Compilation;
 import com.google.testing.compile.JavaFileObjects;
 import io.jafar.parser.api.HandlerFactory;
 import io.jafar.parser.api.JFRHandler;
+import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.TypedJafarParser;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -33,6 +35,33 @@ public final class ProcessorTestSupport {
 
   /** Compiles the sources with the processor and returns a loader for every compiled class. */
   public static ClassLoader compileAndLoad(JavaFileObject... sources) throws Exception {
+    Map<String, byte[]> classes = compile(sources);
+    return new ClassLoader(ProcessorTestSupport.class.getClassLoader()) {
+      @Override
+      protected Class<?> findClass(String name) throws ClassNotFoundException {
+        byte[] b = classes.get(name);
+        if (b == null) {
+          throw new ClassNotFoundException(name);
+        }
+        return defineClass(name, b, 0, b.length);
+      }
+    };
+  }
+
+  /**
+   * Compiles the sources with the processor and writes every compiled class under {@code dir}, as a
+   * class path entry: for a class loader that must also load the parser itself.
+   */
+  public static void compileTo(Path dir, JavaFileObject... sources) throws Exception {
+    for (Map.Entry<String, byte[]> c : compile(sources).entrySet()) {
+      Path file = dir.resolve(c.getKey().replace('.', '/') + ".class");
+      Files.createDirectories(file.getParent());
+      Files.write(file, c.getValue());
+    }
+  }
+
+  /** The classes compiling {@code sources} with the processor produces, by binary name. */
+  private static Map<String, byte[]> compile(JavaFileObject... sources) throws Exception {
     Compilation compilation = javac().withProcessors(new JfrTypeProcessor()).compile(sources);
     assertThat(compilation).succeeded();
     Map<String, byte[]> classes = new HashMap<>();
@@ -50,16 +79,7 @@ public final class ProcessorTestSupport {
         }
       }
     }
-    return new ClassLoader(ProcessorTestSupport.class.getClassLoader()) {
-      @Override
-      protected Class<?> findClass(String name) throws ClassNotFoundException {
-        byte[] b = classes.get(name);
-        if (b == null) {
-          throw new ClassNotFoundException(name);
-        }
-        return defineClass(name, b, 0, b.length);
-      }
-    };
+    return classes;
   }
 
   /**
@@ -67,11 +87,25 @@ public final class ProcessorTestSupport {
    * {@code handler} with each event of {@code iface}. Exceptions from generated getters invoked
    * reflectively by the handler propagate unwrapped.
    */
-  @SuppressWarnings({"unchecked", "rawtypes"})
   public static void parse(
       Path jfr, ClassLoader loader, Class<?> iface, Consumer<Object> handler, String... factoryOf)
       throws Exception {
-    try (TypedJafarParser p = TypedJafarParser.open(jfr.toString())) {
+    parse(ParsingContext.create(), jfr, loader, iface, handler, factoryOf);
+  }
+
+  /**
+   * {@link #parse(Path, ClassLoader, Class, Consumer, String...)} with a parser of {@code context}.
+   */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  public static void parse(
+      ParsingContext context,
+      Path jfr,
+      ClassLoader loader,
+      Class<?> iface,
+      Consumer<Object> handler,
+      String... factoryOf)
+      throws Exception {
+    try (TypedJafarParser p = context.newTypedParser(jfr)) {
       for (String simpleName : factoryOf) {
         HandlerFactory f =
             (HandlerFactory)
