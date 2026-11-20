@@ -45,7 +45,6 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
    * @throws IOException if reading fails
    */
   public void read(RecordingStream stream, MetadataClass metadata, ConstantPools constantPools) throws IOException {
-    this.constantPools = constantPools;
     Plan p = this.plan;
     if (p == null || p.metadata != metadata) {
       p = lastPlan;
@@ -53,7 +52,12 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
         p = new Plan(metadata);
         lastPlan = p;
       }
+    }
+    if (p != this.plan || constantPools != this.constantPools) {
+      // the pools the getters resolved belong to the previous chunk or metadata class
+{{CP_MEMO_CLEAR}}
       this.plan = p;
+      this.constantPools = constantPools;
     }
     List<MetadataField> metaFields = metadata.getFields();
     for (MetadataField metaField : metaFields) {

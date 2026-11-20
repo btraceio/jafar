@@ -167,7 +167,9 @@ public class JfrTypeProcessor extends AbstractProcessor {
   // The pool is looked up by the id the field's type has in the chunk the value was read from
   // (Plan): type ids are chunk-local. A chunk need not have a pool of every type; like the
   // runtime-generated handlers (CodeGenerator), an absent pool yields null, and an empty array
-  // for an array field.
+  // for an array field. The pool found is kept in <field>_cp, as CodeGenerator keeps it in its
+  // <field>_cp: a getter called once per stack frame otherwise pays a pool-registry lookup by type
+  // id on every call. read() clears it when the pools or the plan change, and reset() clears it.
   private static final String GETTER_CP_TEMPLATE =
       "  @Override\n"
           + "  public %1$s %2$s() {\n"
@@ -176,7 +178,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "    if (p == null || constantPools == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = this.%3$s_cp;\n"
+          + "    if (cp == null) {\n"
+          + "      cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "      this.%3$s_cp = cp;\n"
+          + "    }\n"
           + "    return cp == null ? null : (%1$s) cp.get(%3$s_cpRef);\n"
           + "  }\n\n";
 
@@ -188,7 +194,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "    if (p == null || constantPools == null || this.%3$s_cpRef == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = this.%3$s_cp;\n"
+          + "    if (cp == null) {\n"
+          + "      cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "      this.%3$s_cp = cp;\n"
+          + "    }\n"
           + "    if (cp == null) {\n"
           + "      return new %1$s[0];\n"
           + "    }\n"
@@ -216,7 +226,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "    if (constantPools == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(this.%1$s_cpType);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = this.%1$s_cp;\n"
+          + "    if (cp == null) {\n"
+          + "      cp = constantPools.getConstantPool(this.%1$s_cpType);\n"
+          + "      this.%1$s_cp = cp;\n"
+          + "    }\n"
           + "    return cp == null ? null : unwrapString(cp.get(this.%1$s_cpRef), \"%1$s\");\n"
           + "  }\n\n";
 
@@ -336,7 +350,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
             .set("PLAN_FIELDS", buildPlanFields(fields))
             .set("PLAN_DEFAULTS", buildPlanDefaults(fields))
             .set("PLAN_ASSIGN", buildPlanAssign(fields))
-            .set("RESET_FIELDS", buildResetFields(fields))
+            .set("RESET_FIELDS", buildResetFields(fields) + buildCpMemoClear(fields, "    "))
+            .set("CP_MEMO_CLEAR", buildCpMemoClear(fields, "      ").replaceAll("\n$", ""))
             .set("GETTER_METHODS", buildGetterMethods(fields))
             .render();
 
@@ -522,6 +537,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
         } else {
           sb.append(instanceFieldCpDeclaration(field.fieldName));
         }
+        sb.append(cpMemoDeclaration(field.fieldName));
         if (field.inlineHandler != null) {
           // the value read in place when the recording stores the field inline
           String type = field.isArray ? field.elementType + "[]" : field.returnType;
@@ -534,7 +550,24 @@ public class JfrTypeProcessor extends AbstractProcessor {
           // -1 (inline) also in a new instance, which create() and inline reads do not reset
           sb.append("  private long ").append(field.fieldName).append("_cpType = -1L;\n");
           sb.append(instanceFieldCpDeclaration(field.fieldName));
+          sb.append(cpMemoDeclaration(field.fieldName));
         }
+      }
+    }
+    return sb.toString();
+  }
+
+  /** Declares the field a pooled accessor keeps its resolved pool in (see GETTER_CP_TEMPLATE). */
+  private static String cpMemoDeclaration(String fieldName) {
+    return "  private io.jafar.parser.api.ConstantPool " + fieldName + "_cp;\n";
+  }
+
+  /** Clears the pools the getters resolved: they belong to one chunk and one metadata class. */
+  private String buildCpMemoClear(List<FieldInfo> fields, String indent) {
+    StringBuilder sb = new StringBuilder();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool || field.isPooledString()) {
+        sb.append(indent).append("this.").append(field.fieldName).append("_cp = null;\n");
       }
     }
     return sb.toString();

@@ -7,6 +7,7 @@ import com.google.testing.compile.Compilation;
 import com.google.testing.compile.JavaFileObjects;
 import io.jafar.parser.api.HandlerFactory;
 import io.jafar.parser.api.JFRHandler;
+import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.TypedJafarParser;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -67,11 +68,25 @@ public final class ProcessorTestSupport {
    * {@code handler} with each event of {@code iface}. Exceptions from generated getters invoked
    * reflectively by the handler propagate unwrapped.
    */
-  @SuppressWarnings({"unchecked", "rawtypes"})
   public static void parse(
       Path jfr, ClassLoader loader, Class<?> iface, Consumer<Object> handler, String... factoryOf)
       throws Exception {
-    try (TypedJafarParser p = TypedJafarParser.open(jfr.toString())) {
+    parse(ParsingContext.create(), jfr, loader, iface, handler, factoryOf);
+  }
+
+  /**
+   * {@link #parse(Path, ClassLoader, Class, Consumer, String...)} with a parser of {@code context}.
+   */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  public static void parse(
+      ParsingContext context,
+      Path jfr,
+      ClassLoader loader,
+      Class<?> iface,
+      Consumer<Object> handler,
+      String... factoryOf)
+      throws Exception {
+    try (TypedJafarParser p = context.newTypedParser(jfr)) {
       for (String simpleName : factoryOf) {
         HandlerFactory f =
             (HandlerFactory)
