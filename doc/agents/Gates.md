@@ -700,7 +700,16 @@ mkdir -p build/jmh
 The third line runs `QueryPushdownBenchmark` only (the trailing JMH regex):
 what a one-type or time-bounded query costs with and without the parser's type
 filter and chunk skipping, on a 32-chunk recording it generates per trial. The
-rest of `:parser-codegen:jmh` has never run here and is left out. With the
+rest of `:parser-codegen:jmh` has never run here and is left out, and it shows:
+`BuildTimeHandlerBenchmark` sat broken without anyone noticing — two methods
+failing on their first event, the others measuring the build-time handlers
+under "runtime" labels (case file in
+[Verification.md](Verification.md#r9-inspect-the-payload-not-the-exit-status)).
+Wiring it in would need `--require` for each of its `method` × `decoder`
+records, because its trial teardown throws when the decoding class does not
+match the `decoder` parameter, and a throwing benchmark disappears from the
+JSON (next paragraph). Its `coldStartParse` is single-shot over 20 forks per
+`decoder`, so a trend run would pass no `-f`, which overrides those forks. With the
 default `-wi 2 -i 5 -f 1` this step took 467 s locally on 4 processors and
 produced 16 records.
 
