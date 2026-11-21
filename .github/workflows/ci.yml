@@ -50,12 +50,14 @@ jobs:
             echo "is_snapshot=false" >> $GITHUB_OUTPUT
             echo "Version $VERSION is a release - skipping publish"
           fi
-      - name: Prepare test JDK
+      # Liberica JDK 8, 25 and 21 (the default), and Gradle pointed at exactly these:
+      # see .github/actions/liberica-jdks.
+      - name: Liberica JDKs for Gradle toolchains
         if: steps.version-check.outputs.is_snapshot == 'true' && github.ref_type != 'tag'
-        uses: actions/setup-java@v3
+        uses: ./.github/actions/liberica-jdks
         with:
-          distribution: 'liberica'
-          java-version: "21.0.13"
+          java21: '21.0.13'
+
       - name: Publish
         # Belt-and-suspenders: a tag checkout can slip past the tags-ignore
         # list, and then Gradle derives a release version (signing required,
