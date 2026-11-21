@@ -113,10 +113,13 @@ Beyond the gates, the conventions the codebase already follows:
     path too: `MutableMetadataLookup.bindDeserializers` then generates a runtime deserializer for
     every bound type, including one a build-time factory serves, and that generation fails the
     parse for an interface in a child loader.
-  - Several accessors for one JFR field (`@JfrField` naming the same field twice, including a
-    `raw = true` index next to the object accessor) are generated at runtime; `jafar-processor`
-    rejects such an interface when it compiles (javac: `duplicate case label` in the generated
-    handler). `TypedTwoAccessorsOneFieldTest` covers the runtime side.
+  - Several accessors for one JFR field (`@JfrField` naming the same field twice), pooled or
+    inline, are generated at runtime when they declare the field's one generated type (an inline
+    primitive may be widened), next to any `raw = true` index; accessors of unrelated types fail
+    generation naming them (`TypedTwoAccessorsOneFieldTest`). An interface like that does not
+    compile with `jafar-processor`: the generated handler's `opOf` and metadata-check switches get
+    one `case` per accessor, and javac reports `duplicate case label`. No diagnostic of the
+    processor's own names the interface.
   - An accessor typed with an interface for a simple type (`PState state()` for a pooled
     `jdk.types.ThreadState`) is read at build time; the runtime class does not implement it
     (`AbstractMethodError`) because `CodeGenerator` unwraps simple types to their value. Pinned as a

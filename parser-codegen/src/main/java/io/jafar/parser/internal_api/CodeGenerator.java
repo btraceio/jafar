@@ -21,6 +21,7 @@ import java.nio.file.Paths;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -297,7 +298,8 @@ final class CodeGenerator {
       Class<?> fldType,
       String fieldName,
       String methodName,
-      Class<?> expectedReturnType) {
+      Class<?> expectedReturnType,
+      boolean generateField) {
     if (fldType == null) {
       // field is never accessed directly, can skip the rest
       return;
@@ -312,8 +314,12 @@ final class CodeGenerator {
             : fldType;
 
     String fldDescriptor = (isArray ? "[" : "") + Type.getDescriptor(fldType);
-    cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fieldName, fldDescriptor, null, null)
-        .visitEnd();
+    // The field exists once; every accessor of it (two methods mapped to one JFR field by
+    // @JfrField) reads it. Declaring it per accessor: ClassFormatError, duplicate field name.
+    if (generateField) {
+      cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fieldName, fldDescriptor, null, null)
+          .visitEnd();
+    }
     MethodVisitor mv =
         cv.visitMethod(
             Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
@@ -1630,9 +1636,18 @@ final class CodeGenerator {
             mappings = new HashSet<>();
             mappings.add(new FieldMapping(fieldName, false));
           }
+          // Several accessors may read one JFR field. A fixed order (FieldMapping has identity
+          // equality, so the set's order varies by run): what is emitted once per field must not
+          // depend on which accessor comes first. jafar-processor does not support several
+          // accessors per field (its generated switches get duplicate case labels): a kept
+          // difference between the generators, see doc/agents/Architecture.md.
+          List<FieldMapping> ordered = new ArrayList<>(mappings);
+          ordered.sort(Comparator.comparing(FieldMapping::method).thenComparing(FieldMapping::raw));
+          requireOneTypePerField(target, field, fieldName, fldClz, withConstantPool, ordered);
           boolean generateRefField = true;
           boolean generatePoolCache = true;
-          for (FieldMapping mapping : mappings) {
+          boolean generateField = true;
+          for (FieldMapping mapping : ordered) {
             if (withConstantPool) {
               boolean isArray = field.getDimension() > 0;
               if (mapping.raw() && isArray) {
@@ -1667,7 +1682,9 @@ final class CodeGenerator {
                   fldClz,
                   fieldName,
                   mapping.method(),
-                  mapping.expectedReturnType());
+                  mapping.expectedReturnType(),
+                  generateField);
+              generateField = false;
             }
             generatedMethods.add(mapping.method());
           }
@@ -1742,6 +1759,66 @@ final class CodeGenerator {
         throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), debugPath, e);
       } else {
         throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), e);
+      }
+    }
+  }
+
+  /**
+   * Fails generation, naming the accessors, when several accessors of one JFR field declare types
+   * the one generated field cannot serve: every accessor of a field returns the field's class
+   * ({@code fldClz}), or, for an inline primitive field, a wider primitive. Such an interface used
+   * to fail defining the class (duplicate field); without this check it would define, and the
+   * accessor whose type differs would fail when called (AbstractMethodError, or ClassCastException
+   * from the pool). A single accessor is not checked here.
+   */
+  private static void requireOneTypePerField(
+      Class<?> target,
+      MetadataField field,
+      String fieldName,
+      Class<?> fldClz,
+      boolean pooled,
+      List<FieldMapping> mappings)
+      throws JafarSerializationException {
+    List<FieldMapping> accessors = new ArrayList<>();
+    for (FieldMapping mapping : mappings) {
+      if (!mapping.raw() && mapping.expectedReturnType() != null) {
+        accessors.add(mapping);
+      }
+    }
+    if (accessors.size() < 2 || fldClz == null) {
+      return;
+    }
+    boolean isArray = field.getDimension() > 0;
+    for (FieldMapping mapping : accessors) {
+      Class<?> declared = mapping.expectedReturnType();
+      Class<?> element = declared.isArray() ? declared.getComponentType() : declared;
+      boolean fits =
+          declared.isArray() == isArray
+              && (element == fldClz
+                  || (!pooled && !isArray && isPrimitiveWidening(fldClz, element)));
+      if (!fits) {
+        StringBuilder names = new StringBuilder();
+        for (FieldMapping m : accessors) {
+          names
+              .append(names.length() == 0 ? "" : ", ")
+              .append(m.expectedReturnType().getSimpleName())
+              .append(' ')
+              .append(m.method())
+              .append("()");
+        }
+        throw new JafarSerializationException(
+            target.getName()
+                + ": accessors "
+                + names
+                + " all read JFR field '"
+                + field.getName()
+                + "', which is generated once, as "
+                + (isArray ? fldClz.getSimpleName() + "[]" : fldClz.getSimpleName())
+                + "; "
+                + mapping.method()
+                + "() cannot return it. Declare one type for the field's accessors"
+                + (pooled ? "" : " (or a wider primitive)"),
+            field.getName());
       }
     }
   }
