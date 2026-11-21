@@ -5,12 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.jafar.parser.EventHeaderHandler;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.HandlerRegistration;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.UntypedJafarParser.EventHeaderHandler;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import java.io.OutputStream;
 import java.nio.file.Files;

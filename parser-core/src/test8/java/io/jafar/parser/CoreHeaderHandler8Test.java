@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.api.UntypedJafarParser.EventHeaderHandler;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;

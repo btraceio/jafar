@@ -510,7 +510,7 @@ parser.run();
 ```
 
 `startTime` is the value a decoded event carries under `"startTime"` (epoch nanoseconds for every
-JDK event), or `EventHeaderHandler.NO_START_TIME` for a type without a `long startTime` field. The
+JDK event), or `UntypedJafarParser.EventHeaderHandler.NO_START_TIME` for a type without a `long startTime` field. The
 fields before it are skipped, not decoded. A header handler and a value handler can share a parse:
 an event a value handler wants is decoded for it, after the header handler has run. The Go parser
 offers the same as `Options.OnEventHeader` and `Parser.CountEvents`.

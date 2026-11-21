@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each event's type, size and `startTime` without the event being decoded. An event only header
   handlers want is skipped like an unwanted one, except that its `startTime` is read: the fields
   before it are skipped and the value is converted as a decoded event's is, so the two are equal.
-  A type without a `long startTime` field gets `EventHeaderHandler.NO_START_TIME`. Header and value
+  A type without a `long startTime` field gets `UntypedJafarParser.EventHeaderHandler.NO_START_TIME`. Header and value
   handlers can share a parse. While a header handler is registered, a start-time range skips no
   chunk
 - **`UntypedJafarParser.countEvents()` and `countEvents(TypeFilter)`** - event counts per type

@@ -349,8 +349,9 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   decoding it, and both skip the fields before `startTime` to read it. Here the header is
   delivered whether or not `TypeFilter` lets the event be decoded; in Java an event is decoded
   only when a value handler wants it. Both run the header callback before decoding, keep every
-  chunk while it is set, and give `NoStartTime` (Java: `EventHeaderHandler.NO_START_TIME`, both
-  `math.MinInt64` / `Long.MIN_VALUE`) to a type without a `long startTime` field. `CountEvents`
+  chunk while it is set, and give `NoStartTime` (Java:
+  `UntypedJafarParser.EventHeaderHandler.NO_START_TIME`; both `math.MinInt64` / `Long.MIN_VALUE`)
+  to a type without a `long startTime` field. `CountEvents`
   returns an unordered map here, a `SortedMap` in Java, and passes over recoverable problems as
   `ParseWith` does without `OnError`, where Java's `countEvents` fails on an undeclared event
   type by default. Pinned by `header_test.go` here and

@@ -1,6 +1,5 @@
 package io.jafar.parser.impl;
 
-import io.jafar.parser.EventHeaderHandler;
 import io.jafar.parser.TimeRange;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.Control;
