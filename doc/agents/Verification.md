@@ -651,6 +651,24 @@ take precedence over the generated ones.
 > results; the cause, `Invalid JFR Magic Number: 3c21444f` (`<!DO`), was only in the test's stderr.
 > The script now refuses any file without the `FLR\0` magic and says what it got instead.
 
+> **Case file — deterministic here, deterministic there, different bytes.** `JfrGoldenDumpTest`
+> `[2] TEST_AP` and `[3] TEST_JFR` failed in one development container on every run, with and
+> without any change, with "fixture bytes changed", and passed on CI. The generator had fixed
+> seeds and gave the same file on every run, so it was called deterministic; then, after different
+> JDK builds were seen to write different files, deterministic per JDK build. It was neither. Same
+> generator, same JDK 21 binary: `cbd7a797…` through Gradle, `2414a2d4…` with `java -cp`. The
+> files had the same size and header and differed in one block, bytes 110,100 to 115,287, inside
+> the constant-pool checkpoint, holding the same bytes in another order. `-XX:hashCode=<mode>`
+> changed the hash for every mode, and the address-based modes gave a new file on each run: the
+> JMC writer orders constant pools by iterating a `ConcurrentHashMap` keyed by type,
+> `BuiltinType.hashCode` includes its `Types.Builtin` enum constant, and an enum's hash is its
+> identity hash. The goldens no longer pin these bytes (#220), and the task passes
+> `-XX:hashCode=2` (every identity hash is 1), with which Gradle, `java -cp` on JDK 21 and 25 and
+> the CI runner all wrote `a61945b2…`. **"Same output twice" proves determinism only for the
+> conditions both runs shared, and "differs between A and B" does not name the cause: vary one
+> thing at a time (the launch, a flag such as `-XX:hashCode=1`) before pinning a hash of generated
+> bytes or explaining why it moved.**
+
 > **Case file — a stand-in recording found three bugs by being different.** The first generated
 > `test-ap.jfr` had two chunks; the downloaded one had evidently always had one. Eight tests failed.
 > Five abort tests (`ControlTest`, `CoreControlAbortTest`) got one event too many, because

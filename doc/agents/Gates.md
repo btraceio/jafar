@@ -437,13 +437,19 @@ case table and the file-naming rule.
   and commented in the test, but the fixture-sha rule cannot guard that
   golden against builder changes.
 - The two generated JFR fixtures (`test-ap.jfr`, `test-jfr.jfr`) also pin
-  a null fixture sha: the generator is not byte-reproducible across JDK builds —
-  measured: Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 all write different bytes
-  for identical input (same digest, different layout; hashes and method in
-  [test-recordings/README.md](../../test-recordings/README.md)), so a pinned sha
-  fails on every machine but the one that generated the golden. The
-  digest, which is JDK-independent, is the gate; the fixture-sha rule
-  survives only for the committed `tck-test.jfr`.
+  a null fixture sha. Their bytes follow the identity hashes of the JVM
+  that ran the generator: the JMC writer orders constant pools by a hash
+  map whose keys hash an enum constant. Without a fixed identity hash the
+  same input gave different bytes (same digest, different layout) on
+  Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2, and on one Ubuntu
+  JDK 21.0.12 through Gradle versus `java -cp`; hashes and method are in
+  [test-recordings/README.md](../../test-recordings/README.md).
+  `:test-recordings:generateTestRecordings` now runs the generator with
+  `-XX:hashCode=2`, which gave identical bytes on every JVM it was tried
+  on (JDK 21 and 25, HotSpot). The pin stays off: the builds listed above
+  have not been tried with the flag, and a JMC writer upgrade reorders the
+  pools anyway. The digest, which does not depend on the JVM, is the gate;
+  the fixture-sha rule survives only for the committed `tck-test.jfr`.
 - `parser-core/src/test/resources/test-dd.jfr` is deliberately not in
   the corpus: it is a byte-for-byte copy of `test-jfr.jfr`, so a golden
   for it would be a permanently identical second file with no added
