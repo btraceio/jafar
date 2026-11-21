@@ -78,13 +78,13 @@ jobs:
       - name: Install JDK 8 for Gradle toolchains
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '8'
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '21'
 
       - name: Setup Gradle caching
@@ -197,13 +197,13 @@ jobs:
       - name: Install JDK 8 for Gradle toolchains
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '8'
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '21'
 
       - name: Setup Gradle caching
@@ -292,10 +292,10 @@ jobs:
     # The generated fixtures (test-ap.jfr / test-jfr.jfr) are byte-identical only
     # on a given JDK build, so the floating '21' cells can go green on a JDK whose
     # bytes match a re-pinned fixture sha. This cell runs the JFR golden suite on a
-    # pinned Temurin (the same 21.0.3 the snapshot-publish job uses) as a
+    # pinned Liberica (the same 21.0.13 the snapshot-publish job uses) as a
     # cross-build backstop; the executable pin guard in JfrGoldenDumpTest is the
     # primary defense. See test-recordings/README.md for the measured variance.
-    name: Golden tests (Temurin 21.0.3)
+    name: Golden tests (Liberica 21.0.13)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -309,14 +309,14 @@ jobs:
       - name: Install JDK 8 for Gradle toolchains
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '8'
 
-      - name: Set up JDK 21.0.3
+      - name: Set up JDK 21.0.13
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '21.0.3'
+          distribution: liberica
+          java-version: '21.0.13'
 
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
@@ -373,14 +373,14 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '8'
 
       - name: Set up JDK 21
         if: steps.gate.outputs.run == 'true'
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '21'
 
       - name: Set up Go 1.24
@@ -436,13 +436,13 @@ jobs:
       - name: Install JDK 8 for Gradle toolchains
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '8'
 
       - name: Set runner default JDK to 21
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '21'
 
       - name: Setup Gradle caching

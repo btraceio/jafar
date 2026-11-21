@@ -252,9 +252,10 @@ measurement. (The `vm=` line of the audit output names the JVM that actually
 ran — trust it, not the exit status.)
 
 **R8 — what is not verified.** The jdk8 keys were measured on Zulu 8.0.482,
-not Temurin: sdkman no longer offers a Temurin 8 build, and CI's JDK 8 cell
-runs Temurin. CI's JDK 21 and JDK 8 cells also run Temurin patch levels with
-no local copy. The tolerances carry headroom for exactly this (2048 where
+not Temurin: sdkman no longer offers a Temurin 8 build. CI's JDK 8 and JDK 21
+cells run Liberica (`distribution: liberica`, the newest 8 and 21 updates; the
+pinned golden and snapshot-publish cells 21.0.13), so the measured build and
+the CI build differ in vendor and patch level. The tolerances carry headroom for exactly this (2048 where
 the measured build-to-build spread is 16–64 bytes); if a CI cell reds on a
 budget key, the first move is to re-measure on the CI image and adjust the
 value — with an `Alloc-Budget:` statement if the change is a raise.

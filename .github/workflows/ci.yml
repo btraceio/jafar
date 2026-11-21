@@ -54,8 +54,8 @@ jobs:
         if: steps.version-check.outputs.is_snapshot == 'true' && github.ref_type != 'tag'
         uses: actions/setup-java@v3
         with:
-          distribution: 'temurin'
-          java-version: "21.0.3"
+          distribution: 'liberica'
+          java-version: "21.0.13"
       - name: Publish
         # Belt-and-suspenders: a tag checkout can slip past the tags-ignore
         # list, and then Gradle derives a release version (signing required,

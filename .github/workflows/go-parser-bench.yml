@@ -93,7 +93,7 @@ jobs:
       - name: Set up JDK 21 for the recording generator
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '21'
 
       - name: Setup Gradle caching

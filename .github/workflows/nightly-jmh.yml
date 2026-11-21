@@ -62,13 +62,13 @@ jobs:
       - name: Install JDK 8 for Gradle toolchains
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '8'
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: liberica
           java-version: '21'
 
       - name: Setup Gradle caching
