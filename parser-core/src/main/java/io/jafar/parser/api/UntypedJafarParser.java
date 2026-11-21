@@ -1,5 +1,6 @@
 package io.jafar.parser.api;
 
+import io.jafar.parser.EventHeaderHandler;
 import io.jafar.parser.TimeRange;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.impl.ParsingContextImpl;
@@ -10,9 +11,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
 import java.util.SortedMap;
-import java.util.TreeMap;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Untyped JFR parser with optimization strategies for different access patterns.
@@ -128,29 +126,6 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
      * @param ctl parser control object for flow control and metadata access
      */
     void handle(MetadataClass type, Map<String, Object> value, Control ctl);
-  }
-
-  /** Receives an event's header without the event being decoded. See {@link #handleHeaders}. */
-  @FunctionalInterface
-  interface EventHeaderHandler {
-    /**
-     * The {@code startTime} passed for an event whose type has no {@code startTime} field of type
-     * {@code long} (not an array, not a constant-pool reference).
-     */
-    long NO_START_TIME = Long.MIN_VALUE;
-
-    /**
-     * Handles one event's header.
-     *
-     * @param type the metadata class type of the event
-     * @param size the event's size in bytes as the recording stores it, header included
-     * @param startTime the event's {@code startTime}, the same value a decoded event carries under
-     *     {@code "startTime"}: epoch nanoseconds for a {@code @Timestamp(TICKS)} field, which every
-     *     JDK event has, otherwise the stored value; or {@link #NO_START_TIME} when the type has no
-     *     {@code long startTime} field
-     * @param ctl parser control object for flow control and metadata access
-     */
-    void onEvent(MetadataClass type, long size, long startTime, Control ctl);
   }
 
   /**
@@ -436,8 +411,22 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
   }
 
   /**
+   * Counts the events of every type, without decoding them. See {@link #countEvents(TypeFilter)}.
+   *
+   * @return the number of events per type name, in name order
+   * @throws IOException if the parse fails
+   * @throws UnsupportedOperationException if this parser does not support {@link #handleHeaders}
+   */
+  default SortedMap<String, Long> countEvents() throws IOException {
+    return countEvents(type -> true);
+  }
+
+  /**
    * Counts the events of each type {@code filter} accepts, without decoding them: registers a
    * header handler (see {@link #handleHeaders}), calls {@link #run()} and closes the registration.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; parsers created by {@link #open} support it.
    *
    * <p>Handlers registered earlier run in the same parse, and a parser listener sees it, as with
    * any call to {@link #run()}.
@@ -448,27 +437,6 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    * @throws UnsupportedOperationException if this parser does not support {@link #handleHeaders}
    */
   default SortedMap<String, Long> countEvents(TypeFilter filter) throws IOException {
-    ConcurrentHashMap<String, LongAdder> counts = new ConcurrentHashMap<>();
-    HandlerRegistration<?> registration =
-        handleHeaders(
-            filter,
-            (type, size, startTime, ctl) -> {
-              // get() first: on JDK 8 computeIfAbsent locks its bin even when the key is present.
-              LongAdder count = counts.get(type.getName());
-              if (count == null) {
-                count = counts.computeIfAbsent(type.getName(), k -> new LongAdder());
-              }
-              count.increment();
-            });
-    try {
-      run();
-    } finally {
-      registration.close();
-    }
-    SortedMap<String, Long> result = new TreeMap<>();
-    for (Map.Entry<String, LongAdder> entry : counts.entrySet()) {
-      result.put(entry.getKey(), entry.getValue().sum());
-    }
-    return result;
+    throw new UnsupportedOperationException(getClass().getName() + " does not support countEvents");
   }
 }

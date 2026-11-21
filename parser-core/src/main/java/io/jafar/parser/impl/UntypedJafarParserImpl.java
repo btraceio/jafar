@@ -1,5 +1,6 @@
 package io.jafar.parser.impl;
 
+import io.jafar.parser.EventHeaderHandler;
 import io.jafar.parser.TimeRange;
 import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.Control;
@@ -27,8 +28,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Implementation of UntypedJafarParser for processing JFR recordings without type safety.
@@ -181,6 +186,32 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     Objects.requireNonNull(handler, "handler");
     EventHandler registered = new HeaderHandler(filter, handler);
     return new HandlerRegistrationImpl<>(registered, handlers.add(registered));
+  }
+
+  @Override
+  public SortedMap<String, Long> countEvents(TypeFilter filter) throws IOException {
+    ConcurrentHashMap<String, LongAdder> counts = new ConcurrentHashMap<>();
+    HandlerRegistration<?> registration =
+        handleHeaders(
+            filter,
+            (type, size, startTime, ctl) -> {
+              // get() first: on JDK 8 computeIfAbsent locks its bin even when the key is present.
+              LongAdder count = counts.get(type.getName());
+              if (count == null) {
+                count = counts.computeIfAbsent(type.getName(), k -> new LongAdder());
+              }
+              count.increment();
+            });
+    try {
+      run();
+    } finally {
+      registration.close();
+    }
+    SortedMap<String, Long> result = new TreeMap<>();
+    for (Map.Entry<String, LongAdder> entry : counts.entrySet()) {
+      result.put(entry.getKey(), entry.getValue().sum());
+    }
+    return result;
   }
 
   /**
