@@ -7,6 +7,7 @@ import com.sun.management.ThreadMXBean;
 import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
+import io.jafar.parser.impl.UntypedJafarParserImpl;
 import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.testsupport.AllocationBudgets;
 import io.jafar.testsupport.AllocationMeter;
@@ -38,14 +39,39 @@ class HeaderCountAllocationBudget8Test {
 
   private static final int EVENTS = 67657;
 
+  /**
+   * The generated recording {@code :test-recordings:generateTestRecordings} writes (JMC writer):
+   * every event type has {@code startTime} after {@code stackTrace} and {@code eventThread}, so
+   * this cell measures the header path with fields to skip, which tck-test.jfr (startTime first)
+   * never does.
+   */
+  private static final String SKIPPING_RECORDING = "../parser-core/src/test/resources/test-ap.jfr";
+
+  private static final String SKIPPING_KEY = "parser-core.untyped-headers.test-ap.jfr";
+
+  private static final int SKIPPING_EVENTS = 8325;
+
   @Test
   void headerCountStaysWithinAllocationBudget() throws Exception {
+    measure(KEY, RECORDING, EVENTS);
+  }
+
+  @Test
+  void headerCountWithSkippedFieldsStaysWithinAllocationBudget() throws Exception {
+    measure(SKIPPING_KEY, SKIPPING_RECORDING, SKIPPING_EVENTS);
+  }
+
+  /** Two discarded warm-up parses of {@code recording}, then one measured against {@code key}. */
+  private static void measure(String key, String recording, int expectedEvents) throws Exception {
     // Two discarded warm-up parses: the first pays the lazy parser/context initialization,
     // the second one more lazy step observed on JDK 21 (kb/a4-jdk8-alloc).
     Set<Long> previousPoolThreads = new HashSet<Long>();
     for (int i = 0; i < 2; i++) {
       AllocationMeter warmUpMeter = AllocationMeter.start();
-      assertEquals(EVENTS, parse(warmUpMeter), "warm-up parse " + i + ": tck-test.jfr changed?");
+      assertEquals(
+          expectedEvents,
+          parse(warmUpMeter, recording),
+          "warm-up parse " + i + ": " + recording + " changed?");
       warmUpMeter.stop(); // discarded: lazy-init bytes, never compared against the budget
       previousPoolThreads.addAll(warmUpMeter.poolThreadIds());
     }
@@ -53,7 +79,7 @@ class HeaderCountAllocationBudget8Test {
     ThreadMXBean threadBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     long callerBefore = threadBean.getThreadAllocatedBytes(Thread.currentThread().getId());
     AllocationMeter meter = AllocationMeter.start();
-    int events = parse(meter);
+    int events = parse(meter, recording);
     long bytes = meter.stop();
     long callingThreadOnly =
         threadBean.getThreadAllocatedBytes(Thread.currentThread().getId()) - callerBefore;
@@ -62,7 +88,7 @@ class HeaderCountAllocationBudget8Test {
     // how many of the pinned pool's 2 threads actually took a chunk of this recording.
     System.out.println(
         "alloc "
-            + KEY
+            + key
             + "."
             + AllocationBudgets.jdkKey()
             + " aggregate="
@@ -74,7 +100,7 @@ class HeaderCountAllocationBudget8Test {
             + " poolThreads="
             + meter.poolThreadIds().size());
 
-    assertEquals(EVENTS, events, "tck-test.jfr event count changed");
+    assertEquals(expectedEvents, events, recording + " event count changed");
     Set<Long> poolThreads = meter.poolThreadIds();
     assertFalse(
         poolThreads.isEmpty(),
@@ -82,18 +108,18 @@ class HeaderCountAllocationBudget8Test {
             + " threads that parse the chunks, so the meter would see only the calling thread's"
             + " bytes (AC-3.2)");
     AllocationMeter.assertFreshPoolThreads(previousPoolThreads, poolThreads);
-    AllocationBudgets.check(KEY, bytes);
+    AllocationBudgets.check(key, bytes);
   }
 
   /**
    * One untyped parse: a fresh {@link ParsingContext}, the counting handler, the marking listener.
    */
-  private static int parse(AllocationMeter meter) throws Exception {
+  private static int parse(AllocationMeter meter, String recording) throws Exception {
     AtomicInteger events = new AtomicInteger();
     ParsingContext context = ParsingContext.create();
     try (UntypedJafarParser parser =
         context
-            .newUntypedParser(Paths.get(RECORDING))
+            .newUntypedParser(Paths.get(recording))
             .withParserListener(
                 new ChunkParserListener() {
                   @Override
@@ -103,6 +129,10 @@ class HeaderCountAllocationBudget8Test {
                     return true;
                   }
                 })) {
+      // parser-codegen is not on this classpath: the cell measures the generic reader.
+      assertFalse(
+          ((UntypedJafarParserImpl) parser).usesGeneratedReader(),
+          "parse would use the generated reader parser-codegen budgets");
       parser.handleHeaders(type -> true, (type, size, startTime, ctl) -> events.incrementAndGet());
       parser.run();
     }
