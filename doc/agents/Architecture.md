@@ -107,14 +107,16 @@ Beyond the gates, the conventions the codebase already follows:
     instance after `reset()`, so an event must not be kept past its handler call. The runtime
     class is a new object per event. Pool entries are new objects on both sides.
   - A runtime-generated class is defined with `CodeGenerator` as its lookup host, so it lives in
-    `parser-codegen`'s class loader, unless that loader cannot see the interface (a plugin's or a
-    deployment's child loader). Then it is defined in a `CodeGenerator.BridgeLoader`: its parent is
-    `parser-codegen`'s loader, so parser classes keep their identity, and it loads what the parent
-    lacks from the interface's loader (`TypedChildClassLoaderTest`). Before that, such an interface
-    failed with `NoClassDefFoundError`. So did build-time handlers in a child loader when
-    `parser-codegen` was also on the class path, because `MutableMetadataLookup.bindDeserializers`
-    generates a runtime deserializer for every bound type, factory-served ones included
-    (`ChildLoaderFactoryTest`). That generation still happens, and costs time, but no longer fails.
+    `parser-codegen`'s class loader, unless that loader cannot see the interface or sees another
+    copy of it (a plugin's or a deployment's loader, child-first or not). Then it is defined in a
+    `CodeGenerator.BridgeLoader`: the JDK's and the parser's own packages resolve through
+    `parser-codegen`'s loader, everything else, the interface first, through the interface's
+    loader (`TypedChildClassLoaderTest`, and `TypedChildFirst8Test` on JDK 8). Such a class's
+    deserializer is kept per metadata class, not in the JVM-wide `GlobalHandlerCache`, which would
+    hold the interface and its loader for as long as the JVM runs; so it is generated again for
+    each parse. Build-time handlers in a child loader also work with `parser-codegen` on the class
+    path (`ChildLoaderFactoryTest`): `MutableMetadataLookup.bindDeserializers` still generates a
+    runtime deserializer for every bound type, factory-served ones included, which costs time.
   - Several accessors for one JFR field (`@JfrField` naming the same field twice), pooled or
     inline, are generated at runtime when they declare the field's one generated type (an inline
     primitive may be widened), next to any number of `raw = true` indices on a pooled scalar field

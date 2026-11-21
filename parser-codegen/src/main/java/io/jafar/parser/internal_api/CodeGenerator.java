@@ -1910,14 +1910,15 @@ final class CodeGenerator {
   }
 
   /**
-   * Defines a runtime class implementing an interface {@code CodeGenerator}'s loader cannot see.
-   * Its parent is that loader, so the parser's classes (and the JDK's) resolve to the ones the
-   * generated code was written against; a class the parent does not have, the interface and the
-   * types it returns, is loaded by the interface's loader. Generated code uses only public members
-   * of the parser, so a class defined here needs no access to its package.
+   * Defines a runtime class implementing an interface {@code CodeGenerator}'s loader cannot see, or
+   * sees as another class. The parser's classes (and the JDK's) resolve through its parent, {@code
+   * CodeGenerator}'s loader, to the ones the generated code was written against; everything else,
+   * the interface and the types it returns, through the interface's loader first. Generated code
+   * uses only public members of the parser, so a class defined here needs no access to its package.
    *
    * <p>One per interface loader, held weakly both ways: the classes defined here keep it alive, and
-   * it does not keep the interface's loader alive once they are gone.
+   * it does not keep the interface's loader alive once they are gone. Their deserializers stay out
+   * of the JVM-wide handler cache ({@code MetadataClass.bindDeserializer}), which would.
    */
   static final class BridgeLoader extends ClassLoader {
     private static final Map<ClassLoader, WeakReference<BridgeLoader>> BRIDGES =
@@ -1946,9 +1947,40 @@ final class CodeGenerator {
       }
     }
 
+    /**
+     * The interface's loader first, so a child-first loader's own copy of the interface (and of the
+     * types it returns) is the one implemented, even when the parser's loader has another copy; the
+     * parent first only for the JDK and the parser's own packages, which the generated code was
+     * written against.
+     */
     @Override
-    protected Class<?> findClass(String name) throws ClassNotFoundException {
-      return interfaceLoader.loadClass(name);
+    protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+      synchronized (getClassLoadingLock(name)) {
+        Class<?> c = findLoadedClass(name);
+        if (c == null) {
+          ClassLoader first = parserOrPlatform(name) ? getParent() : interfaceLoader;
+          ClassLoader second = first == interfaceLoader ? getParent() : interfaceLoader;
+          try {
+            c = first.loadClass(name);
+          } catch (ClassNotFoundException e) {
+            c = second.loadClass(name);
+          }
+        }
+        if (resolve) {
+          resolveClass(c);
+        }
+        return c;
+      }
+    }
+
+    private static boolean parserOrPlatform(String name) {
+      return name.startsWith("java.")
+          || name.startsWith("javax.")
+          || name.startsWith("jdk.")
+          || name.startsWith("sun.")
+          || name.startsWith("io.jafar.parser.api.")
+          || name.startsWith("io.jafar.parser.impl.")
+          || name.startsWith("io.jafar.parser.internal_api.");
     }
 
     Class<?> define(String name, byte[] bytes) {
