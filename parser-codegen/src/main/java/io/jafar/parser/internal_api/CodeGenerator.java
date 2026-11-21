@@ -105,6 +105,7 @@ final class CodeGenerator {
       String fldName,
       FieldMapping mapping,
       boolean generateRefField,
+      boolean generatePoolCache,
       MetadataField originalField) {
     if (fldType == null && !mapping.raw()) {
       // field is never accessed directly, can skip the rest
@@ -139,56 +140,62 @@ final class CodeGenerator {
     String fldCpName = fldName + "_cp";
     String mthdCpName = fldCpName + "$get";
 
-    cv.visitField(
-            Opcodes.ACC_PRIVATE, fldCpName, Type.getDescriptor(ConstantPool.class), null, null)
-        .visitEnd();
+    MethodVisitor mv;
+    // The pool cache (<field>_cp and <field>_cp$get) exists once per field: every accessor of a
+    // field (two methods mapped to one JFR field by @JfrField) reads its reference through it.
+    // Emitting it per accessor defined the field twice: ClassFormatError, duplicate field name.
+    if (generatePoolCache) {
+      cv.visitField(
+              Opcodes.ACC_PRIVATE, fldCpName, Type.getDescriptor(ConstantPool.class), null, null)
+          .visitEnd();
 
-    MethodVisitor mv =
-        cv.visitMethod(
-            Opcodes.ACC_PRIVATE,
-            mthdCpName,
-            Type.getMethodDescriptor(Type.getType(ConstantPool.class)),
-            null,
-            null);
-    mv.visitCode();
-    Label l = new Label();
-    mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
-    mv.visitFieldInsn(
-        Opcodes.GETFIELD,
-        clzName,
-        fldCpName,
-        Type.getDescriptor(ConstantPool.class)); // stack: [pool]
-    mv.visitInsn(Opcodes.DUP); // stack: [pool, pool]
-    mv.visitJumpInsn(Opcodes.IFNONNULL, l); // stack: [pool]
-    mv.visitInsn(Opcodes.POP); // stack: []
-    mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
-    mv.visitInsn(Opcodes.DUP); // stack: [this, this]
-    mv.visitFieldInsn(
-        Opcodes.GETFIELD,
-        clzName,
-        "context",
-        Type.getDescriptor(TypedParserContext.class)); // stack: [this, context]
-    mv.visitMethodInsn(
-        Opcodes.INVOKEVIRTUAL,
-        Type.getInternalName(TypedParserContext.class),
-        "getConstantPools",
-        Type.getMethodDescriptor(Type.getType(ConstantPools.class)),
-        false); // stack: [this, pools]
-    mv.visitLdcInsn(typeId); // stack: [this, pools, type]
-    mv.visitMethodInsn(
-        Opcodes.INVOKEINTERFACE,
-        Type.getInternalName(ConstantPools.class),
-        "getConstantPool",
-        Type.getMethodDescriptor(Type.getType(ConstantPool.class), Type.LONG_TYPE),
-        true); // stack: [this, pool]
-    mv.visitInsn(Opcodes.DUP_X1); // stack: [pool, this, pool]
-    mv.visitFieldInsn(
-        Opcodes.PUTFIELD, clzName, fldCpName, Type.getDescriptor(ConstantPool.class)); // [pool]
-    mv.visitInsn(Opcodes.ARETURN);
-    mv.visitLabel(l); // stack: [pool]
-    mv.visitInsn(Opcodes.ARETURN);
-    mv.visitMaxs(3, 2);
-    mv.visitEnd();
+      mv =
+          cv.visitMethod(
+              Opcodes.ACC_PRIVATE,
+              mthdCpName,
+              Type.getMethodDescriptor(Type.getType(ConstantPool.class)),
+              null,
+              null);
+      mv.visitCode();
+      Label l = new Label();
+      mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
+      mv.visitFieldInsn(
+          Opcodes.GETFIELD,
+          clzName,
+          fldCpName,
+          Type.getDescriptor(ConstantPool.class)); // stack: [pool]
+      mv.visitInsn(Opcodes.DUP); // stack: [pool, pool]
+      mv.visitJumpInsn(Opcodes.IFNONNULL, l); // stack: [pool]
+      mv.visitInsn(Opcodes.POP); // stack: []
+      mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
+      mv.visitInsn(Opcodes.DUP); // stack: [this, this]
+      mv.visitFieldInsn(
+          Opcodes.GETFIELD,
+          clzName,
+          "context",
+          Type.getDescriptor(TypedParserContext.class)); // stack: [this, context]
+      mv.visitMethodInsn(
+          Opcodes.INVOKEVIRTUAL,
+          Type.getInternalName(TypedParserContext.class),
+          "getConstantPools",
+          Type.getMethodDescriptor(Type.getType(ConstantPools.class)),
+          false); // stack: [this, pools]
+      mv.visitLdcInsn(typeId); // stack: [this, pools, type]
+      mv.visitMethodInsn(
+          Opcodes.INVOKEINTERFACE,
+          Type.getInternalName(ConstantPools.class),
+          "getConstantPool",
+          Type.getMethodDescriptor(Type.getType(ConstantPool.class), Type.LONG_TYPE),
+          true); // stack: [this, pool]
+      mv.visitInsn(Opcodes.DUP_X1); // stack: [pool, this, pool]
+      mv.visitFieldInsn(
+          Opcodes.PUTFIELD, clzName, fldCpName, Type.getDescriptor(ConstantPool.class)); // [pool]
+      mv.visitInsn(Opcodes.ARETURN);
+      mv.visitLabel(l); // stack: [pool]
+      mv.visitInsn(Opcodes.ARETURN);
+      mv.visitMaxs(3, 2);
+      mv.visitEnd();
+    }
 
     // Generate accessor method: fldType methodName()
     mv =
@@ -1624,6 +1631,7 @@ final class CodeGenerator {
             mappings.add(new FieldMapping(fieldName, false));
           }
           boolean generateRefField = true;
+          boolean generatePoolCache = true;
           for (FieldMapping mapping : mappings) {
             if (withConstantPool) {
               boolean isArray = field.getDimension() > 0;
@@ -1642,8 +1650,12 @@ final class CodeGenerator {
                   fieldName,
                   mapping,
                   generateRefField,
+                  generatePoolCache && !mapping.raw(),
                   field);
               generateRefField = false;
+              if (!mapping.raw()) {
+                generatePoolCache = false;
+              }
             } else {
               if (mapping.raw()) {
                 throw new RuntimeException("Field " + fieldName + " is not a constant pool entry");
