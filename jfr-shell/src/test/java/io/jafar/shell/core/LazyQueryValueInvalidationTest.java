@@ -62,7 +62,16 @@ class LazyQueryValueInvalidationTest {
   private Object duringEvaluation(LazyQueryValue value, Runnable action) throws Exception {
     FutureTask<Object> read = new FutureTask<>(value::get);
     new Thread(read).start();
-    assertTrue(entered.await(30, TimeUnit.SECONDS), "evaluation did not start");
+    // An evaluation that fails before getAvailableTypes() never opens the latch: report its own
+    // exception (read.get() throws it) instead of waiting 30 s for "evaluation did not start".
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+    while (!entered.await(50, TimeUnit.MILLISECONDS)) {
+      if (read.isDone()) {
+        read.get();
+        throw new AssertionError("evaluation returned without reaching getAvailableTypes()");
+      }
+      assertTrue(System.nanoTime() < deadline, "evaluation did not start");
+    }
     action.run(); // must return without waiting for the evaluation
     proceed.countDown();
     return read.get(60, TimeUnit.SECONDS);
