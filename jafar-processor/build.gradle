@@ -49,6 +49,49 @@ test {
     jvmArgumentProviders.add({ ["-Djafar.test.typedRuntimeClasspath=" + typedRuntime.asPath] } as CommandLineArgumentProvider)
 }
 
+// --- Build-time factories with parser-codegen present ------------------------------------
+// A source set and a task of their own, because both ingredients would change what the
+// module's other tests exercise: the interfaces here are compiled WITH the annotation
+// processor (so their factories are registered for ServiceLoader), and parser-codegen is on
+// the run-time classpath (so a chunk without a bound factory is decoded by a run-time
+// generated handler instead of failing loudly). See BuildTimeFactoryWithRuntimeCodegenTest.
+sourceSets {
+    codegenTest {
+        java.srcDir 'src/codegenTest/java'
+    }
+}
+
+dependencies {
+    codegenTestImplementation project(':parser-core')
+    codegenTestImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    // the processor built by this module, and what it needs to run
+    codegenTestAnnotationProcessor sourceSets.main.output
+    codegenTestAnnotationProcessor project(':parser-core')
+    codegenTestRuntimeOnly project(':parser-codegen')
+    codegenTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.register('codegenTest', Test) {
+    description = 'Runs build-time handler factories with parser-codegen on the classpath.'
+    group = 'verification'
+    testClassesDirs = sourceSets.codegenTest.output.classesDirs
+    classpath = sourceSets.codegenTest.runtimeClasspath
+    shouldRunAfter tasks.named('test')
+    useJUnitPlatform()
+    // a fixture change re-runs the task
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/codegenTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/codegenTest"))
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('codegenTest')
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
