@@ -284,7 +284,9 @@ public final class UntypedCodeGenerator {
       // Count non-primitive, non-simple-type fields (excluding arrays and CP refs)
       if (!fieldType.isSimpleType()
           && !fieldType.isPrimitive()
-          && field.getDimension() == 0
+          // a scalar's dimension is -1 (no dimension attribute): "== 0" never matched, so no
+          // nested object was ever counted and every event of up to 10 fields took the eager path
+          && field.getDimension() <= 0
           && !field.hasConstantPool()) {
         nestedObjectCount++;
         if (nestedObjectCount > SIMPLE_EVENT_NESTED_THRESHOLD) {

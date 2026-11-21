@@ -142,7 +142,9 @@ public final class TypeSkipper {
    * 68-byte array. Mirrors {@code unwrappable} in {@code go-parser/jfr/constantpool.go}.
    */
   private static boolean unwrappable(MetadataField field) {
-    return field.getDimension() == 0 && !field.hasConstantPool();
+    // a scalar field's dimension is -1 (no dimension attribute), not 0: "== 0" never matched, so
+    // simple types were never unwrapped here, unlike the Go parser
+    return field.getDimension() <= 0 && !field.hasConstantPool();
   }
 
   /**
@@ -191,6 +193,16 @@ public final class TypeSkipper {
       instructions.add(0); // reserve slot for the array size
     }
     boolean withCp = fld.hasConstantPool();
+    if (withCp) {
+      // A pooled field holds one varint, the entry's index, whatever the entry's type. Decided
+      // before unwrapping, as Go's skipFieldValue does: a pooled field of a simple type wrapping a
+      // byte, float or double would otherwise be skipped as that primitive.
+      instructions.add(Instructions.CP_ENTRY);
+      if (fld.getDimension() > 0) {
+        instructions.set(arraySizeIdx, instructions.size() - startingSize - 2);
+      }
+      return;
+    }
     // Bounded like the recursion below: a simple type whose single field is of its own type would
     // otherwise be unwrapped forever.
     for (int unwrapped = 0; fldClz.isSimpleType(); unwrapped++) {
@@ -227,19 +239,11 @@ public final class TypeSkipper {
         instructions.add(Instructions.DOUBLE);
         break;
       case "java.lang.String":
-        if (withCp) {
-          instructions.add(Instructions.CP_ENTRY);
-        } else {
-          instructions.add(Instructions.STRING);
-        }
+        instructions.add(Instructions.STRING);
         break;
       default:
-        if (withCp) {
-          instructions.add(Instructions.CP_ENTRY);
-        } else {
-          for (MetadataField subField : fldClz.getFields()) {
-            fillSkipper(subField, instructions, depth + 1);
-          }
+        for (MetadataField subField : fldClz.getFields()) {
+          fillSkipper(subField, instructions, depth + 1);
         }
         break;
     }
