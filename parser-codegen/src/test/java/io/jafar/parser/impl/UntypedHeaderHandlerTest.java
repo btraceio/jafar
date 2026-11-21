@@ -227,14 +227,15 @@ class UntypedHeaderHandlerTest {
   @ParameterizedTest
   @ValueSource(booleans = {true, false})
   void headerOnlyEventIsNotDecoded(boolean generated) throws Exception {
-    EventDecodeFailureTest.Corruption corruption = EventDecodeFailureTest.Corruption.values()[0];
-    Path recording = EventDecodeFailureTest.corrupted(dir, corruption);
+    Path recording =
+        EventDecodeFailureTest.corrupted(dir, EventDecodeFailureTest.Corruption.EVENT_PAYLOAD);
 
     try (UntypedJafarParser parser = open(recording, generated)) {
       Map<String, Long> counts = parser.countEvents(type -> true);
-      assertTrue(
-          counts.getOrDefault(EventDecodeFailureTest.TYPE, 0L) > 0,
-          "the undecodable event was not counted: " + counts);
+      assertEquals(
+          (long) EventDecodeFailureTest.EVENTS,
+          counts.getOrDefault(EventDecodeFailureTest.TYPE, 0L),
+          "every event, the undecodable one included, is counted: " + counts);
     }
   }
 
@@ -440,5 +441,121 @@ class UntypedHeaderHandlerTest {
       chain.append(" <- ").append(c.getMessage());
     }
     return chain.toString();
+  }
+
+  private static final Path SHAPES = Paths.get("../go-parser/jfr/testdata/start-time-shapes.jfr");
+
+  /**
+   * The {@code startTime} rule on {@code start-time-shapes.jfr} ({@code StartTimeShapesFixture}):
+   * after two skipped fields the header carries the start time as epoch nanoseconds, computed here
+   * from the ticks the fixture writes, not by the parser; a {@code long[]}, pooled or {@code int}
+   * start time gives {@code NO_START_TIME}; one without {@code @Timestamp} gives the stored value;
+   * an undeclared field type and a corrupt string before the start time give {@code NO_START_TIME},
+   * and the parse goes on.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void startTimeShapes(boolean generated) throws Exception {
+    Map<String, List<Long>> byType = new ConcurrentHashMap<>();
+    try (UntypedJafarParser parser = open(SHAPES, generated)) {
+      parser.handleHeaders(
+          type -> true,
+          (type, size, startTime, ctl) ->
+              byType
+                  .computeIfAbsent(
+                      type.getName(), k -> Collections.synchronizedList(new ArrayList<>()))
+                  .add(startTime));
+      parser.run();
+    }
+    long none = EventHeaderHandler.NO_START_TIME;
+    Map<String, List<Long>> expected = new TreeMap<>();
+    expected.put(
+        StartTimeShapesFixture.LATE,
+        List.of(
+            StartTimeShapesFixture.epochNanos(StartTimeShapesFixture.ticks(0)),
+            StartTimeShapesFixture.epochNanos(StartTimeShapesFixture.ticks(2)),
+            StartTimeShapesFixture.epochNanos(StartTimeShapesFixture.ticks(8))));
+    expected.put(StartTimeShapesFixture.CORRUPT_BEFORE, List.of(none));
+    expected.put(StartTimeShapesFixture.ARRAY, List.of(none));
+    expected.put(StartTimeShapesFixture.POOLED, List.of(none));
+    expected.put(StartTimeShapesFixture.INT, List.of(none));
+    expected.put(StartTimeShapesFixture.UNTIMED, List.of(StartTimeShapesFixture.ticks(6)));
+    expected.put(StartTimeShapesFixture.UNDECLARED_BEFORE, List.of(none));
+    assertEquals(expected, new TreeMap<>(byType));
+  }
+
+  /**
+   * A header handler for every type next to a value handler for {@value
+   * StartTimeShapesFixture#LATE} only: every event gets its header, only {@code LateStart} is
+   * decoded, and it decodes right after the broken events, so a failed header read left the stream
+   * at the next event.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void headerHandlerNextToAFilteredValueHandler(boolean generated) throws Exception {
+    List<String> headers = Collections.synchronizedList(new ArrayList<>());
+    List<String> values = Collections.synchronizedList(new ArrayList<>());
+    useReader(generated);
+    try (UntypedJafarParser parser =
+        ParsingContext.create().withParallelism(1).newUntypedParser(SHAPES)) {
+      assertEquals(generated, ((UntypedJafarParserImpl) parser).usesGeneratedReader());
+      parser.handleHeaders(
+          type -> true, (type, size, startTime, ctl) -> headers.add(type.getName()));
+      parser.handle(
+          TypeFilter.named(StartTimeShapesFixture.LATE),
+          (type, value, ctl) ->
+              values.add(
+                  value.get("seq")
+                      + "/"
+                      + value.get("label")
+                      + "/"
+                      + (((Long) value.get("startTime"))
+                          - StartTimeShapesFixture.epochNanos(
+                              StartTimeShapesFixture.ticks(
+                                  ((Number) value.get("seq")).intValue())))));
+      parser.run();
+    }
+    assertEquals(List.of(StartTimeShapesFixture.EVENTS), headers);
+    assertEquals(List.of("0/label-0/0", "2/label-2/0", "8/label-8/0"), values);
+  }
+
+  /**
+   * {@code Control.abort()} from a header handler: no further handler sees that event (its value
+   * handler is not called) and no later event is delivered.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void abortFromAHeaderHandlerStopsThatEventToo(boolean generated) throws Exception {
+    LongAdder headers = new LongAdder();
+    LongAdder values = new LongAdder();
+    try (UntypedJafarParser parser = open(SHAPES, generated)) {
+      parser.handleHeaders(
+          TypeFilter.named(StartTimeShapesFixture.LATE),
+          (type, size, startTime, ctl) -> {
+            headers.increment();
+            ctl.abort();
+          });
+      parser.handle(
+          TypeFilter.named(StartTimeShapesFixture.LATE), (type, value, ctl) -> values.increment());
+      parser.run();
+    }
+    assertEquals(1, headers.sum(), "headers after abort()");
+    assertEquals(0, values.sum(), "the aborted event reached a value handler");
+  }
+
+  /** An exception from a header handler stops the parse and reaches {@code run()}. */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void exceptionFromAHeaderHandlerReachesRun(boolean generated) throws Exception {
+    try (UntypedJafarParser parser = open(SHAPES, generated)) {
+      parser.handleHeaders(
+          type -> true,
+          (type, size, startTime, ctl) -> {
+            throw new IllegalStateException("from the header handler");
+          });
+      Exception failure =
+          org.junit.jupiter.api.Assertions.assertThrows(Exception.class, parser::run);
+      assertTrue(causeChain(failure).contains("from the header handler"), causeChain(failure));
+    }
   }
 }

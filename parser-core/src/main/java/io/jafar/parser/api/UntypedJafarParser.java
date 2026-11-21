@@ -415,7 +415,8 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    *
    * @return the number of events per type name, in name order
    * @throws IOException if the parse fails
-   * @throws UnsupportedOperationException if this parser does not support {@link #handleHeaders}
+   * @throws UnsupportedOperationException if this parser does not implement it (the default
+   *     implementation); parsers created by {@link #open} do
    */
   default SortedMap<String, Long> countEvents() throws IOException {
     return countEvents(type -> true);
@@ -429,12 +430,16 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
    * implementations of this interface keep compiling; parsers created by {@link #open} support it.
    *
    * <p>Handlers registered earlier run in the same parse, and a parser listener sees it, as with
-   * any call to {@link #run()}.
+   * any call to {@link #run()}. The counting handler is registered on this parser like any other,
+   * so a {@code run()} of the same parser already in progress on another thread (or a call from
+   * inside one of its handlers) delivers its events to it too, and they are counted; call it when
+   * no other parse of this parser is running.
    *
    * @param filter which event types to count
    * @return the number of events per type name, in name order; a type with no event is absent
    * @throws IOException if the parse fails
-   * @throws UnsupportedOperationException if this parser does not support {@link #handleHeaders}
+   * @throws UnsupportedOperationException if this parser does not implement it (the default
+   *     implementation); parsers created by {@link #open} do
    */
   default SortedMap<String, Long> countEvents(TypeFilter filter) throws IOException {
     throw new UnsupportedOperationException(getClass().getName() + " does not support countEvents");

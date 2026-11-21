@@ -115,9 +115,11 @@ public abstract class EventStream implements ChunkParserListener {
     Object selection =
         eventClz == null ? Boolean.TRUE : select(context, typeId, eventClz, rawSize, ctl);
     if (selection == null) {
-      // The listener still sees the event; StreamingChunkParser repositions past its payload.
-      return delegate == null
-          || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
+      // The listener still sees the event; StreamingChunkParser repositions past its payload. A
+      // header handler may have aborted (in select): then nothing more of this chunk is read.
+      return !ctl.isAborted()
+          && (delegate == null
+              || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
     }
     Map<String, Object> value;
     try {

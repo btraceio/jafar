@@ -16,13 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handlers can share a parse. While a header handler is registered, a start-time range skips no
   chunk
 - **`UntypedJafarParser.countEvents()` and `countEvents(TypeFilter)`** - event counts per type
-  name, read from the headers. On `QueryPushdownBenchmark`'s 124.8 MB, 32-chunk recording: 132 ms,
-  against 472 ms when every event is decoded and counted in a handler
+  name, read from the headers. On `QueryPushdownBenchmark`'s 124.8 MB, 32-chunk recording: 127 ms,
+  against 493 ms when every event is decoded and counted in a handler
 - **Go parser: `Options.OnEventHeader`, `Options.HeaderFilter` and `Parser.CountEvents`** - the same
   header delivery, with the same `startTime` rule (`jfr.NoStartTime`). On the same recording
   `CountEvents` took 201-219 ms, decoding every event 1,883-2,032 ms
 - **The TUI events browser and `TypeDiscovery.getTypeCounts` count from headers** instead of
   decoding every event
+- **`EventStream`, `EventStreamGenerated` and `UntypedEventStreamFactory.Sink` have a
+  `select(context, typeId, type, size, ctl)` hook** next to the three-argument one, which it calls
+  by default. It is called with the chunk's stream at the start of the event's payload; an
+  override may read from the stream and must leave it at that position
 - **`UntypedJafarParser.handle(TypeFilter, EventHandler)`** - registers a handler for the event
   types a filter accepts. An event is decoded only if some registered handler wants its type, so
   the others cost their header and nothing more. The filter is asked once per chunk and type. An

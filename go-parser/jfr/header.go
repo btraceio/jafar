@@ -7,9 +7,11 @@ package jfr
 // decoding the event.
 func startTimeIndex(ct *ClassType) int {
 	if ct.startTimeAt == 0 {
-		ct.startTimeAt = findStartTime(ct) + 1
+		// Stored plus two, so that 0 stays "not computed" and a miss (-1) is
+		// cached as 1 like any index.
+		ct.startTimeAt = findStartTime(ct) + 2
 	}
-	return ct.startTimeAt - 1
+	return ct.startTimeAt - 2
 }
 
 func findStartTime(ct *ClassType) int {
@@ -54,7 +56,10 @@ func (c *chunkParser) peekStartTime(r *reader, ct *ClassType) int64 {
 // CountEvents counts the events of each type filter accepts (every type when
 // filter is nil) without decoding them: it parses with a TypeFilter that
 // rejects every type and counts in OnEventHeader. A type with no event is
-// absent from the result.
+// absent from the result. Recoverable problems (an event of a type the
+// metadata does not declare, a checkpoint that cannot be followed) are passed
+// over as ParseWith does without OnError, so such events are not counted; to
+// fail on them instead, count in OnEventHeader with OnError: FailOnError.
 func (p *Parser) CountEvents(filter func(*ClassType) bool) (map[string]int64, error) {
 	counts := make(map[string]int64)
 	err := p.ParseWith(Options{

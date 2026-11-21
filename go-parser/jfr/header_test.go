@@ -1,7 +1,9 @@
 package jfr
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -114,6 +116,19 @@ func testAPRecording(t *testing.T) []byte {
 		t.Skipf("fixture %s is not available: %v", path, err)
 	}
 	return data
+}
+
+// decodedCountsWith counts decoded events per type name under opts.
+func decodedCountsWith(t *testing.T, data []byte, opts Options) map[string]int64 {
+	t.Helper()
+	counts := make(map[string]int64)
+	if err := NewParser(data).ParseWith(opts, func(e *Event) error {
+		counts[e.Type.Name]++
+		return nil
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return counts
 }
 
 // headerFixtures returns the recordings the header tests run on: tck-test.jfr
@@ -340,6 +355,10 @@ func TestEventHeaderKeepsEveryChunk(t *testing.T) {
 		total += n
 	}
 	after := Since(1 << 62)
+	// The control: alone, the same range skips every chunk.
+	if n := len(decodedCountsWith(t, data, Options{StartTime: after})); n != 0 {
+		t.Fatalf("alone, the range kept events of %d types; it should skip every chunk", n)
+	}
 	var headers int64
 	err := NewParser(data).ParseWith(Options{
 		StartTime:     after,
@@ -413,5 +432,112 @@ func TestNodePoolHeadersCarryNoStartTime(t *testing.T) {
 		if want := map[string]int64{"test.Holder": int64(len(nodeRefs))}; !reflect.DeepEqual(counts, want) {
 			t.Errorf("%s: CountEvents = %v, want %v", shape, counts, want)
 		}
+	}
+}
+
+// start-time-shapes.jfr is built by parser-core's StartTimeShapesFixture
+// (Java), checked in, and read by both parsers' header tests; parser-core's
+// SharedFixturesTest fails when the file drifts from the builder.
+const (
+	shapesStartNanos = 1_700_000_000_000_000_000
+	shapesStartTicks = 5_000_000
+	shapesNsPerTick  = 1000 // frequency 1,000,000 ticks per second
+)
+
+var shapesEvents = []string{
+	"test.LateStart", "test.CorruptBefore", "test.LateStart", "test.ArrayStart", "test.PooledStart",
+	"test.IntStart", "test.UntimedStart", "test.UndeclaredBefore", "test.LateStart",
+}
+
+// shapesTicks is the start time the fixture writes for the event at seq.
+func shapesTicks(seq int) int64 { return shapesStartTicks + 100*int64(seq+1) }
+
+// shapesEpochNanos converts fixture ticks to epoch nanoseconds, independently
+// of the parser.
+func shapesEpochNanos(ticks int64) int64 {
+	return shapesStartNanos + (ticks-shapesStartTicks)*shapesNsPerTick
+}
+
+func shapesRecording(t *testing.T) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "start-time-shapes.jfr"))
+	if err != nil {
+		t.Fatalf("read start-time-shapes.jfr: %v", err)
+	}
+	return data
+}
+
+// The startTime rule, on the shared fixture: after two skipped fields the
+// header carries epoch nanoseconds; a long[], pooled or int startTime gives
+// NoStartTime; one without Timestamp the stored value; an undeclared field
+// type or a corrupt string before it gives NoStartTime, and parsing goes on.
+func TestStartTimeShapes(t *testing.T) {
+	byType := map[string][]int64{}
+	err := NewParser(shapesRecording(t)).ParseWith(Options{
+		TypeFilter: func(*ClassType) bool { return false },
+		OnError:    FailOnError,
+		OnEventHeader: func(h EventHeader) error {
+			byType[h.Type.Name] = append(byType[h.Type.Name], h.StartTime)
+			return nil
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := map[string][]int64{
+		"test.LateStart":        {shapesEpochNanos(shapesTicks(0)), shapesEpochNanos(shapesTicks(2)), shapesEpochNanos(shapesTicks(8))},
+		"test.CorruptBefore":    {NoStartTime},
+		"test.ArrayStart":       {NoStartTime},
+		"test.PooledStart":      {NoStartTime},
+		"test.IntStart":         {NoStartTime},
+		"test.UntimedStart":     {shapesTicks(6)},
+		"test.UndeclaredBefore": {NoStartTime},
+	}
+	if !reflect.DeepEqual(byType, want) {
+		t.Errorf("start times = %v, want %v", byType, want)
+	}
+}
+
+// OnEventHeader for every event next to a TypeFilter for test.LateStart:
+// every header arrives in order, and test.LateStart decodes right after the
+// broken events, so a failed header read left the reader at the next event.
+func TestEventHeaderNextToATypeFilter(t *testing.T) {
+	var headers, values []string
+	err := NewParser(shapesRecording(t)).ParseWith(Options{
+		TypeFilter: func(c *ClassType) bool { return c.Name == "test.LateStart" },
+		OnError:    FailOnError,
+		OnEventHeader: func(h EventHeader) error {
+			headers = append(headers, h.Type.Name)
+			return nil
+		},
+	}, func(e *Event) error {
+		seq := reflect.ValueOf(e.Values["seq"]).Int()
+		start := e.Values["startTime"].(int64)
+		values = append(values, fmt.Sprintf("%d/%s/%d", seq, e.Values["label"], start-shapesEpochNanos(shapesTicks(int(seq)))))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !reflect.DeepEqual(headers, shapesEvents) {
+		t.Errorf("headers = %v, want %v", headers, shapesEvents)
+	}
+	if want := []string{"0/label-0/0", "2/label-2/0", "8/label-8/0"}; !reflect.DeepEqual(values, want) {
+		t.Errorf("values = %v, want %v", values, want)
+	}
+}
+
+// startTimeIndex caches its answer per type, including "no startTime".
+func TestStartTimeIndexCachesAMiss(t *testing.T) {
+	ct := &ClassType{Name: "test.NoStart", Fields: []*Field{{Name: "seq", Dimension: -1}}}
+	if got := startTimeIndex(ct); got != -1 {
+		t.Fatalf("startTimeIndex = %d, want -1", got)
+	}
+	if ct.startTimeAt == 0 {
+		t.Fatalf("a miss is not cached: startTimeAt is still 0 (not computed)")
+	}
+	ct.Fields = append(ct.Fields, &Field{Name: "startTime", Dimension: -1, Type: &ClassType{Name: "long"}})
+	if got := startTimeIndex(ct); got != -1 {
+		t.Errorf("startTimeIndex = %d after a cached miss, want -1 from the cache", got)
 	}
 }

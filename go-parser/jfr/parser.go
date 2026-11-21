@@ -135,8 +135,8 @@ type Options struct {
 	// called for an event whose type the chunk metadata does not declare.
 	// Returning ErrStop ends parsing successfully; any other error aborts it.
 	//
-	// While it is set, StartTime skips no chunk: OnEventHeader asks for every
-	// chunk.
+	// While it is set, Options.StartTime skips no chunk: OnEventHeader asks for
+	// every chunk.
 	OnEventHeader func(EventHeader) error
 
 	// HeaderFilter, when set, selects the event types OnEventHeader is called

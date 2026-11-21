@@ -84,6 +84,10 @@ Only the lower bound skips chunks: an event is written when it is committed and 
 before the chunk it was written to, so `jfr.Until(t)` skips nothing. A skipped chunk is reported
 to `Options.OnChunkSkipped`, not to `OnChunkStart` or `OnChunkEnd`.
 
+Returning `jfr.ErrStop` from the handler ends parsing successfully - the whole
+recording, not only the current chunk; no event is delivered after it. Any other
+error aborts it and is returned from `Parse` unchanged.
+
 To count events, or look only at their type, size and start time, read each event's header
 without decoding it. `CountEvents` does it for the common case:
 
@@ -108,11 +112,12 @@ err = parser.ParseWith(jfr.Options{
 }, nil)
 ```
 
-While `OnEventHeader` is set, `StartTime` skips no chunk.
-
-Returning `jfr.ErrStop` from the handler ends parsing successfully - the whole
-recording, not only the current chunk; no event is delivered after it. Any other
-error aborts it and is returned from `Parse` unchanged.
+While `OnEventHeader` is set, `Options.StartTime` skips no chunk. Returning `jfr.ErrStop` from
+`OnEventHeader` ends parsing as it does from the handler. `CountEvents` passes over recoverable
+problems (an undeclared event type, a checkpoint that cannot be followed) as `ParseWith` does
+without `OnError`, so such events are not counted; Java's `countEvents` fails on an undeclared
+event type unless an `onDecodeError` handler skips it. To fail here too, count in `OnEventHeader`
+with `OnError: jfr.FailOnError`.
 
 ## Value model
 
@@ -346,7 +351,9 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   only when a value handler wants it. Both run the header callback before decoding, keep every
   chunk while it is set, and give `NoStartTime` (Java: `EventHeaderHandler.NO_START_TIME`, both
   `math.MinInt64` / `Long.MIN_VALUE`) to a type without a `long startTime` field. `CountEvents`
-  returns an unordered map here, a `SortedMap` in Java. Pinned by `header_test.go` here and
+  returns an unordered map here, a `SortedMap` in Java, and passes over recoverable problems as
+  `ParseWith` does without `OnError`, where Java's `countEvents` fails on an undeclared event
+  type by default. Pinned by `header_test.go` here and
   `UntypedHeaderHandlerTest` in Java, which check the same `jfr summary` sizes for test-ap.jfr.
 * **Sequential.** The Java parser hands chunks to a thread pool and calls
   handlers from those threads. This one decodes chunks in recording order and

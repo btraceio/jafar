@@ -474,8 +474,15 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
         return null;
       }
       TypeSkipper[] before = new TypeSkipper[i];
-      for (int j = 0; j < i; j++) {
-        before[j] = fields.get(j).skipper();
+      try {
+        for (int j = 0; j < i; j++) {
+          before[j] = fields.get(j).skipper();
+        }
+      } catch (RuntimeException e) {
+        // A field before startTime cannot be skipped (its type is not declared in the metadata,
+        // or nests too deep): the header cannot reach the start time, as when reading it fails,
+        // and nothing is decoded for the header to fail on.
+        return null;
       }
       return before;
     }
@@ -521,6 +528,11 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
       }
       for (int i = 0; i < headers.length; i++) {
         headers[i].onEvent(type, size, startTime, ctl);
+        if (((ControlImpl) ctl).isAborted()) {
+          // as in value dispatch: no further handler sees this event after abort(), and the
+          // event is not decoded for the value handlers
+          return null;
+        }
       }
     }
     return targets.handlers.length == 0 ? null : targets.handlers;
