@@ -8,6 +8,7 @@ import io.jafar.shell.cli.ShowShape;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.FlameNode;
 import io.jafar.shell.core.ModuleSessionFactory;
+import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -445,11 +446,24 @@ public final class Shell implements AutoCloseable {
     }
 
     if (matchesCommand(input, "open")) {
-      String path = argumentOf(input);
-      if (path.isEmpty()) {
+      String argument = argumentOf(input);
+      if (argument.isEmpty()) {
         printError("Usage: open <path>");
+        return true;
+      }
+      // The same reading as jfr-shell's open, so a script either shell writes opens here: a
+      // quoted path loses its quotes (#233)
+      OpenArguments parsed;
+      try {
+        parsed = OpenArguments.parse(argument);
+      } catch (IllegalArgumentException e) {
+        printError(e.getMessage());
+        return true;
+      }
+      if (parsed.alias() != null) {
+        printError("open: --alias is not supported in this shell");
       } else {
-        handleOpen(path);
+        handleOpen(parsed.path());
       }
       return true;
     }
@@ -1713,7 +1727,8 @@ public final class Shell implements AutoCloseable {
     out.println("Jafar Shell Commands:");
     out.println();
     out.println("Session Management:");
-    out.println("  open <path>        Open a file (auto-detects format)");
+    out.println(
+        "  open <path>        Open a file (auto-detects format; the path may be \"quoted\")");
     out.println("  sessions           List all open sessions");
     out.println("  use <id>           Switch to a session ('session <id>' is the same)");
     out.println("  close [id]         Close session (current if no id given)");

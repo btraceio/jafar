@@ -46,7 +46,8 @@ jfr> events/jdk.FileRead/bytesRead --limit 5
 ## Available Commands
 
 ### Session Management
-- `open <path> [--alias NAME]`: Open a recording file.
+- `open <path> [--alias NAME]`: Open a recording file. A path may contain spaces; quote it
+  (`open "/data/my recordings/app.jfr"`) when it also contains ` --alias`.
 - `connect`: List local JVMs (`[jfr]` marks one with a discoverable disk-backed JFR event repository).
 - `connect <pid> [--alias NAME] [--repository <dir>]`: Attach a live session to a running JVM's JFR event repository (local machine only, no attach API). While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`, `backend`) are not available — use `tail`.
 - `tail [filter] [--limit N] [--format table|json]`: Stream events from the live session until Ctrl-C, the target JVM exits, or the limit is reached. The filter is a JfrPath expression with per-event operators only (`filter`, `select`, transforms) — aggregations (`count()`, `groupBy()`, …) need the full row set and are rejected.

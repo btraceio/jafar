@@ -6,6 +6,7 @@ import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.core.FlameNode;
 import io.jafar.shell.core.LazyQueryValue;
+import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -766,7 +767,10 @@ public class CommandDispatcher {
       sb.append("# what it actually ran, and re-running them is how you check it.\n");
       var current = sessions.current();
       if (current.isPresent()) {
-        sb.append("open ").append(current.get().session.getFilePath()).append('\n');
+        // Quoted when needed, so replaying the script opens a path with spaces (#233)
+        sb.append("open ")
+            .append(OpenArguments.quote(String.valueOf(current.get().session.getFilePath())))
+            .append('\n');
       }
       for (String query : queries) {
         sb.append(query).append('\n');
@@ -955,7 +959,8 @@ public class CommandDispatcher {
           llmCommands().llm(args);
           return true;
         case "open":
-          cmdOpen(args);
+          // The unsplit rest of the line: the split above breaks a path at its spaces (#233)
+          cmdOpen(line.trim().substring(parts[0].length()));
           return true;
         case "sessions":
           cmdSessions();
@@ -1089,16 +1094,18 @@ public class CommandDispatcher {
     }
   }
 
-  private void cmdOpen(List<String> args) throws Exception {
-    if (args.isEmpty()) {
+  /**
+   * @param rest the line after {@code open}, unsplit: a path may contain spaces, quoted or not (see
+   *     {@link OpenArguments})
+   */
+  private void cmdOpen(String rest) throws Exception {
+    if (rest.isBlank()) {
       io.error("Usage: open <path> [--alias NAME]");
       return;
     }
-    String pathStr = args.get(0);
-    String alias = null;
-    if (args.size() >= 3 && "--alias".equals(args.get(1))) {
-      alias = args.get(2);
-    }
+    OpenArguments parsed = OpenArguments.parse(rest);
+    String pathStr = parsed.path();
+    String alias = parsed.alias();
 
     // Expand ~ to user home directory
     if (pathStr.startsWith("~/")) {

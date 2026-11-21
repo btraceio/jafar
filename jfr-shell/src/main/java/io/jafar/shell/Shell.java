@@ -446,7 +446,9 @@ public final class Shell implements AutoCloseable {
     w.println("JFR Shell Commands:");
     w.println();
     w.println("Session Management:");
-    w.println("  open <path> [--alias NAME]     Open a recording as a new session");
+    w.println(
+        "  open <path> [--alias NAME]     Open a recording as a new session (\"quote\" a path");
+    w.println("                                 if it contains ' --alias')");
     w.println("  connect [<pid>] [--alias NAME]  List local JVMs / attach a live JFR session");
     w.println("  tail [filter] [--limit N]      Stream events from a live session");
     w.println("  sessions                       List all sessions");

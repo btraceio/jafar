@@ -3,8 +3,12 @@ package io.jafar.shell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.jafar.shell.core.OpenArguments;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -31,11 +35,13 @@ class PathWithSpacesTest {
   private final ByteArrayOutputStream err = new ByteArrayOutputStream();
   private PrintStream originalOut;
   private PrintStream originalErr;
+  private InputStream originalIn;
 
   @BeforeEach
   void captureOutput() {
     originalOut = System.out;
     originalErr = System.err;
+    originalIn = System.in;
     System.setOut(new PrintStream(out, true));
     System.setErr(new PrintStream(err, true));
   }
@@ -44,6 +50,7 @@ class PathWithSpacesTest {
   void restoreOutput() {
     System.setOut(originalOut);
     System.setErr(originalErr);
+    System.setIn(originalIn);
   }
 
   /** Runs {@code show <recording> <query> --format json} and returns its stdout. */
@@ -75,5 +82,45 @@ class PathWithSpacesTest {
         actual.substring(actual.indexOf('[')),
         "same result for " + spaced);
     assertTrue(actual.contains(spaced.toString()), "opened the spaced path: " + actual);
+  }
+
+  /** Runs {@code script -} with the given lines on stdin and returns its stdout. */
+  private String script(String... lines) {
+    out.reset();
+    err.reset();
+    System.setIn(
+        new ByteArrayInputStream(
+            (String.join("\n", lines) + "\n").getBytes(StandardCharsets.UTF_8)));
+    int exit = new CommandLine(new Main()).execute("script", "-");
+    assertEquals(0, exit, "script exit code; stderr: " + err + "; stdout: " + out);
+    return out.toString();
+  }
+
+  /**
+   * The {@code open} command read only the first word of its line, so a script, a transcript of
+   * {@code ask} replayed as one, or a typed command could not open a path with a space.
+   */
+  @Test
+  void theOpenCommandTakesAPathWithSpaces() throws Exception {
+    Path spacedDir = Files.createDirectories(temp.resolve("dir with spaces"));
+    Path spaced = Files.copy(RECORDING, spacedDir.resolve("sample input.jfr"));
+    String expected = count(show(Files.copy(RECORDING, temp.resolve("plain.jfr"))));
+
+    // quoted, as the ask transcript writes it (OpenArguments.quote)
+    String quoted = "open " + OpenArguments.quote(spaced.toString());
+    assertTrue(quoted.contains("\""), quoted);
+    assertEquals(expected, count(script(quoted, QUERY)), quoted);
+    // unquoted
+    assertEquals(expected, count(script("open " + spaced, QUERY)), "unquoted");
+    // with an alias after it
+    String withAlias = script("open " + spaced + " --alias spaced", "sessions");
+    assertTrue(withAlias.contains("spaced - " + spaced), withAlias);
+  }
+
+  /** The count from JSON or table output: the first number after the word {@code count}. */
+  private static String count(String output) {
+    var m = java.util.regex.Pattern.compile("count\\D*?(\\d+)").matcher(output);
+    assertTrue(m.find(), "a count in: " + output);
+    return m.group(1);
   }
 }

@@ -9,6 +9,7 @@ import io.jafar.shell.JFRSession;
 import io.jafar.shell.JfrTuiAdapter;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.cli.CommandDispatcher;
+import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.providers.MetadataProvider;
 import java.net.InetSocketAddress;
@@ -295,7 +296,8 @@ class JdkMetadataEndToEndTest {
           output.add(runShell(mainClass, server.getAddress().getPort()));
         } else {
           var dispatcher = new CommandDispatcher(sessions, io, r -> {});
-          dispatcher.dispatch("open " + recording);
+          // As a Path: an "open <path>" line breaks at a space in the checkout's path (#233)
+          dispatcher.open(recording, null);
           for (String setting :
               List.of(
                   "backend = ollama",
@@ -406,7 +408,8 @@ class JdkMetadataEndToEndTest {
                 : "help metadata\nmetadata class java.lang.Thread --fields\nmetadata class jdk.types.StackTrace --fields\n";
         input.write(
             ("open "
-                    + recording
+                    // quoted when it has a space, which both shells' open reads (#233)
+                    + OpenArguments.quote(recording.toString())
                     + "\n"
                     + helpAndNested
                     + metadata

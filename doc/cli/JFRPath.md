@@ -1314,7 +1314,7 @@ constants/jdk.types.StackTrace | crossref()
 
 In the interactive shell, use these commands:
 
-- `open <path> [--alias NAME]` - Open a recording
+- `open <path> [--alias NAME]` - Open a recording (a path may contain spaces, or be quoted)
 - `sessions` - List all sessions
 - `use <id|alias>` (or `session`) - Switch session
 - `close [<id|alias>|--all]` - Close session(s)
