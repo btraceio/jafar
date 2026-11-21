@@ -487,6 +487,21 @@ way — by looking at a value rather than at control flow.
 > The unified shell must delegate to the same enrichment: its host's default methods otherwise
 > silently reduce both metadata requests to bare names.
 
+> **Case file — a comparison of a thing with itself.** `BuildTimeHandlerBenchmark` compared
+> build-time handlers with runtime-generated ones through method pairs such as
+> `parseWithRuntimeGeneration` / `parseWithBuildTimeGeneration`. The two methods of each pair
+> were the same code, and the typed parser uses every factory `ServiceLoader` finds, so every
+> "runtime" method ran the build-time handlers. Nothing failed: the methods returned numbers, a
+> recorded report gave the pair 0.187 and 0.189 ops/s, and `BuildTimeBenchmarks.md` published
+> "sample results" of +23% throughput and −24% allocation that the class could not have produced
+> (it reports ops/s, never MB/s or single-shot ms). Meanwhile the two `parseWith*` methods had
+> stopped running at all: a benchmark interface declared `java.lang.ThreadGroup` where recordings
+> have `jdk.types.ThreadGroup`, and the generated handler refused it. What found it was printing
+> `event.getClass()` inside the measured parse: `JFRExecutionSampleHandler` for both. The
+> benchmark now records the decoding class during measurement and fails a trial whose class is not
+> the one its `decoder` parameter names. **A comparison is only evidence once each side has been
+> seen to run the thing its label names.**
+
 When a model is the consumer, this is the only way: it will use whatever it is given and produce a
 fluent answer either way. A plausible answer drawn from redacted data is indistinguishable from a
 good one unless you looked.

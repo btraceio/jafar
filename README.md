@@ -172,17 +172,17 @@ full value model, error handling contract and the differences from the Java pars
 
 ## Build-Time Handler Generation
 
-JAFAR now supports **build-time handler generation** via annotation processor, providing massive performance benefits for production applications.
+JAFAR supports **build-time handler generation** via annotation processor: the typed handlers are generated
+when your code compiles instead of at runtime.
 
 ### Why Build-Time Generation?
 
-**Benchmark Results:**
-- **85% less memory allocation** (35.5 MB/sec vs 237.2 MB/sec)
-- **Eliminates GC collections** (0 vs 3 GC pauses per benchmark)
-- **Equivalent throughput** (no performance penalty)
-- **Predictable latency** (no GC jitter)
+- **No runtime bytecode generation** for the interfaces you annotate
+- **Less allocation**: on `BuildTimeHandlerBenchmark`, 69–77% fewer bytes per parse than runtime-generated handlers
+- **Slightly lower throughput on the same benchmark**: 9–16% fewer parses per second; the first parse in a new JVM
+  is not measurably faster
 
-[→ See Full Performance Report](doc/performance/PerformanceReport.md)
+[→ Benchmark, method and results](doc/performance/BuildTimeBenchmarks.md#benchmark-results)
 
 ### How It Works
 
@@ -339,14 +339,15 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
 
 ### Performance Impact
 
-For processing **1 million ExecutionSample events:**
+Measured with `BuildTimeHandlerBenchmark` (one 117 KB recording, 8,000 `jdk.ExecutionSample` events, parsed
+end to end per operation; two rounds, 2026-11-21):
 
-| Metric | Runtime Generation | Build-Time Generation | Benefit |
+| Per parse | Runtime Generation | Build-Time Generation | Difference |
 |--------|-------------------|----------------------|---------|
-| Total Allocations | ~223 GB | ~37 GB | **-186 GB** |
-| GC Collections | ~600-800 | ~50-100 | **-750 GC pauses** |
-| GC Pause Time | ~2-3 seconds | ~200-300ms | **-2.7 seconds** |
-| Throughput | ~189k events/sec | ~187k events/sec | Equivalent |
+| Bytes allocated, reading every frame's method and class | ~801 KB | ~250 KB | 69% fewer |
+| Bytes allocated, event handed over unread | ~745 KB | ~170 KB | 77% fewer |
+| Throughput, reading every frame's method and class | 225–250 parses/s | 204–224 parses/s | 9–10% lower |
+| Throughput, event handed over unread | 753–763 parses/s | 639–655 parses/s | 13–16% lower |
 
 [→ Full Benchmark Results](doc/performance/BuildTimeBenchmarks.md)
 

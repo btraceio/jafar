@@ -226,7 +226,29 @@ threads — exactly the two chunks of `tck-test.jfr` — and with
 `-XX:TieredStopAtLevel=1` (C1): under default tiered compilation, whether
 C2's escape analysis has eliminated allocations in the hot decode loop by
 the measured parse depends on compile-queue timing, wobbling the same
-measurement by 0.6–6% between runs; under C1 it is byte-identical.
+measurement by 0.6–6% between runs; under C1 it is byte-identical. The
+JDK 8 untyped task also runs with `-Xms2g -Xmn1g`, so that no garbage
+collection happens during the test.
+
+> **Case file — the counter that a collection moves.** `allocationTest8`
+> failed on 3 of 25 PR runs in November 2026, on unrelated changes, always
+> on the same JVM (Temurin 8u512): 45,255,192, 45,255,224 and 45,440,912
+> bytes against a budget of 44,594,232, while a run 17 minutes after one of
+> them measured 44,594,688. The extra bytes were all on the pool threads;
+> the calling thread's share was identical. Locally the test was
+> byte-exact in 15 runs, and in 10 more with six busy loops on 4 cores, so
+> it was not thread timing. Forcing collections reproduced it: with
+> `-Xmn16m` (23 collections) the pool sum was 45.32–45.48 MB in six runs;
+> with `-Xms2g -Xmn1g` (0 collections) it was 44,510,280, the budgeted
+> figure. JDK 21 stayed byte-exact through 10 collections, and
+> `parser-core` uses no soft or weak references, so the extra is in JDK 8's per-thread
+> allocated-bytes counter, not in what the parser allocates. With only
+> `-Xmx2g` the JVM starts small and collects about twice during the test;
+> on CI one of those collections sometimes fell inside the measured parse.
+> **An allocation gate is only byte-exact if nothing else that moves its
+> counter can happen during the measurement — on JDK 8 that includes a
+> collection.** The typed JDK 8 task was not examined for the same effect;
+> its 310,000-byte tolerance may be hiding it (R8).
 
 **Determinism, spread, tolerances.** Two warm-up parses are discarded (the
 first pays ~14× the steady state in lazy init). The pool-thread share
@@ -700,7 +722,16 @@ mkdir -p build/jmh
 The third line runs `QueryPushdownBenchmark` only (the trailing JMH regex):
 what a one-type or time-bounded query costs with and without the parser's type
 filter and chunk skipping, on a 32-chunk recording it generates per trial. The
-rest of `:parser-codegen:jmh` has never run here and is left out. With the
+rest of `:parser-codegen:jmh` has never run here and is left out, and it shows:
+`BuildTimeHandlerBenchmark` sat broken without anyone noticing — two methods
+failing on their first event, the others measuring the build-time handlers
+under "runtime" labels (case file in
+[Verification.md](Verification.md#r9-inspect-the-payload-not-the-exit-status)).
+Wiring it in would need `--require` for each of its `method` × `decoder`
+records, because its trial teardown throws when the decoding class does not
+match the `decoder` parameter, and a throwing benchmark disappears from the
+JSON (next paragraph). Its `coldStartParse` is single-shot over 20 forks per
+`decoder`, so a trend run would pass no `-f`, which overrides those forks. With the
 default `-wi 2 -i 5 -f 1` this step took 467 s locally on 4 processors and
 produced 16 records.
 
