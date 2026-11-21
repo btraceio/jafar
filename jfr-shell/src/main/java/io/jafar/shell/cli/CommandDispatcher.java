@@ -1107,7 +1107,26 @@ public class CommandDispatcher {
       pathStr = System.getProperty("user.home");
     }
 
-    Path path = Paths.get(pathStr);
+    openSession(Paths.get(pathStr), alias);
+  }
+
+  /**
+   * Opens a recording as {@code open} does, from a path that is already parsed. A path rebuilt into
+   * an {@code open} line is split again at its spaces (#233), so callers holding a {@link Path} use
+   * this. A failure is reported as {@link #dispatch} reports one.
+   *
+   * @param path the recording
+   * @param alias the session alias, or {@code null}
+   */
+  public void open(Path path, String alias) {
+    try {
+      openSession(path, alias);
+    } catch (Exception e) {
+      io.error("Error: " + e.getMessage());
+    }
+  }
+
+  private void openSession(Path path, String alias) throws Exception {
     SessionManager.SessionRef<? extends Session> ref = sessions.open(path, alias);
     if (verbose) {
       io.println(

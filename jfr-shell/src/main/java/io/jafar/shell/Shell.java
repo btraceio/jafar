@@ -196,11 +196,9 @@ public final class Shell implements AutoCloseable {
       terminal.flush();
       return;
     }
-    try {
-      dispatcher.dispatch("open " + jfrPath.toString());
-    } catch (Exception ignore) {
-      // best-effort reopen: failures are reported by the open command itself
-    }
+    // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233).
+    // A failure is reported by open itself.
+    dispatcher.open(jfrPath, null);
   }
 
   private void printBanner() {

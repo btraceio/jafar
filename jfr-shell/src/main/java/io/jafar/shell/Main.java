@@ -393,8 +393,8 @@ public final class Main implements Callable<Integer> {
                 },
                 current -> {});
 
-        // Open the file
-        dispatcher.dispatch("open " + path.toString());
+        // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233)
+        dispatcher.open(path, null);
 
         // Execute command
         boolean handled = dispatcher.dispatch(command);

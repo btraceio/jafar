@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they carry `sampledThread`. Per-thread profiles, `totalThreads` and the active-thread count of
   `jfr_use` now follow the sampled thread, and events without `sampledThread` (such as
   `jdk.JavaMonitorEnter` in the blocking correlation) still use `eventThread`. `jfr_diagnose` merges `jfr_tsa`, so it was affected too
+- **A recording path containing spaces was opened only up to the first space** (#233), in
+  `jfr-shell show|metadata|chunks|constants <path> ...`, the same commands through `jafar-shell`,
+  and the file given when starting the interactive shell or the TUI. The path was turned back into
+  an `open <path>` line, which the dispatcher split at its spaces
 - **The build failed to configure on Gradle 9.9** (#228) with `Could not get unknown property
   'sourceSets' for project ':parser-core' of type ...DefaultProjectDependency`. Three build files
   read `project(':parser-core').sourceSets` inside `dependencies {}`; they now resolve it outside
