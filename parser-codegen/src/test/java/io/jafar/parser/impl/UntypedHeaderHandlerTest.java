@@ -16,6 +16,9 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -372,5 +375,70 @@ class UntypedHeaderHandlerTest {
       parser.run();
     }
     assertEquals(total, headers.sum(), "every event's header, from every chunk");
+  }
+
+  /**
+   * The Go parser's node-pool fixtures (checked in under {@code go-parser/jfr/testdata}, shared
+   * with the differential test) hold seven {@code test.Holder} events, a type with no {@code
+   * startTime} field: every header carries {@code NO_START_TIME}, read from a real file.
+   *
+   * <p>Of the three with broken constant pools, a dangling name is not noticed until a reference is
+   * resolved, which a header never does. An undeclared pool type and an unreadable entry fail the
+   * Java parse while the checkpoint is read, before any event, whatever handlers are registered
+   * ({@code UnindexedPoolReferenceTest}); the Go parser reports the same two through {@code
+   * OnError} and goes on ("Differences from the Java parser" in {@code go-parser/README.md}). The
+   * Go side's {@code TestNodePoolHeadersCarryNoStartTime} checks its half.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void nodePoolHeadersCarryNoStartTime(boolean generated) throws Exception {
+    Map<String, String> failing =
+        Map.of(
+            "undeclared-pool",
+            "Constant pool of type 77 (1 entries): the type is not declared in the chunk metadata",
+            "unreadable-entry",
+            "Constant pool test.Node, index 2: Unexpected string constant id: 127");
+    for (String shape :
+        new String[] {"intact", "dangling-name", "undeclared-pool", "unreadable-entry"}) {
+      Path recording = Paths.get("../go-parser/jfr/testdata/node-pool-" + shape + ".jfr");
+      List<Long> startTimes = Collections.synchronizedList(new ArrayList<>());
+      Set<String> types = ConcurrentHashMap.newKeySet();
+      Exception failure = null;
+      try (UntypedJafarParser parser = open(recording, generated)) {
+        parser.handleHeaders(
+            type -> true,
+            (type, size, startTime, ctl) -> {
+              types.add(type.getName());
+              startTimes.add(startTime);
+            });
+        parser.run();
+      } catch (Exception e) {
+        failure = e;
+      }
+      if (failing.containsKey(shape)) {
+        assertTrue(failure != null, shape + ": the parse should fail on the checkpoint");
+        assertTrue(
+            causeChain(failure).contains(failing.get(shape)), shape + ": " + causeChain(failure));
+        assertEquals(0, startTimes.size(), shape + ": pools are read before any event");
+        continue;
+      }
+      assertNull(failure, shape);
+      assertEquals(Set.of("test.Holder"), types, shape);
+      assertEquals(7, startTimes.size(), shape + ": headers");
+      for (long startTime : startTimes) {
+        assertEquals(EventHeaderHandler.NO_START_TIME, startTime, shape);
+      }
+      try (UntypedJafarParser parser = open(recording, generated)) {
+        assertEquals(Map.of("test.Holder", 7L), parser.countEvents(), shape);
+      }
+    }
+  }
+
+  private static String causeChain(Throwable t) {
+    StringBuilder chain = new StringBuilder();
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      chain.append(" <- ").append(c.getMessage());
+    }
+    return chain.toString();
   }
 }

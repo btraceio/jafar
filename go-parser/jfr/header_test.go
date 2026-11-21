@@ -3,6 +3,7 @@ package jfr
 import (
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -350,5 +351,67 @@ func TestEventHeaderKeepsEveryChunk(t *testing.T) {
 	}
 	if headers != total {
 		t.Errorf("headers = %d, want every event (%d)", headers, total)
+	}
+}
+
+// The node-pool fixtures (checked in; shared with the Java side's
+// differential test) hold seven test.Holder events, a type with no startTime
+// field: every header carries NoStartTime, read from a real file. Three of the
+// four have broken constant pools (a dangling name, an undeclared pool, an
+// unreadable entry). Two of those are reported while the checkpoint is read;
+// the headers do not touch the pools, so all four count the same.
+func TestNodePoolHeadersCarryNoStartTime(t *testing.T) {
+	for _, shape := range []string{"intact", "dangling-name", "undeclared-pool", "unreadable-entry"} {
+		data := nodePoolFixture(t, shape)
+		var startTimes []int64
+		var reported []error
+		err := NewParser(data).ParseWith(Options{
+			TypeFilter: func(*ClassType) bool { return false },
+			OnError: func(err error) error {
+				reported = append(reported, err)
+				return nil
+			},
+			OnEventHeader: func(h EventHeader) error {
+				if h.Type.Name != "test.Holder" {
+					t.Fatalf("%s: header for %s", shape, h.Type.Name)
+				}
+				if startTimeIndex(h.Type) >= 0 {
+					t.Fatalf("%s: test.Holder has a startTime field", shape)
+				}
+				startTimes = append(startTimes, h.StartTime)
+				return nil
+			},
+		}, nil)
+		if err != nil {
+			t.Fatalf("%s: parse: %v", shape, err)
+		}
+		// What is reported comes from reading the checkpoint, before any event;
+		// nothing is reported for the events, which are not decoded.
+		wantReport := map[string]string{
+			"undeclared-pool":  "constant pool type 77 is not declared",
+			"unreadable-entry": "constant pool test.Node, index 2: unexpected string constant id: 127",
+		}[shape]
+		if wantReport == "" {
+			if len(reported) != 0 {
+				t.Errorf("%s: reported = %v, want nothing", shape, reported)
+			}
+		} else if len(reported) != 1 || !strings.Contains(reported[0].Error(), wantReport) {
+			t.Errorf("%s: reported = %v, want one error containing %q", shape, reported, wantReport)
+		}
+		if len(startTimes) != len(nodeRefs) {
+			t.Fatalf("%s: %d headers, want %d", shape, len(startTimes), len(nodeRefs))
+		}
+		for i, st := range startTimes {
+			if st != NoStartTime {
+				t.Errorf("%s: header %d startTime = %d, want NoStartTime", shape, i, st)
+			}
+		}
+		counts, err := NewParser(data).CountEvents(nil)
+		if err != nil {
+			t.Fatalf("%s: CountEvents: %v", shape, err)
+		}
+		if want := map[string]int64{"test.Holder": int64(len(nodeRefs))}; !reflect.DeepEqual(counts, want) {
+			t.Errorf("%s: CountEvents = %v, want %v", shape, counts, want)
+		}
 	}
 }
