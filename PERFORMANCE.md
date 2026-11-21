@@ -207,6 +207,11 @@ A handler registered without a filter makes the parser decode every event. See
 `QueryPushdownBenchmark` in `parser-codegen` for what the filter is worth on a multi-chunk
 recording.
 
+To count events, or to look only at their types, sizes and start times, read the headers and
+decode nothing: `parser.countEvents()`, or `parser.handleHeaders(filter, handler)` for the type,
+size and `startTime` of each event. `QueryPushdownBenchmark.countEventsFromHeaders` measures it
+against `countByDecoding`.
+
 ### 5. Adjust Heap Size
 For large files (>1 GB):
 ```bash

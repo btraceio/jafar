@@ -112,19 +112,10 @@ public final class TypeDiscovery {
    * @throws IOException if reading fails
    */
   public Map<String, Long> getTypeCounts(Path recordingPath) throws Exception {
-    // The handler runs on several chunk-parsing threads at once.
-    Map<String, Long> typeCounts = new java.util.concurrent.ConcurrentHashMap<>();
-
+    // Counted from the event headers: no event is decoded (UntypedJafarParser.countEvents).
     try (UntypedJafarParser parser = parsingContext.newUntypedParser(recordingPath)) {
-      parser.handle(
-          (type, value, ctl) -> {
-            String typeName = type.getName();
-            typeCounts.merge(typeName, 1L, Long::sum);
-          });
-      parser.run();
+      return parser.countEvents();
     }
-
-    return typeCounts;
   }
 
   /**
