@@ -35,10 +35,8 @@ import org.junit.jupiter.params.provider.ValueSource;
  * both and compares every event as rendered through its getters, references followed.
  *
  * <p>Everything runs in one class loader, built from {@code parser-codegen} (kept off the test
- * class path, see build.gradle), the test class path and the compiled interfaces: a
- * runtime-generated class is defined with {@code CodeGenerator} as its lookup host, so it can
- * implement only interfaces its class loader sees (Architecture.md, "Typed parser: two
- * generators"). Build-time handlers have no such limit.
+ * class path, see build.gradle), the test class path and the compiled interfaces. An interface in a
+ * child loader is covered by {@code ChildLoaderFactoryTest}.
  *
  * <p>It checks values only. The other half of that parity, how much work a getter or a field read
  * costs, is not visible here: the build-time getters once looked their constant pool up on every

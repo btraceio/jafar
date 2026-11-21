@@ -107,12 +107,14 @@ Beyond the gates, the conventions the codebase already follows:
     instance after `reset()`, so an event must not be kept past its handler call. The runtime
     class is a new object per event. Pool entries are new objects on both sides.
   - A runtime-generated class is defined with `CodeGenerator` as its lookup host, so it lives in
-    `parser-codegen`'s class loader and can implement only interfaces that loader sees; an
-    interface in a child loader fails with `NoClassDefFoundError`. A build-time handler is
-    compiled with its interface and has no such limit, but not if `parser-codegen` is on the class
-    path too: `MutableMetadataLookup.bindDeserializers` then generates a runtime deserializer for
-    every bound type, including one a build-time factory serves, and that generation fails the
-    parse for an interface in a child loader.
+    `parser-codegen`'s class loader, unless that loader cannot see the interface (a plugin's or a
+    deployment's child loader). Then it is defined in a `CodeGenerator.BridgeLoader`: its parent is
+    `parser-codegen`'s loader, so parser classes keep their identity, and it loads what the parent
+    lacks from the interface's loader (`TypedChildClassLoaderTest`). Before that, such an interface
+    failed with `NoClassDefFoundError`. So did build-time handlers in a child loader when
+    `parser-codegen` was also on the class path, because `MutableMetadataLookup.bindDeserializers`
+    generates a runtime deserializer for every bound type, factory-served ones included
+    (`ChildLoaderFactoryTest`). That generation still happens, and costs time, but no longer fails.
   - Several accessors for one JFR field (`@JfrField` naming the same field twice), pooled or
     inline, are generated at runtime when they declare the field's one generated type (an inline
     primitive may be widened), next to any number of `raw = true` indices on a pooled scalar field
