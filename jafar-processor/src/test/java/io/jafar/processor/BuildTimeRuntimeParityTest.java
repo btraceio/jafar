@@ -108,41 +108,16 @@ class BuildTimeRuntimeParityTest {
         runtime.get(0).startsWith("decoded by ") && !runtime.get(0).equals(buildTime.get(0)),
         "the runtime side was " + runtime.get(0));
     assertEquals(buildTime.size(), runtime.size(), "events");
-    int known = 0;
     for (int i = 1; i < buildTime.size(); i++) {
-      String expected = withKnownDifferences(buildTime.get(i));
-      known += expected.equals(buildTime.get(i)) ? 0 : 1;
       // the first difference only: a whole recording rendered is too long to read in a report
       assertEquals(
-          expected,
+          buildTime.get(i),
           runtime.get(i),
-          "sorted event "
-              + i
-              + " of "
-              + (buildTime.size() - 1)
-              + " (expected: build time with the known differences applied; if the runtime now"
-              + " matches build time there, remove that known difference)");
+          "sorted event " + i + " of " + (buildTime.size() - 1) + " (expected: build time)");
     }
-    // A known difference that matches nothing guards nothing: the premise of the entry.
-    assertTrue(known > 0, "the known difference applied to no " + fixture + " event");
-  }
-
-  /**
-   * The build-time rendering of an event as the runtime classes render it today. Each entry is a
-   * difference that was found and kept, with its reason; the list only shrinks. When the runtime
-   * side is fixed, the comparison fails naming the event, and the entry is deleted.
-   *
-   * <ul>
-   *   <li>{@code PSample.state()}: the runtime-generated class does not implement it ({@code
-   *       AbstractMethodError}). {@code state} is a pooled {@code jdk.types.ThreadState}, a simple
-   *       type wrapping one {@code String}; {@code CodeGenerator} unwraps simple types to their
-   *       value and so implements only a {@code String} accessor, not one typed with the type's
-   *       interface. The build-time handler reads it through {@code PState}'s handler.
-   * </ul>
-   */
-  private static String withKnownDifferences(String buildTimeEvent) {
-    return buildTimeEvent.replaceAll(
-        "state=PState\\{name=[^ ]* \\}", "state=threw java.lang.AbstractMethodError");
+    // PSample.state() (an interface for the simple type jdk.types.ThreadState) was a known
+    // difference until CodeGenerator implemented such accessors: the runtime class threw
+    // AbstractMethodError. A difference found again is fixed, or listed here with its reason.
   }
 
   /** Runs {@link Probe#run} in a class loader holding the parser and the compiled interfaces. */
