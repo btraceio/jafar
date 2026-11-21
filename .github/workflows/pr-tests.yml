@@ -4,6 +4,15 @@ on:
   pull_request:
     branches:
       - '**'
+  # Also on main, so each job writes the Gradle cache its PR runs restore. setup-gradle writes
+  # only on the default branch (cache-read-only elsewhere) and a PR job restores, by preference,
+  # the latest main entry of the same job and workflow. With no main run, PR jobs fell back to
+  # the Go benchmark's entry (any job on the same OS), which lacks the test classpaths, and
+  # fetched them from Maven Central on every run: HTTP 429 under parallel PRs. The PR-body gates
+  # skip themselves outside pull_request.
+  push:
+    branches:
+      - main
   merge_group:
   workflow_dispatch:
 
