@@ -113,10 +113,12 @@ Beyond the gates, the conventions the codebase already follows:
     path too: `MutableMetadataLookup.bindDeserializers` then generates a runtime deserializer for
     every bound type, including one a build-time factory serves, and that generation fails the
     parse for an interface in a child loader.
-  - An accessor typed with an interface for a simple type (`PState state()` for a pooled
-    `jdk.types.ThreadState`) is read at build time; the runtime class does not implement it
-    (`AbstractMethodError`) because `CodeGenerator` unwraps simple types to their value. Pinned as a
-    known difference in `BuildTimeRuntimeParityTest`, to be deleted when the runtime reads it.
+
+  Both read a simple type (one field, such as `jdk.types.Symbol`) as the value it wraps, unless the
+  accessor returns the interface registered for that type (`ThreadState state()` for a pooled
+  `jdk.types.ThreadState`): then it is read as that interface. Until `CodeGenerator` did the
+  same, the runtime class implemented such an accessor with the wrapped type's return type, which
+  is not the interface's method: `AbstractMethodError` (`TypedSimpleTypeInterfaceTest`).
 - Both APIs support handler registration and synchronous event processing
 
 ## Key Classes to Understand
