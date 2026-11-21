@@ -20,25 +20,121 @@ func decodedCounts(t *testing.T, data []byte) map[string]int64 {
 	return counts
 }
 
-// headerFixtures returns the real recordings the header tests run on:
-// tck-test.jfr (a Datadog recording, startTime first) and test-ap.jfr four
-// times over (written with the JMC writer, startTime after stackTrace and
-// eventThread; a chunk is self-contained, so this is a multi-chunk file).
+const (
+	tIDLate     = 110
+	lateSymbol  = 7
+	lateChunks  = 3
+	latePerType = 5
+)
+
+// lateMetadata declares test.Late, whose startTime comes after fields of every
+// kind the parser must skip to reach it: a constant pool reference, an inline
+// string, a long array and an inline complex value.
+func lateMetadata() *metaElement {
+	late := elem("class",
+		attr("id", itoa(tIDLate)),
+		attr("name", "test.Late"),
+		attr("superType", "jdk.jfr.Event"),
+	).with(
+		elem("field", attr("name", "symbol"), attr("class", itoa(tIDSymbol)), attr("constantPool", "true")),
+		elem("field", attr("name", "label"), attr("class", itoa(tIDString))),
+		elem("field", attr("name", "values"), attr("class", itoa(tIDLong)), attr("dimension", "1")),
+		elem("field", attr("name", "nested"), attr("class", itoa(tIDNested))),
+		elem("field", attr("name", "startTime"), attr("class", itoa(tIDLong))).with(
+			elem("annotation", attr("class", itoa(tIDTimestamp)), attr("value", "TICKS")),
+		),
+		elem("field", attr("name", "count"), attr("class", itoa(tIDInt))),
+	)
+	md := testMetadata()
+	md.children[0].children = append(md.children[0].children, late)
+	return md
+}
+
+// lateEvent encodes one test.Late event body starting startTicks.
+func lateEvent(i int, startTicks int64) []byte {
+	w := &writer{}
+	w.varint(tIDLate)
+	w.varint(lateSymbol)
+	w.bytes(utf8String("label-" + itoa(int64(i))))
+	w.varint(int64(i))
+	for j := 0; j < i; j++ {
+		w.varint(int64(j * 1000))
+	}
+	w.varint(int64(uint32(i)))
+	w.bytes(utf8String("nested"))
+	w.varint(startTicks)
+	w.varint(int64(uint32(i * 3)))
+	return w.buf
+}
+
+// lateRecording is a multi-chunk recording of test.Late and test.Sample events,
+// built here so that it is in every checkout. It returns the recording and the
+// sum of the sizes of the events of each type, as written.
+func lateRecording() ([]byte, map[string]int64) {
+	sizes := make(map[string]int64)
+	var data []byte
+	for c := 0; c < lateChunks; c++ {
+		var events [][]byte
+		for i := 0; i < latePerType; i++ {
+			late := lateEvent(i, testStartTicks+int64(c*10_000+i*100))
+			sample := sampleEvent{
+				startTicks: testStartTicks + int64(c*10_000+i*100+50),
+				name:       utf8String("s"), symbol: lateSymbol,
+				nestedB: utf8String(""),
+			}.encode()
+			events = append(events, late, sample)
+			sizes["test.Late"] += int64(len(sizedEvent(late)))
+			sizes["test.Sample"] += int64(len(sizedEvent(sample)))
+		}
+		spec := chunkSpec{
+			metadata: lateMetadata(),
+			pools: []constantPoolData{
+				{typeID: tIDSymbol, entries: []poolEntry{{id: lateSymbol, data: utf8String("sym")}}},
+			},
+			events:     events,
+			startNanos: testStartNanos + int64(c)*1_000_000_000,
+			startTicks: testStartTicks + int64(c*10_000),
+			frequency:  testFrequency,
+			duration:   1_000_000,
+		}
+		data = append(data, spec.build()...)
+	}
+	return data, sizes
+}
+
+// testAPRecording reads test-ap.jfr, which the Gradle build generates
+// (:test-recordings:generateTestRecordings) and get_resources.sh downloads; a
+// Go-only checkout does not have it, and the tests that need it skip.
+func testAPRecording(t *testing.T) []byte {
+	t.Helper()
+	const path = "../../parser-core/src/test/resources/test-ap.jfr"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("fixture %s is not available: %v", path, err)
+	}
+	return data
+}
+
+// headerFixtures returns the recordings the header tests run on: tck-test.jfr
+// (checked in; a Datadog recording, startTime first), the synthetic
+// multi-chunk late-startTime recording, and test-ap.jfr four times over when it
+// is present (JMC writer, startTime after stackTrace and eventThread).
 func headerFixtures(t *testing.T) map[string][]byte {
 	t.Helper()
 	tck, err := os.ReadFile(tckRecording)
 	if err != nil {
 		t.Fatalf("read %s: %v", tckRecording, err)
 	}
-	ap, err := os.ReadFile("../../parser-core/src/test/resources/test-ap.jfr")
-	if err != nil {
-		t.Fatalf("read test-ap.jfr: %v", err)
+	late, _ := lateRecording()
+	fixtures := map[string][]byte{"tck-test.jfr": tck, "late-startTime (synthetic)": late}
+	if ap, err := os.ReadFile("../../parser-core/src/test/resources/test-ap.jfr"); err == nil {
+		var multi []byte
+		for i := 0; i < 4; i++ {
+			multi = append(multi, ap...)
+		}
+		fixtures["test-ap.jfr x4"] = multi
 	}
-	var multi []byte
-	for i := 0; i < 4; i++ {
-		multi = append(multi, ap...)
-	}
-	return map[string][]byte{"tck-test.jfr": tck, "test-ap.jfr x4": multi}
+	return fixtures
 }
 
 func TestCountEventsMatchesDecodedCounts(t *testing.T) {
@@ -79,7 +175,7 @@ func TestCountEventsCountsOnlyTheAcceptedTypes(t *testing.T) {
 func TestEventHeaderMatchesTheDecodedEvent(t *testing.T) {
 	for name, data := range headerFixtures(t) {
 		var pending *EventHeader
-		headers, values, withStartTime := 0, 0, 0
+		headers, values, withStartTime, notFirst := 0, 0, 0, 0
 		err := NewParser(data).ParseWith(Options{
 			OnEventHeader: func(h EventHeader) error {
 				headers++
@@ -106,6 +202,9 @@ func TestEventHeaderMatchesTheDecodedEvent(t *testing.T) {
 				return nil
 			}
 			withStartTime++
+			if startTimeIndex(e.Type) > 0 {
+				notFirst++
+			}
 			if decoded, ok := e.Values["startTime"].(int64); !ok || decoded != h.StartTime {
 				t.Fatalf("%s: %s: header startTime %d, decoded %#v", name, e.Type.Name, h.StartTime, e.Values["startTime"])
 			}
@@ -120,20 +219,20 @@ func TestEventHeaderMatchesTheDecodedEvent(t *testing.T) {
 		if withStartTime == 0 {
 			t.Errorf("%s: no event has a startTime, so its value went unchecked", name)
 		}
-		t.Logf("%s: %d events, %d with a startTime", name, values, withStartTime)
+		if name == "late-startTime (synthetic)" && notFirst != lateChunks*latePerType {
+			t.Errorf("%s: %d events with startTime after other fields, want %d", name, notFirst, lateChunks*latePerType)
+		}
+		t.Logf("%s: %d events, %d with a startTime, %d of them after other fields", name, values, withStartTime, notFirst)
 	}
 }
 
 // The sizes of test-ap.jfr's events, per type, as the JDK's `jfr summary`
 // prints them (OpenJDK 21.0.x: Count and Size (bytes) columns).
 func TestEventHeaderSizesMatchJfrSummary(t *testing.T) {
-	data, err := os.ReadFile("../../parser-core/src/test/resources/test-ap.jfr")
-	if err != nil {
-		t.Fatalf("read test-ap.jfr: %v", err)
-	}
+	data := testAPRecording(t)
 	sizes := make(map[string]int64)
 	counts := make(map[string]int64)
-	err = NewParser(data).ParseWith(Options{
+	err := NewParser(data).ParseWith(Options{
 		TypeFilter: func(*ClassType) bool { return false },
 		OnEventHeader: func(h EventHeader) error {
 			sizes[h.Type.Name] += h.Size
@@ -161,6 +260,24 @@ func TestEventHeaderSizesMatchJfrSummary(t *testing.T) {
 	}
 	if !reflect.DeepEqual(counts, wantCounts) {
 		t.Errorf("counts = %v, want %v", counts, wantCounts)
+	}
+}
+
+// The sizes of the synthetic recording's events, per type, as they were
+// written.
+func TestEventHeaderSizesMatchTheWrittenEvents(t *testing.T) {
+	data, want := lateRecording()
+	sizes := make(map[string]int64)
+	err := NewParser(data).ParseWith(Options{
+		TypeFilter:    func(*ClassType) bool { return false },
+		OnEventHeader: func(h EventHeader) error { sizes[h.Type.Name] += h.Size; return nil },
+		OnError:       FailOnError,
+	}, nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !reflect.DeepEqual(sizes, want) {
+		t.Errorf("sizes = %v, want %v", sizes, want)
 	}
 }
 
@@ -215,7 +332,7 @@ func TestHeaderFilterSelectsTypesAndErrStopEndsParsing(t *testing.T) {
 // With OnEventHeader set, StartTime skips no chunk: a range after the
 // recording would otherwise skip every chunk.
 func TestEventHeaderKeepsEveryChunk(t *testing.T) {
-	data := headerFixtures(t)["test-ap.jfr x4"]
+	data, _ := lateRecording()
 	want := decodedCounts(t, data)
 	var total int64
 	for _, n := range want {
