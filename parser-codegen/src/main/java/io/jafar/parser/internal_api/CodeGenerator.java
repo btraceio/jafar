@@ -21,9 +21,11 @@ import java.nio.file.Paths;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -1565,7 +1567,11 @@ final class CodeGenerator {
     //                        }
 
     List<MetadataField> allFields = new ArrayList<>();
-    Set<MetadataField> appliedFields = new HashSet<>();
+    // The fields this class reads, by identity: MetadataField.equals is structural (type, pool,
+    // dimension; the deserializer cache keys on it) and ignores the name, so in a HashSet reading
+    // jdk.ExecutionSample.sampledThread counted eventThread (also a pooled java.lang.Thread) as
+    // read, and the constructor stored it into an eventThread_ref no accessor had declared.
+    Set<MetadataField> appliedFields = Collections.newSetFromMap(new IdentityHashMap<>());
     Set<String> generatedMethods = new HashSet<>();
 
     while (!stack.isEmpty()) {

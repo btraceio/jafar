@@ -194,6 +194,13 @@ the generated one (`TemporalAnnotationPerChunkTest`). The table now lives on the
 instance, which is per chunk. The generated path's structural key spells names out, length-prefixed,
 so a field name cannot pass for key syntax.
 
+The same equality made `CodeGenerator`'s set of the fields an interface reads count
+`jdk.ExecutionSample.eventThread` as read when the interface declared only `sampledThread` (both
+pooled `java.lang.Thread` references): the constructor stored it into an `eventThread_ref` no
+accessor had declared, and an interface reading only raw pool indices failed with
+`NoSuchFieldError` (`TypedRawAccessorOnlyTest`). A set meaning "these fields of this class" is an
+identity set.
+
 ### A build-time handler is not a runtime handler
 
 `jafar-processor` generates handlers without the recording's metadata, and its output was wrong on
