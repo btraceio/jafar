@@ -2054,16 +2054,28 @@ public final class JfrAnalyses {
   }
 
   String extractThreadId(Map<String, Object> event) {
-    Object tid = Values.get(event, "eventThread", "javaThreadId");
+    Object tid = Values.get(event, threadField(event), "javaThreadId");
     return tid != null ? String.valueOf(tid) : "unknown";
   }
 
   String extractThreadName(Map<String, Object> event) {
-    Object name = Values.get(event, "eventThread", "javaName");
+    String thread = threadField(event);
+    Object name = Values.get(event, thread, "javaName");
     if (name == null) {
-      name = Values.get(event, "eventThread", "osName");
+      name = Values.get(event, thread, "osName");
     }
     return name != null ? String.valueOf(name) : "unknown";
+  }
+
+  /**
+   * The field holding the thread an event is about. Samples ({@code jdk.ExecutionSample}, {@code
+   * jdk.NativeMethodSample}) name it {@code sampledThread} and have no {@code eventThread}; others,
+   * such as {@code jdk.JavaMonitorEnter} and {@code datadog.ExecutionSample}, name it {@code
+   * eventThread}. Reading only {@code eventThread} put every sample under one thread "unknown"
+   * (#222). Id and name are read from the same field, so they describe one thread.
+   */
+  private static String threadField(Map<String, Object> event) {
+    return Values.get(event, "sampledThread") != null ? "sampledThread" : "eventThread";
   }
 
   String extractSimpleClassName(String fullClassName) {

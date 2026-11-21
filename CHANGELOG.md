@@ -70,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`jfr_tsa` put every execution sample under one thread named "unknown"** (#222). It read the
+  thread from `eventThread`, which `jdk.ExecutionSample` and `jdk.NativeMethodSample` do not have;
+  they carry `sampledThread`. Per-thread profiles, `totalThreads` and the active-thread count of
+  `jfr_use` now follow the sampled thread, and events without `sampledThread` (such as
+  `jdk.JavaMonitorEnter` in the blocking correlation) still use `eventThread`. `jfr_diagnose` merges `jfr_tsa`, so it was affected too
 - **The build failed to configure on Gradle 9.9** (#228) with `Could not get unknown property
   'sourceSets' for project ':parser-core' of type ...DefaultProjectDependency`. Three build files
   read `project(':parser-core').sourceSets` inside `dependencies {}`; they now resolve it outside
