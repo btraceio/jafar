@@ -79,34 +79,66 @@ public final class PprofBuilder {
     return id;
   }
 
-  public long[] internStack(Object frames, FrameFormat fmt) {
+  /**
+   * One stack frame, resolved and rendered, ready for {@link #internFrames}.
+   *
+   * @param renderedName the function name the {@link FrameFormat} rendered
+   * @param methodName the bare method name
+   * @param line the line number, 0 when the recording has none
+   */
+  public record RenderedFrame(String renderedName, String methodName, long line) {}
+
+  /**
+   * Resolves and renders the frames of a JFR stack, leaf first, without touching this builder's
+   * tables: safe to call from any thread, so the converter calls it outside its lock. Frames that
+   * cannot be resolved are dropped.
+   *
+   * @param frames the {@code frames} value of a JFR stack trace
+   * @param fmt how to render each frame's function name
+   * @return the rendered frames; empty when {@code frames} is not an array
+   */
+  public static RenderedFrame[] renderStack(Object frames, FrameFormat fmt) {
     Object[] frameArray;
     if (frames instanceof ArrayType at) {
       frameArray = (Object[]) at.getArray();
     } else if (frames instanceof Object[] arr) {
       frameArray = arr;
     } else {
-      return new long[0];
+      return new RenderedFrame[0];
     }
 
-    List<Long> locIds = new ArrayList<>(frameArray.length);
+    List<RenderedFrame> rendered = new ArrayList<>(frameArray.length);
     for (Object frameElement : frameArray) {
       FrameExtractor.FrameData data = FrameExtractor.extractData(frameElement);
       if (data == null) continue;
-
-      String renderedName = fmt.render(data.className(), data.methodName(), data.lineNumber());
-      long fnId =
-          internFunction(
-              renderedName, data.methodName(), data.lineNumber() < 0 ? 0 : data.lineNumber());
-      long locId = internLocation(fnId, data.lineNumber() < 0 ? 0 : data.lineNumber());
-      locIds.add(locId);
+      long line = data.lineNumber() < 0 ? 0 : data.lineNumber();
+      rendered.add(
+          new RenderedFrame(
+              fmt.render(data.className(), data.methodName(), data.lineNumber()),
+              data.methodName(),
+              line));
     }
+    return rendered.toArray(new RenderedFrame[0]);
+  }
 
-    long[] result = new long[locIds.size()];
-    for (int i = 0; i < result.length; i++) {
-      result[i] = locIds.get(i);
+  /**
+   * Interns rendered frames as functions and locations.
+   *
+   * @return the location ids, in the order of {@code frames}
+   */
+  public long[] internFrames(RenderedFrame[] frames) {
+    long[] result = new long[frames.length];
+    for (int i = 0; i < frames.length; i++) {
+      RenderedFrame frame = frames[i];
+      long fnId = internFunction(frame.renderedName(), frame.methodName(), frame.line());
+      result[i] = internLocation(fnId, frame.line());
     }
     return result;
+  }
+
+  /** {@link #renderStack} then {@link #internFrames}. */
+  public long[] internStack(Object frames, FrameFormat fmt) {
+    return internFrames(renderStack(frames, fmt));
   }
 
   public void addSample(long[] locationIds, int firstValueIndex, long[] vals, List<Label> labels) {
