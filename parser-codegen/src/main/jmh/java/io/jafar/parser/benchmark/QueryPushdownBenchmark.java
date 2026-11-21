@@ -12,6 +12,8 @@ import io.jafar.parser.internal_api.ChunkParserListener;
 import io.jafar.parser.internal_api.StreamingChunkParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -289,6 +291,52 @@ public class QueryPushdownBenchmark {
         return true;
       }
     };
+  }
+
+  /**
+   * Counting events per type by decoding every one of them: what a handler without header access
+   * has to do. Compare with {@link #countEventsFromHeaders}.
+   */
+  @Benchmark
+  public void countByDecoding(RecordingState recording, Blackhole bh) throws Exception {
+    Map<String, LongAdder> counts = new ConcurrentHashMap<>();
+    try (UntypedJafarParser parser =
+        ParsingContext.create().newUntypedParser(recording.recording)) {
+      parser.handle(
+          (type, value, ctl) ->
+              counts.computeIfAbsent(type.getName(), k -> new LongAdder()).increment());
+      parser.run();
+    }
+    requireBenchCounts(recording, name -> counts.get(name) == null ? 0 : counts.get(name).sum());
+    bh.consume(counts);
+  }
+
+  /** Counting events per type from their headers ({@code countEvents()}): nothing is decoded. */
+  @Benchmark
+  public void countEventsFromHeaders(RecordingState recording, Blackhole bh) throws Exception {
+    Map<String, Long> counts;
+    try (UntypedJafarParser parser =
+        ParsingContext.create().newUntypedParser(recording.recording)) {
+      counts = parser.countEvents();
+    }
+    requireBenchCounts(recording, name -> counts.getOrDefault(name, 0L));
+    bh.consume(counts);
+  }
+
+  private static void requireBenchCounts(
+      RecordingState recording, java.util.function.ToLongFunction<String> count) {
+    requireEqual(
+        PushdownRecording.COMMON + " events",
+        (long) recording.chunks * PushdownRecording.COMMON_PER_CHUNK,
+        count.applyAsLong(PushdownRecording.COMMON));
+    requireEqual(
+        PushdownRecording.SAMPLED + " events",
+        (long) recording.chunks * PushdownRecording.SAMPLED_PER_CHUNK,
+        count.applyAsLong(PushdownRecording.SAMPLED));
+    requireEqual(
+        PushdownRecording.RARE + " events",
+        (long) recording.chunks * PushdownRecording.RARE_PER_CHUNK,
+        count.applyAsLong(PushdownRecording.RARE));
   }
 
   /** Ceiling for a type filter: everything but event decoding. */
