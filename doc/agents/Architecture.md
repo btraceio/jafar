@@ -121,6 +121,18 @@ Beyond the gates, the conventions the codebase already follows:
     compile with `jafar-processor`: the generated handler's `opOf` and metadata-check switches get
     one `case` per accessor, and javac reports `duplicate case label`. No diagnostic of the
     processor's own names the interface.
+  - Interface methods with no field read behind them (`TypedAccessorShapesTest`). Both sides
+    leave `default` methods, `@JfrIgnore` ones included, to the interface. An accessor of a field
+    the recording lacks returns `0`, `false` or `null` at runtime. An accessor of a field present
+    whose declared type cannot be produced (a narrowing primitive, a `raw = true` accessor not
+    returning `long`) fails the parse at build time, naming the field (`HandlerTemplate`'s plan
+    check). At runtime it throws `IllegalStateException` naming the accessor and the field when
+    called, and generation does not fail, so a parse that never calls it runs. That difference
+    is kept. Before this, the runtime class left the accessor unimplemented
+    (`AbstractMethodError`), overrode default methods with empty ones, and failed the whole
+    parse on an array accessor of an absent field. It also generated a getter for every field no
+    accessor reads, which collided with an alias of that name
+    (`@JfrField("bytecodeIndex") int lineNumber()`: `Duplicate method name`).
 
   Both read a simple type (one field, such as `jdk.types.Symbol`) as the value it wraps, unless the
   accessor returns the interface registered for that type (`ThreadState state()` for a pooled
