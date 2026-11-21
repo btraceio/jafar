@@ -1641,7 +1641,13 @@ final class CodeGenerator {
           // depend on which accessor comes first. jafar-processor does not support several
           // accessors per field (its generated switches get duplicate case labels): a kept
           // difference between the generators, see doc/agents/Architecture.md.
-          List<FieldMapping> ordered = new ArrayList<>(mappings);
+          // One mapping per accessor: getMethods() lists a method declared by two superinterfaces
+          // twice, and two mappings of one method emitted it twice (duplicate method name).
+          Map<String, FieldMapping> byAccessor = new HashMap<>();
+          for (FieldMapping mapping : mappings) {
+            byAccessor.putIfAbsent(mapping.method() + (mapping.raw() ? "#raw" : ""), mapping);
+          }
+          List<FieldMapping> ordered = new ArrayList<>(byAccessor.values());
           ordered.sort(Comparator.comparing(FieldMapping::method).thenComparing(FieldMapping::raw));
           requireOneTypePerField(target, field, fieldName, fldClz, withConstantPool, ordered);
           boolean generateRefField = true;
@@ -1667,7 +1673,12 @@ final class CodeGenerator {
                   generateRefField,
                   generatePoolCache && !mapping.raw(),
                   field);
-              generateRefField = false;
+              // handleFieldRef declares <field>_ref unless it returned early (an object accessor of
+              // a type with no generated class, fldClz == null): a raw accessor after it still
+              // needs the field (NoSuchFieldError otherwise, once accessors had a fixed order).
+              if (mapping.raw() || fldClz != null) {
+                generateRefField = false;
+              }
               if (!mapping.raw()) {
                 generatePoolCache = false;
               }

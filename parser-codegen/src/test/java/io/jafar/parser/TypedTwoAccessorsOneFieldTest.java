@@ -158,6 +158,7 @@ public class TypedTwoAccessorsOneFieldTest {
     List<String> mismatches = Collections.synchronizedList(new ArrayList<>());
     AtomicLong names = new AtomicLong();
     AtomicLong frames = new AtomicLong();
+    java.util.Set<Integer> lineNumbers = ConcurrentHashMap.newKeySet();
     try (TypedJafarParser p = ParsingContext.create().newTypedParser(recording())) {
       p.handle(
           WithFrames.class,
@@ -168,6 +169,7 @@ public class TypedTwoAccessorsOneFieldTest {
             }
             for (Frame f : st.frames()) {
               frames.incrementAndGet();
+              lineNumbers.add(f.lineNumber());
               if (f.lineNumber() != f.line() || f.lineNumber() != f.lineNumberWide()) {
                 mismatches.add(
                     "lineNumber " + f.lineNumber() + " / " + f.line() + " / " + f.lineNumberWide());
@@ -185,6 +187,8 @@ public class TypedTwoAccessorsOneFieldTest {
       p.run();
     }
     assertTrue(frames.get() > 0 && names.get() > 0, "frames " + frames + ", names " + names);
+    // the three lineNumber accessors read one field: varied values, so agreement means something
+    assertTrue(lineNumbers.size() > 1, "lineNumbers: " + lineNumbers);
     assertNoMismatch(mismatches);
   }
 
@@ -224,10 +228,118 @@ public class TypedTwoAccessorsOneFieldTest {
     assertNotNull(t, "no JafarSerializationException in the cause chain of " + thrown);
     String message = String.valueOf(t.getMessage());
     assertTrue(
-        message.contains("state()")
-            && message.contains("stateName()")
-            && message.contains("'state'"),
+        message.contains(IncompatibleTypes.class.getName())
+            && message.contains("ThreadState state()")
+            && message.contains("String stateName()")
+            && message.contains("'state'")
+            && message.contains("cannot return"),
         message);
+  }
+
+  /**
+   * An object accessor whose type is not generated for the field (a Thread interface on the
+   * jdk.types.StackTrace field, so the field has no generated class) emits no {@code _ref}; a raw
+   * index sorting after it still needs one. Main emitted accessors in hash order, so most such
+   * interfaces happened to work; with a fixed order this one failed (NoSuchFieldError, {@code
+   * stackTrace_ref}) until the ref was marked declared only when it was.
+   */
+  @JfrType("jdk.ExecutionSample")
+  public interface UntargetedThenRaw {
+    @JfrField("stackTrace")
+    Thread a0Untargeted();
+
+    @JfrField(value = "stackTrace", raw = true)
+    long b0Index();
+
+    long startTime();
+  }
+
+  @JfrType("jdk.ExecutionSample")
+  public interface StackTraceIndexOnly {
+    @JfrField(value = "stackTrace", raw = true)
+    long stackTraceIndex();
+
+    long startTime();
+  }
+
+  @Test
+  void aRawIndexAfterAnUntargetedObjectAccessorReadsTheIndex() throws Exception {
+    Map<String, Long> alone = new ConcurrentHashMap<>();
+    try (TypedJafarParser p = ParsingContext.create().newTypedParser(recording())) {
+      p.handle(
+          StackTraceIndexOnly.class,
+          (e, ctl) -> alone.merge(e.startTime() + " " + e.stackTraceIndex(), 1L, Long::sum));
+      p.run();
+    }
+    Map<String, Long> after = new ConcurrentHashMap<>();
+    try (TypedJafarParser p = ParsingContext.create().newTypedParser(recording())) {
+      p.handle(
+          UntargetedThenRaw.class,
+          (e, ctl) -> after.merge(e.startTime() + " " + e.b0Index(), 1L, Long::sum));
+      p.run();
+    }
+    assertTrue(alone.size() > 1, "stack trace indices: " + alone.size());
+    assertTrue(alone.equals(after), "the raw index differs after the untargeted accessor");
+  }
+
+  public interface DiamondLeft {
+    @JfrField("name")
+    String methodName();
+  }
+
+  public interface DiamondRight {
+    @JfrField("name")
+    String methodName();
+  }
+
+  /** methodName() reaches getMethods() twice, once from each superinterface. */
+  @JfrType("jdk.types.Method")
+  public interface DiamondMethod extends DiamondLeft, DiamondRight {
+    String name();
+  }
+
+  @JfrType("jdk.ExecutionSample")
+  public interface DiamondSample {
+    DiamondFrames stackTrace();
+  }
+
+  @JfrType("jdk.types.StackTrace")
+  public interface DiamondFrames {
+    DiamondFrame[] frames();
+  }
+
+  @JfrType("jdk.types.StackFrame")
+  public interface DiamondFrame {
+    DiamondMethod method();
+  }
+
+  @Test
+  void anAccessorDeclaredByTwoSuperinterfacesIsGeneratedOnce() throws Exception {
+    List<String> mismatches = Collections.synchronizedList(new ArrayList<>());
+    AtomicLong names = new AtomicLong();
+    try (TypedJafarParser p = ParsingContext.create().newTypedParser(recording())) {
+      p.handle(
+          DiamondSample.class,
+          (e, ctl) -> {
+            DiamondFrames st = e.stackTrace();
+            if (st == null || st.frames() == null) {
+              return;
+            }
+            for (DiamondFrame f : st.frames()) {
+              DiamondMethod m = f.method();
+              if (m == null || m.name() == null) {
+                continue;
+              }
+              names.incrementAndGet();
+              if (!m.name().equals(m.methodName())) {
+                mismatches.add("method " + m.name() + " / " + m.methodName());
+              }
+            }
+          });
+      p.run();
+    }
+    assertTrue(names.get() > 0, "no method name read");
+    assertNoMismatch(mismatches);
   }
 
   private Path recording() throws Exception {
