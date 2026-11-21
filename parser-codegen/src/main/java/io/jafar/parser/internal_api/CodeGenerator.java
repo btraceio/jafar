@@ -1580,8 +1580,8 @@ final class CodeGenerator {
     //                        }
 
     List<MetadataField> allFields = new ArrayList<>();
-    // The fields this class reads, by identity: MetadataField.equals is structural (type, pool,
-    // dimension; the deserializer cache keys on it) and ignores the name, so in a HashSet reading
+    // The fields this class reads, by identity: MetadataField.equals is structural (type id,
+    // pool flag, dimension, declaring type) and ignores the name, so in a HashSet reading
     // jdk.ExecutionSample.sampledThread counted eventThread (also a pooled java.lang.Thread) as
     // read, and the constructor stored it into an eventThread_ref no accessor had declared.
     Set<MetadataField> appliedFields = Collections.newSetFromMap(new IdentityHashMap<>());

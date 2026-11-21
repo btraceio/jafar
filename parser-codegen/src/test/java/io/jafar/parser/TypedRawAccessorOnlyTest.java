@@ -65,22 +65,46 @@ public class TypedRawAccessorOnlyTest {
   }
 
   @Test
-  void rawIndicesAloneReadTheSameIndexAsNextToTheObjectAccessor() throws Exception {
-    URL resource = getClass().getClassLoader().getResource("test-ap.jfr");
-    assertNotNull(resource, "test-ap.jfr is not on the test classpath");
-    Path jfr = Paths.get(resource.toURI());
-
-    // startTime + index -> how many samples, per interface
+  void aRawIndexAloneReadsTheSameIndexAsNextToTheObjectAccessor() throws Exception {
+    Map<String, Long> withObject = indicesNextToTheObjectAccessor();
     Map<String, Long> alone = new ConcurrentHashMap<>();
-    try (TypedJafarParser p = ParsingContext.create().newTypedParser(jfr)) {
+    try (TypedJafarParser p = ParsingContext.create().newTypedParser(recording())) {
       p.handle(
           SampleThreadIndex.class,
           (e, ctl) -> alone.merge(e.startTime() + " " + e.sampledThreadIndex(), 1L, Long::sum));
       p.run();
     }
+    assertEquals(withObject, alone);
+  }
+
+  @Test
+  void twoRawIndicesAloneAgreeAndReadTheSameIndexAsNextToTheObjectAccessor() throws Exception {
+    Map<String, Long> withObject = indicesNextToTheObjectAccessor();
+    Map<String, Long> twoRaw = new ConcurrentHashMap<>();
+    AtomicLong mismatches = new AtomicLong();
+    try (TypedJafarParser p = ParsingContext.create().newTypedParser(recording())) {
+      p.handle(
+          SampleTwoThreadIndices.class,
+          (e, ctl) -> {
+            if (e.sampledThreadIndex() != e.threadIndex()) {
+              mismatches.incrementAndGet();
+            }
+            twoRaw.merge(e.startTime() + " " + e.sampledThreadIndex(), 1L, Long::sum);
+          });
+      p.run();
+    }
+    assertEquals(0, mismatches.get(), "samples whose two raw indices differ");
+    assertEquals(withObject, twoRaw);
+  }
+
+  /**
+   * startTime + raw index -> how many samples, read next to the object accessor, which works on
+   * every version; asserts the premise: threads resolve, behind more than one index.
+   */
+  private Map<String, Long> indicesNextToTheObjectAccessor() throws Exception {
     Map<String, Long> withObject = new ConcurrentHashMap<>();
     AtomicLong resolved = new AtomicLong();
-    try (TypedJafarParser p = ParsingContext.create().newTypedParser(jfr)) {
+    try (TypedJafarParser p = ParsingContext.create().newTypedParser(recording())) {
       p.handle(
           SampleThread.class,
           (e, ctl) -> {
@@ -91,27 +115,17 @@ public class TypedRawAccessorOnlyTest {
           });
       p.run();
     }
-
-    // The premise: samples whose thread resolves, so the index is a real pool key.
     assertTrue(resolved.get() > 0, "no sample resolved its thread");
     assertTrue(
         withObject.keySet().stream().map(k -> k.substring(k.indexOf(' ') + 1)).distinct().count()
             > 1,
         "one index for every sample");
-    assertEquals(withObject, alone);
+    return withObject;
+  }
 
-    Map<String, Long> twoRaw = new ConcurrentHashMap<>();
-    try (TypedJafarParser p = ParsingContext.create().newTypedParser(jfr)) {
-      p.handle(
-          SampleTwoThreadIndices.class,
-          (e, ctl) -> {
-            if (e.sampledThreadIndex() != e.threadIndex()) {
-              twoRaw.merge("mismatch", 1L, Long::sum);
-            }
-            twoRaw.merge(e.startTime() + " " + e.sampledThreadIndex(), 1L, Long::sum);
-          });
-      p.run();
-    }
-    assertEquals(withObject, twoRaw);
+  private Path recording() throws Exception {
+    URL resource = getClass().getClassLoader().getResource("test-ap.jfr");
+    assertNotNull(resource, "test-ap.jfr is not on the test classpath");
+    return Paths.get(resource.toURI());
   }
 }
