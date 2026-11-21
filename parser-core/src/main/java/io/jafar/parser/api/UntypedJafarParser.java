@@ -5,9 +5,14 @@ import io.jafar.parser.TypeFilter;
 import io.jafar.parser.impl.ParsingContextImpl;
 import io.jafar.parser.impl.UntypedJafarParserImpl;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Untyped JFR parser with optimization strategies for different access patterns.
@@ -123,6 +128,29 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
      * @param ctl parser control object for flow control and metadata access
      */
     void handle(MetadataClass type, Map<String, Object> value, Control ctl);
+  }
+
+  /** Receives an event's header without the event being decoded. See {@link #handleHeaders}. */
+  @FunctionalInterface
+  interface EventHeaderHandler {
+    /**
+     * The {@code startTime} passed for an event whose type has no {@code startTime} field of type
+     * {@code long} (not an array, not a constant-pool reference).
+     */
+    long NO_START_TIME = Long.MIN_VALUE;
+
+    /**
+     * Handles one event's header.
+     *
+     * @param type the metadata class type of the event
+     * @param size the event's size in bytes as the recording stores it, header included
+     * @param startTime the event's {@code startTime}, the same value a decoded event carries under
+     *     {@code "startTime"}: epoch nanoseconds for a {@code @Timestamp(TICKS)} field, which every
+     *     JDK event has, otherwise the stored value; or {@link #NO_START_TIME} when the type has no
+     *     {@code long startTime} field
+     * @param ctl parser control object for flow control and metadata access
+     */
+    void onEvent(MetadataClass type, long size, long startTime, Control ctl);
   }
 
   /**
@@ -358,5 +386,89 @@ public interface UntypedJafarParser extends JafarParser, AutoCloseable {
   default UntypedJafarParser onDecodeError(DecodeErrorHandler handler) {
     throw new UnsupportedOperationException(
         getClass().getName() + " does not support onDecodeError");
+  }
+
+  /**
+   * Registers a handler for the headers of the events whose type {@code filter} accepts: their
+   * type, size and {@code startTime}, without decoding them.
+   *
+   * <p>An event whose type only header handlers want is not decoded: its payload is skipped as if
+   * no handler wanted it, except for its {@code startTime}. When the type has a {@code long
+   * startTime} field, the fields before it are skipped without being decoded and the start time is
+   * read; in JDK recordings it is the first field. So a parser whose handlers are all header
+   * handlers reads every event's header and nothing more, which is what counting events per type
+   * needs. When a value handler (see {@link #handle(EventHandler)}) wants the same event, the event
+   * is decoded for it as usual, and the header handler is called first.
+   *
+   * <pre>{@code
+   * Map<String, LongAdder> counts = new ConcurrentHashMap<>();
+   * parser.handleHeaders(
+   *     type -> true,
+   *     (type, size, startTime, ctl) ->
+   *         counts.computeIfAbsent(type.getName(), k -> new LongAdder()).increment());
+   * parser.run();
+   * }</pre>
+   *
+   * <p>{@link #countEvents(TypeFilter)} does exactly that.
+   *
+   * <p>The handler is called once per event, on the thread parsing the event's chunk, so it must be
+   * thread-safe like any other handler. It is called for an event that would fail to decode, since
+   * the event is not decoded for it, and is not called for an event whose type the chunk's metadata
+   * does not declare. Exceptions thrown from it stop parsing and propagate to {@link #run()}.
+   *
+   * <p>A start-time range registered with {@link #handle(TypeFilter, TimeRange, EventHandler)}
+   * skips no chunk while a header handler is registered: the header handler asks for every chunk.
+   *
+   * <p>Otherwise as {@link #handle(TypeFilter, EventHandler)}: the filter is asked once per chunk
+   * and type; registering the same filter and handler again counts a further registration, and the
+   * handler is still called once per event; it is safe to call while {@code run()} is in progress.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}, so that existing
+   * implementations of this interface keep compiling; parsers created by {@link #open} support it.
+   *
+   * @param filter which event types the handler wants; must be thread-safe
+   * @param handler consumer of event headers
+   * @return a registration that can be closed to stop receiving headers
+   */
+  default HandlerRegistration<?> handleHeaders(TypeFilter filter, EventHeaderHandler handler) {
+    throw new UnsupportedOperationException(
+        getClass().getName() + " does not support handleHeaders");
+  }
+
+  /**
+   * Counts the events of each type {@code filter} accepts, without decoding them: registers a
+   * header handler (see {@link #handleHeaders}), calls {@link #run()} and closes the registration.
+   *
+   * <p>Handlers registered earlier run in the same parse, and a parser listener sees it, as with
+   * any call to {@link #run()}.
+   *
+   * @param filter which event types to count
+   * @return the number of events per type name, in name order; a type with no event is absent
+   * @throws IOException if the parse fails
+   * @throws UnsupportedOperationException if this parser does not support {@link #handleHeaders}
+   */
+  default SortedMap<String, Long> countEvents(TypeFilter filter) throws IOException {
+    ConcurrentHashMap<String, LongAdder> counts = new ConcurrentHashMap<>();
+    HandlerRegistration<?> registration =
+        handleHeaders(
+            filter,
+            (type, size, startTime, ctl) -> {
+              // get() first: on JDK 8 computeIfAbsent locks its bin even when the key is present.
+              LongAdder count = counts.get(type.getName());
+              if (count == null) {
+                count = counts.computeIfAbsent(type.getName(), k -> new LongAdder());
+              }
+              count.increment();
+            });
+    try {
+      run();
+    } finally {
+      registration.close();
+    }
+    SortedMap<String, Long> result = new TreeMap<>();
+    for (Map.Entry<String, LongAdder> entry : counts.entrySet()) {
+      result.put(entry.getKey(), entry.getValue().sum());
+    }
+    return result;
   }
 }

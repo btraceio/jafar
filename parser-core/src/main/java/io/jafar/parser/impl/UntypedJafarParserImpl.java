@@ -13,14 +13,18 @@ import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.CheckpointEvent;
 import io.jafar.parser.internal_api.ChunkHeader;
 import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.RecordingStream;
 import io.jafar.parser.internal_api.StreamingChunkParser;
+import io.jafar.parser.internal_api.TypeSkipper;
 import io.jafar.parser.internal_api.UntypedEventStreamFactory;
 import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
+import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -169,6 +173,51 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     EventHandler filtered =
         new FilteredHandler(filter, startTime.isUnbounded() ? null : startTime, handler);
     return new HandlerRegistrationImpl<>(filtered, handlers.add(filtered));
+  }
+
+  @Override
+  public HandlerRegistration<?> handleHeaders(TypeFilter filter, EventHeaderHandler handler) {
+    Objects.requireNonNull(filter, "filter");
+    Objects.requireNonNull(handler, "handler");
+    EventHandler registered = new HeaderHandler(filter, handler);
+    return new HandlerRegistrationImpl<>(registered, handlers.add(registered));
+  }
+
+  /**
+   * A header handler, in the registry among the value handlers so that registration counting and
+   * removal work as for them. Dispatch never calls {@link #handle}: {@link #select} calls {@link
+   * #handler} with the header of each event whose type {@link #filter} accepts.
+   */
+  private static final class HeaderHandler implements EventHandler {
+    final TypeFilter filter;
+    final EventHeaderHandler handler;
+
+    HeaderHandler(TypeFilter filter, EventHeaderHandler handler) {
+      this.filter = filter;
+      this.handler = handler;
+    }
+
+    @Override
+    public void handle(MetadataClass type, Map<String, Object> value, Control ctl) {
+      // never called: a header handler receives headers, through select
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (!(o instanceof HeaderHandler)) {
+        return false;
+      }
+      HeaderHandler other = (HeaderHandler) o;
+      return filter.equals(other.filter) && handler.equals(other.handler);
+    }
+
+    @Override
+    public int hashCode() {
+      return 31 * filter.hashCode() + handler.hashCode();
+    }
   }
 
   /**
@@ -340,33 +389,147 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
 
   private static final class TypeTargets {
     final MetadataClass type;
+
+    /** The value handlers that want the type; decoded for them. */
     final EventHandler[] handlers;
 
-    TypeTargets(MetadataClass type, EventHandler[] handlers) {
+    /** The header handlers that want the type. */
+    final EventHeaderHandler[] headers;
+
+    /**
+     * The skippers of the fields before the type's {@code startTime} field, in order, or {@code
+     * null} when the type has no {@code startTime} the header can carry.
+     */
+    final TypeSkipper[] beforeStartTime;
+
+    /**
+     * How a decoded event's {@code startTime} is converted ({@link TemporalNormalizer#kindOf}), so
+     * that the header carries the same value.
+     */
+    final int startTimeKind;
+
+    TypeTargets(MetadataClass type, EventHandler[] handlers, EventHeaderHandler[] headers) {
       this.type = type;
       this.handlers = handlers;
+      this.headers = headers;
+      this.beforeStartTime = headers.length > 0 ? fieldsBeforeStartTime(type) : null;
+      this.startTimeKind =
+          beforeStartTime != null ? TemporalNormalizer.kindOf(type, "startTime") : 0;
     }
   }
 
   private static final EventHandler[] NO_HANDLERS = new EventHandler[0];
+  private static final EventHeaderHandler[] NO_HEADERS = new EventHeaderHandler[0];
 
   /**
-   * The handlers that want events of {@code type}, or {@code null} when none does and the event
-   * need not be decoded. A filter is asked once per chunk, type and set of registered handlers.
+   * The skippers of the fields that precede {@code type}'s {@code startTime} field, or {@code null}
+   * when the type has no {@code startTime} field of type {@code long} that is neither an array nor
+   * a constant-pool reference. Such a field is written as a varint like every {@code long}, so a
+   * header can carry it by skipping the fields before it and reading one varint, without decoding
+   * the event.
+   */
+  static TypeSkipper[] fieldsBeforeStartTime(MetadataClass type) {
+    List<MetadataField> fields = type.getFields();
+    for (int i = 0; i < fields.size(); i++) {
+      MetadataField field = fields.get(i);
+      if (!"startTime".equals(field.getName())) {
+        continue;
+      }
+      MetadataClass fieldType = field.getType();
+      if (field.getDimension() > 0
+          || field.hasConstantPool()
+          || fieldType == null
+          || !"long".equals(fieldType.getName())) {
+        return null;
+      }
+      TypeSkipper[] before = new TypeSkipper[i];
+      for (int j = 0; j < i; j++) {
+        before[j] = fields.get(j).skipper();
+      }
+      return before;
+    }
+    return null;
+  }
+
+  /**
+   * The value handlers that want events of {@code type}, or {@code null} when none does and the
+   * event need not be decoded. A filter is asked once per chunk, type and set of registered
+   * handlers.
    */
   private EventHandler[] targetsFor(ParserContext context, long typeId, MetadataClass type) {
     EventHandler[] registered = handlers.snapshot();
+    TypeTargets targets = targets(context, typeId, type, registered);
+    if (targets == null) {
+      // No filter in play: every handler gets every event, and with no handler at all the event
+      // is still decoded, as before filters existed (a parser listener may rely on decode errors).
+      return registered;
+    }
+    return targets.handlers.length == 0 ? null : targets.handlers;
+  }
+
+  /**
+   * {@link #targetsFor}, after calling the header handlers that want the event. Called with the
+   * chunk's stream at the start of the event's payload, and leaves it there.
+   */
+  private EventHandler[] select(
+      ParserContext context, long typeId, MetadataClass type, long size, Control ctl) {
+    EventHandler[] registered = handlers.snapshot();
+    TypeTargets targets = targets(context, typeId, type, registered);
+    if (targets == null) {
+      return registered;
+    }
+    EventHeaderHandler[] headers = targets.headers;
+    if (headers.length > 0) {
+      long startTime = EventHeaderHandler.NO_START_TIME;
+      if (targets.beforeStartTime != null) {
+        long raw = peekStartTime(context, targets.beforeStartTime);
+        startTime =
+            raw == EventHeaderHandler.NO_START_TIME
+                ? raw
+                : TemporalNormalizer.normalizeKind(targets.startTimeKind, raw, ctl.chunkInfo());
+      }
+      for (int i = 0; i < headers.length; i++) {
+        headers[i].onEvent(type, size, startTime, ctl);
+      }
+    }
+    return targets.handlers.length == 0 ? null : targets.handlers;
+  }
+
+  /**
+   * Skips the fields before the event's {@code startTime}, reads it, and puts the stream back at
+   * the start of the payload. A payload that cannot hold it (a corrupted event; the event is not
+   * decoded, so nothing else would report it) yields {@link EventHeaderHandler#NO_START_TIME}.
+   */
+  private static long peekStartTime(ParserContext context, TypeSkipper[] before) {
+    RecordingStream stream = context.get(RecordingStream.class);
+    long position = stream.position();
+    try {
+      for (int i = 0; i < before.length; i++) {
+        before[i].skip(stream);
+      }
+      return stream.readVarint();
+    } catch (IOException | RuntimeException e) {
+      return EventHeaderHandler.NO_START_TIME;
+    } finally {
+      stream.position(position);
+    }
+  }
+
+  /**
+   * The cached targets of {@code type} in this chunk for the {@code registered} handlers, or {@code
+   * null} when no registered handler has a filter, so that every handler wants every event.
+   */
+  private static TypeTargets targets(
+      ParserContext context, long typeId, MetadataClass type, EventHandler[] registered) {
     boolean filtered = false;
     for (int i = 0; i < registered.length; i++) {
-      if (registered[i] instanceof FilteredHandler) {
+      if (registered[i] instanceof FilteredHandler || registered[i] instanceof HeaderHandler) {
         filtered = true;
         break;
       }
     }
     if (!filtered) {
-      // No filter in play: every handler gets every event, and with no handler at all the event
-      // is still decoded, as before filters existed (a parser listener may rely on decode errors).
-      return registered;
+      return null;
     }
     ChunkSelection selection = context.get(ChunkSelection.class);
     if (selection == null) {
@@ -379,10 +542,41 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     }
     TypeTargets targets = selection.byTypeId.get(typeId);
     if (targets == null || targets.type != type) {
-      targets = new TypeTargets(type, accepting(registered, type));
+      targets =
+          new TypeTargets(type, accepting(registered, type), headersAccepting(registered, type));
       selection.byTypeId.put(typeId, targets);
     }
-    return targets.handlers.length == 0 ? null : targets.handlers;
+    return targets;
+  }
+
+  /** The header handlers of {@code registered} that accept {@code type}, each once. */
+  private static EventHeaderHandler[] headersAccepting(
+      EventHandler[] registered, MetadataClass type) {
+    EventHeaderHandler[] accepted = null;
+    int count = 0;
+    for (int i = 0; i < registered.length; i++) {
+      if (!(registered[i] instanceof HeaderHandler)) {
+        continue;
+      }
+      HeaderHandler header = (HeaderHandler) registered[i];
+      if (!header.filter.test(type)) {
+        continue;
+      }
+      if (accepted == null) {
+        accepted = new EventHeaderHandler[registered.length];
+      }
+      boolean present = false;
+      for (int j = 0; j < count; j++) {
+        if (accepted[j].equals(header.handler)) {
+          present = true;
+          break;
+        }
+      }
+      if (!present) {
+        accepted[count++] = header.handler;
+      }
+    }
+    return count == 0 ? NO_HEADERS : Arrays.copyOf(accepted, count);
   }
 
   /** The handlers of {@code registered} that accept {@code type}, each once. */
@@ -391,6 +585,9 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     int count = 0;
     for (int i = 0; i < registered.length; i++) {
       EventHandler candidate = registered[i];
+      if (candidate instanceof HeaderHandler) {
+        continue; // receives headers, never values
+      }
       if (candidate instanceof FilteredHandler) {
         FilteredHandler filtered = (FilteredHandler) candidate;
         if (!filtered.filter.test(type)) {
@@ -457,6 +654,12 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
           }
 
           @Override
+          public Object select(
+              ParserContext context, long typeId, MetadataClass type, long size, Control ctl) {
+            return UntypedJafarParserImpl.this.select(context, typeId, type, size, ctl);
+          }
+
+          @Override
           public void onEventValue(MetadataClass type, Map<String, Object> value, Control ctl) {
             onEventValue(type, value, ctl, handlers.snapshot());
           }
@@ -502,8 +705,9 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
       }
 
       @Override
-      protected Object select(ParserContext context, long typeId, MetadataClass type) {
-        return sink.select(context, typeId, type);
+      protected Object select(
+          ParserContext context, long typeId, MetadataClass type, long size, Control ctl) {
+        return sink.select(context, typeId, type, size, ctl);
       }
 
       @Override
