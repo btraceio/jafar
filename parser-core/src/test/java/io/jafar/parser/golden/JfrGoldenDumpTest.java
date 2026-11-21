@@ -24,13 +24,15 @@ import org.junit.jupiter.params.provider.EnumSource;
  *
  * <p>The golden holds the line count, a digest over the sorted dump lines and the per-event-type
  * counts, plus the fixture sha256 for the committed TCK recording; the two generated fixtures
- * record no fixture sha, because their bytes are not reproducible across JDK builds (measured
- * across Temurin 21.0.3/21.0.4/21.0.5 and Liberica 21.0.2 — see {@code test-recordings/README.md} —
- * so a pinned sha survives only on the JDK builds that write byte-identical fixtures, and says
- * nothing about parser correctness). The digest, which is JDK-independent, remains the gate; the
- * full dump is materialized only on a mismatch, into {@code build/golden-actual}, next to the new
- * golden, for the review diff (Risk 4: the tck deep-resolved dump is ~454 MB, measured 453,889,122
- * bytes; a green run never builds it).
+ * record no fixture sha. Their bytes follow the identity hashes of the JVM that ran the generator
+ * (the JMC writer orders constant pools by a hash map whose keys hash an enum constant), so without
+ * a fixed identity hash they differed between JDK builds and between ways of starting the same JDK;
+ * {@code generateTestRecordings} now fixes it with {@code -XX:hashCode=2}, but not every JVM that
+ * differed has been tried with the flag, and a pinned sha would say nothing about parser
+ * correctness anyway (see {@code test-recordings/README.md}). The digest, which is JVM-independent,
+ * remains the gate; the full dump is materialized only on a mismatch, into {@code
+ * build/golden-actual}, next to the new golden, for the review diff (Risk 4: the tck deep-resolved
+ * dump is ~454 MB, measured 453,889,122 bytes; a green run never builds it).
  *
  * <p>A change to any parsed value — a seeded decode-path change, a swapped wrapped-constant
  * handling — fails here naming the fixture and the regeneration command (AC-4.2, the DataShapes
@@ -63,8 +65,8 @@ class JfrGoldenDumpTest {
     }
     GoldenFile.verify(
         corpus.fixtureName(),
-        // Generated fixtures pin no fixture sha: their bytes depend on the JDK build that ran the
-        // generator (see the class javadoc), while the digest below is JDK-independent. The
+        // Generated fixtures pin no fixture sha: their bytes depend on the identity hashes of the
+        // JVM that ran the generator (see the class javadoc), while the digest below does not. The
         // committed TCK recording is byte-stable, so it keeps its sha pin.
         JfrCanonicalDump.digest(recording, true, !corpus.isGenerated()),
         () -> fullDump(recording),
@@ -73,9 +75,10 @@ class JfrGoldenDumpTest {
 
   /**
    * The pin asymmetry is load-bearing, so it is asserted, not just documented: the generated
-   * fixtures' goldens keep an empty {@code fixture-sha256} line (their bytes differ per JDK build),
-   * while the committed TCK recording keeps a 64-hex pin. A stray regeneration with the wrong pin
-   * would otherwise pass on the machine that produced it and fail nowhere.
+   * fixtures' goldens keep an empty {@code fixture-sha256} line (their bytes follow the generator
+   * JVM's identity hashes), while the committed TCK recording keeps a 64-hex pin. A stray
+   * regeneration with the wrong pin would otherwise pass on the machine that produced it and fail
+   * nowhere.
    */
   @ParameterizedTest
   @EnumSource(JfrCorpus.class)

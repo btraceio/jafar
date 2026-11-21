@@ -146,10 +146,10 @@ public final class JfrCanonicalDump {
    * and {@code M } lines, and the per-event-type counts.
    *
    * <p>{@code pinFixtureSha} controls whether the fixture's byte sha256 is recorded. The
-   * JMC-written test recordings ({@code test-ap.jfr}/{@code test-jfr.jfr}) are not
-   * byte-reproducible across JDK builds, so their goldens record an empty {@code fixture-sha256}
-   * line; the value identity is unaffected either way. A committed recording (the TCK fixture)
-   * keeps the pin.
+   * JMC-written test recordings ({@code test-ap.jfr}/{@code test-jfr.jfr}) have bytes that follow
+   * the identity hashes of the JVM that generated them (see {@code test-recordings/README.md}), so
+   * their goldens record an empty {@code fixture-sha256} line; the value identity is unaffected
+   * either way. A committed recording (the TCK fixture) keeps the pin.
    */
   public static DumpDigest digest(
       Path recording, boolean withConstantsAndMetadata, boolean pinFixtureSha) throws IOException {

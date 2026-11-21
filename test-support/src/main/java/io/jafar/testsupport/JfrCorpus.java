@@ -29,9 +29,10 @@ public enum JfrCorpus {
   TCK_TEST("jfr-shell-tck/src/main/resources/tck-test.jfr", false),
 
   /**
-   * Recording written by {@code test-recordings}; regenerated, never committed. Value-deterministic
-   * across JDK builds, but not byte-reproducible across them either (see {@code
-   * test-recordings/README.md}); the golden gate pins its parsed values, not its bytes.
+   * Recording written by {@code test-recordings}; regenerated, never committed. Its parsed values
+   * were the same on every JVM it was generated on, while its bytes follow the generating JVM's
+   * identity hashes (see {@code test-recordings/README.md}), so the golden gate pins its parsed
+   * values, not its bytes.
    */
   TEST_AP("parser-core/src/test/resources/test-ap.jfr", true),
 
