@@ -102,7 +102,7 @@ final class Decorators {
 
   /** The thread id at {@code path}, or the event's own thread's id when no path was given. */
   private static Object threadId(Map<String, Object> event, List<String> path) {
-    return path == null ? EventThreads.id(event) : Values.get(event, path.toArray());
+    return path.isEmpty() ? EventThreads.id(event) : Values.get(event, path.toArray());
   }
 
   List<Map<String, Object>> findTimeRangeMatches(

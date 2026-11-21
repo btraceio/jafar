@@ -80,7 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `eventThread/javaThreadId` on both sides, which `jdk.ExecutionSample` does not have, so the
   documented `events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, ...)` matched
   nothing. Without `threadPath`/`decoratorThreadPath`, each event's own thread is now used, as in
-  `jfr_tsa`: `sampledThread` for samples, else `eventThread`
+  `jfr_tsa`: `sampledThread` for samples, else `eventThread`. For code reading a parsed query,
+  `JfrPath.DecorateByTimeOp.threadPathPrimary`/`threadPathDecorator` are then empty lists (they
+  held `eventThread/javaThreadId`)
 - **Stack profiles named a sample's thread differently from `jfr_tsa`.** They read `eventThread`
   before `sampledThread` and the OS name before the Java name; both now use the same rule
 - **`decorateByTime`/`decorateByKey` rejected a named parameter after `fields=`** with `Expected
@@ -92,7 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an `open <path>` line, which the dispatcher split at its spaces. The `open` command itself, typed
   or in a script, read only the path's first word in `jfr-shell` and kept quotes in `jafar-shell`.
   Both now take a path with spaces, unquoted or in quotes, and the transcript `ask` writes quotes
-  such a path, so replaying it opens the recording
+  such a path, so replaying it opens the recording. Behaviour changes in `jfr-shell`'s `open`:
+  words after the path are part of it, so `open rec.jfr # main` now opens `rec.jfr` only when no
+  file is named by the whole text, and prints a note saying the rest was ignored; `--alias` with no
+  name is now an error instead of being dropped; a leading quote without a closing one is part of
+  the file name
 - **The build failed to configure on Gradle 9.9** (#228) with `Could not get unknown property
   'sourceSets' for project ':parser-core' of type ...DefaultProjectDependency`. Three build files
   read `project(':parser-core').sourceSets` inside `dependencies {}`; they now resolve it outside

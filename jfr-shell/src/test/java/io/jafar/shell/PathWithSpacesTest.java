@@ -86,14 +86,43 @@ class PathWithSpacesTest {
 
   /** Runs {@code script -} with the given lines on stdin and returns its stdout. */
   private String script(String... lines) {
+    int exit = runScript(lines);
+    assertEquals(0, exit, "script exit code; stderr: " + err + "; stdout: " + out);
+    return out.toString();
+  }
+
+  /**
+   * Runs {@code script -} with the given lines on stdin; output lands in {@code out}/{@code err}.
+   */
+  private int runScript(String... lines) {
     out.reset();
     err.reset();
     System.setIn(
         new ByteArrayInputStream(
             (String.join("\n", lines) + "\n").getBytes(StandardCharsets.UTF_8)));
-    int exit = new CommandLine(new Main()).execute("script", "-");
-    assertEquals(0, exit, "script exit code; stderr: " + err + "; stdout: " + out);
-    return out.toString();
+    return new CommandLine(new Main()).execute("script", "-");
+  }
+
+  /**
+   * Before #233 open read only its first word, so trailing text was ignored ("open rec.jfr #
+   * main"). That still opens the file when the whole text names none, with a note, not silently.
+   */
+  @Test
+  void trailingWordsAfterAnExistingFileStillOpenItWithANote() throws Exception {
+    Path plain = Files.copy(RECORDING, temp.resolve("plain.jfr"));
+    String expected = count(show(plain));
+    String output = script("open " + plain + " # main recording", QUERY);
+    assertEquals(expected, count(output), output);
+    assertTrue(output.contains("Note: no file '" + plain + " # main recording'"), output);
+    assertTrue(output.contains("ignoring '# main recording'"), output);
+  }
+
+  /** A usage problem is reported as one, not as "Error: Usage: ...". */
+  @Test
+  void aMalformedOpenLineIsAUsageMessage() {
+    assertEquals(1, runScript("open \"\""));
+    assertTrue(err.toString().contains("Usage: open <path> [--alias NAME]"), err.toString());
+    assertTrue(!err.toString().contains("Error: Usage"), err.toString());
   }
 
   /**

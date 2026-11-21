@@ -587,6 +587,24 @@ class JfrPathDecoratorTest {
   }
 
   /**
+   * Without threadPath/decoratorThreadPath the op's public fields are empty, never null: code that
+   * reads them (String.join, toArray) must not fail. Empty means "each event's own thread".
+   */
+  @Test
+  void omittedThreadPathsAreEmptyNotNull() {
+    JfrPath.DecorateByTimeOp op =
+        (JfrPath.DecorateByTimeOp)
+            JfrPathParser.parse(
+                    "events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait,"
+                        + " fields=monitorClass)")
+                .pipeline
+                .get(0);
+    assertEquals(List.of(), op.threadPathPrimary);
+    assertEquals(List.of(), op.threadPathDecorator);
+    assertEquals(List.of(), new JfrPath.DecorateByTimeOp("t", null, null, null).threadPathPrimary);
+  }
+
+  /**
    * A named parameter after {@code fields=} was read as one more field, and the parse failed with
    * "Expected ')'" - for the tutorial's own example with explicit thread paths.
    */
