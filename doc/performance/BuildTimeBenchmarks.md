@@ -278,34 +278,40 @@ Then add it and the parser to the processor path:
 > used the build-time handlers, and its two `parseWith*` methods failed on their first event
 > (`JFRThreadGroup` was declared as `java.lang.ThreadGroup`; recordings have `jdk.types.ThreadGroup`).
 
-### Measured on 2026-11-20
+### Measured on 2026-11-21
 
 Linux container, 4 vCPUs (Intel Xeon @ 2.10GHz), OpenJDK 21.0.12, JMH 1.37, the class's own settings
 (see [Benchmark Configuration](#benchmark-configuration)), `-prof gc`, the command in [Running the
-Benchmarks](#running-the-benchmarks) run twice in a row. Every fork's teardown confirmed that it decoded
-with the implementation its `decoder` names (60 forks per round). Errors are JMH's 99.9% intervals over all
-iterations of all forks of one round.
+Benchmarks](#running-the-benchmarks) run twice in a row on `main` at `3ddf96af` (with #231). Every fork's
+teardown confirmed that it decoded with the implementation its `decoder` names (60 forks per round). Errors
+are JMH's 99.9% intervals over all iterations of all forks of one round.
 
 | Method | `buildTime` (round 1 / round 2) | `runtime` (round 1 / round 2) | `buildTime` vs `runtime` |
 |---|---|---|---|
-| `parseAndReadReferences` | 163.1 ± 5.2 / 167.6 ± 4.0 ops/s | 266.0 ± 10.9 / 248.8 ± 21.9 ops/s | 33–39% lower throughput |
-| | 532,333 / 529,055 B/op | 801,387 / 801,594 B/op | 34% fewer bytes per parse |
-| `parseAndConsumeEvent` | 625.9 ± 39.2 / 642.4 ± 45.6 ops/s | 854.1 ± 45.8 / 929.5 ± 34.6 ops/s | 27–31% lower throughput |
-| | 425,546 / 425,535 B/op | 745,093 / 745,036 B/op | 43% fewer bytes per parse |
-| `coldStartParse` | 132.8 ± 6.7 / 145.2 ± 9.9 ms | 137.1 ± 8.0 / 133.5 ± 5.8 ms | −3% / +9%: no resolvable difference |
-| | 7,254,314 / 7,254,598 B/op | 7,194,554 / 7,194,633 B/op | 0.8% more bytes |
+| `parseAndReadReferences` | 203.8 ± 12.7 / 224.3 ± 12.9 ops/s | 224.7 ± 14.8 / 249.9 ± 14.5 ops/s | 9–10% lower throughput |
+| | 250,806 / 250,310 B/op | 801,900 / 801,529 B/op | 69% fewer bytes per parse |
+| `parseAndConsumeEvent` | 639.1 ± 34.0 / 654.8 ± 29.7 ops/s | 763.1 ± 33.3 / 753.0 ± 36.5 ops/s | 13–16% lower throughput |
+| | 169,630 / 169,651 B/op | 745,165 / 745,194 B/op | 77% fewer bytes per parse |
+| `coldStartParse` | 166.4 ± 18.8 / 135.8 ± 14.8 ms | 165.4 ± 14.3 / 131.0 ± 9.5 ms | +0.6% / +3.6%: no resolvable difference |
+| | 6,621,840 / 6,621,737 B/op | 7,198,284 / 7,198,083 B/op | 8% fewer bytes |
 
-Read the throughput rows with the run-to-run spread in mind: the same method and decoder moved by up to 9%
-between the two rounds (`parseAndConsumeEvent` `runtime`: 854.1 and 929.5 ops/s), more than JMH's interval
-within a round. Differences of a few percent, such as the cold-start one, are not resolvable with this setup;
-the 27–39% throughput and 34–43% allocation differences are, in both rounds. An operation is a whole parse
-(see [What an operation is](#what-an-operation-is)), so these are not per-event decoding costs, and no profile
-here attributes the throughput difference to a cause.
+Read the throughput rows with the run-to-run spread in mind: the same method and decoder moved by up to 11%
+between the two rounds (`parseAndReadReferences` `runtime`: 224.7 and 249.9 ops/s), and `coldStartParse` by
+22–26%, more than JMH's interval within a round. The ratio between the decoders held better than the absolute
+scores: build-time was at 90–91% of runtime throughput on `parseAndReadReferences` in both rounds. Differences
+of a few percent, such as the cold-start one, are not resolvable with this setup. An operation is a whole parse
+(see [What an operation is](#what-an-operation-is)), so these are not per-event decoding costs.
+
+**What changed since the previous measurement.** On 2026-11-20, before #231, the same command measured
+build-time at 27–39% lower throughput and 34–43% fewer bytes. #231 removed two differences between the
+generators, found by profiling this benchmark: the build-time getters looked their constant pool up by type id
+on every call, and `read()` walked `metadata.getFields()` (a new list view and iterator per value) with a
+String switch per field. The remaining throughput gap was not profiled.
 
 ## Conclusion
 
 On this benchmark — one 117 KB single-chunk recording parsed end to end per operation — build-time handlers
-allocate 34–43% less per parse and have 27–39% lower throughput than runtime-generated handlers on the same
+allocate 69–77% less per parse and have 9–16% lower throughput than runtime-generated handlers on the same
 interfaces; their first parse in a new JVM is not measurably faster. The allocation expectation holds in
 direction and exceeds the ~25% expected; the throughput and cold-start expectations do not hold here.
 
