@@ -81,6 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nanosecond, and the sum of all chunk durations, including chunks without a mapped event.
   `time_nanos` used to be the start, in whole milliseconds, of whichever chunk delivered an event
   first
+- **`TypeDiscovery.discoverTypes` always returned an empty map, after decoding every event.** It
+  discarded the parser `withParserListener` returns, so its metadata listener was never installed.
+  It now reads each chunk's metadata only and skips the events
 - **A typed parse no longer returns `null` for a constant-pool field when another chunk of the
   recording does not declare the field's type.** The typed parser indexes only the constant pools
   of types its handlers reference, and kept that set of types, computed from one chunk's metadata,
