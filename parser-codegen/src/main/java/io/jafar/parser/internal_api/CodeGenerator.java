@@ -21,6 +21,7 @@ import java.nio.file.Paths;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -105,6 +106,7 @@ final class CodeGenerator {
       String fldName,
       FieldMapping mapping,
       boolean generateRefField,
+      boolean generatePoolCache,
       MetadataField originalField) {
     if (fldType == null && !mapping.raw()) {
       // field is never accessed directly, can skip the rest
@@ -139,56 +141,62 @@ final class CodeGenerator {
     String fldCpName = fldName + "_cp";
     String mthdCpName = fldCpName + "$get";
 
-    cv.visitField(
-            Opcodes.ACC_PRIVATE, fldCpName, Type.getDescriptor(ConstantPool.class), null, null)
-        .visitEnd();
+    MethodVisitor mv;
+    // The pool cache (<field>_cp and <field>_cp$get) exists once per field: every accessor of a
+    // field (two methods mapped to one JFR field by @JfrField) reads its reference through it.
+    // Emitting it per accessor defined the field twice: ClassFormatError, duplicate field name.
+    if (generatePoolCache) {
+      cv.visitField(
+              Opcodes.ACC_PRIVATE, fldCpName, Type.getDescriptor(ConstantPool.class), null, null)
+          .visitEnd();
 
-    MethodVisitor mv =
-        cv.visitMethod(
-            Opcodes.ACC_PRIVATE,
-            mthdCpName,
-            Type.getMethodDescriptor(Type.getType(ConstantPool.class)),
-            null,
-            null);
-    mv.visitCode();
-    Label l = new Label();
-    mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
-    mv.visitFieldInsn(
-        Opcodes.GETFIELD,
-        clzName,
-        fldCpName,
-        Type.getDescriptor(ConstantPool.class)); // stack: [pool]
-    mv.visitInsn(Opcodes.DUP); // stack: [pool, pool]
-    mv.visitJumpInsn(Opcodes.IFNONNULL, l); // stack: [pool]
-    mv.visitInsn(Opcodes.POP); // stack: []
-    mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
-    mv.visitInsn(Opcodes.DUP); // stack: [this, this]
-    mv.visitFieldInsn(
-        Opcodes.GETFIELD,
-        clzName,
-        "context",
-        Type.getDescriptor(TypedParserContext.class)); // stack: [this, context]
-    mv.visitMethodInsn(
-        Opcodes.INVOKEVIRTUAL,
-        Type.getInternalName(TypedParserContext.class),
-        "getConstantPools",
-        Type.getMethodDescriptor(Type.getType(ConstantPools.class)),
-        false); // stack: [this, pools]
-    mv.visitLdcInsn(typeId); // stack: [this, pools, type]
-    mv.visitMethodInsn(
-        Opcodes.INVOKEINTERFACE,
-        Type.getInternalName(ConstantPools.class),
-        "getConstantPool",
-        Type.getMethodDescriptor(Type.getType(ConstantPool.class), Type.LONG_TYPE),
-        true); // stack: [this, pool]
-    mv.visitInsn(Opcodes.DUP_X1); // stack: [pool, this, pool]
-    mv.visitFieldInsn(
-        Opcodes.PUTFIELD, clzName, fldCpName, Type.getDescriptor(ConstantPool.class)); // [pool]
-    mv.visitInsn(Opcodes.ARETURN);
-    mv.visitLabel(l); // stack: [pool]
-    mv.visitInsn(Opcodes.ARETURN);
-    mv.visitMaxs(3, 2);
-    mv.visitEnd();
+      mv =
+          cv.visitMethod(
+              Opcodes.ACC_PRIVATE,
+              mthdCpName,
+              Type.getMethodDescriptor(Type.getType(ConstantPool.class)),
+              null,
+              null);
+      mv.visitCode();
+      Label l = new Label();
+      mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
+      mv.visitFieldInsn(
+          Opcodes.GETFIELD,
+          clzName,
+          fldCpName,
+          Type.getDescriptor(ConstantPool.class)); // stack: [pool]
+      mv.visitInsn(Opcodes.DUP); // stack: [pool, pool]
+      mv.visitJumpInsn(Opcodes.IFNONNULL, l); // stack: [pool]
+      mv.visitInsn(Opcodes.POP); // stack: []
+      mv.visitVarInsn(Opcodes.ALOAD, 0); // stack: [this]
+      mv.visitInsn(Opcodes.DUP); // stack: [this, this]
+      mv.visitFieldInsn(
+          Opcodes.GETFIELD,
+          clzName,
+          "context",
+          Type.getDescriptor(TypedParserContext.class)); // stack: [this, context]
+      mv.visitMethodInsn(
+          Opcodes.INVOKEVIRTUAL,
+          Type.getInternalName(TypedParserContext.class),
+          "getConstantPools",
+          Type.getMethodDescriptor(Type.getType(ConstantPools.class)),
+          false); // stack: [this, pools]
+      mv.visitLdcInsn(typeId); // stack: [this, pools, type]
+      mv.visitMethodInsn(
+          Opcodes.INVOKEINTERFACE,
+          Type.getInternalName(ConstantPools.class),
+          "getConstantPool",
+          Type.getMethodDescriptor(Type.getType(ConstantPool.class), Type.LONG_TYPE),
+          true); // stack: [this, pool]
+      mv.visitInsn(Opcodes.DUP_X1); // stack: [pool, this, pool]
+      mv.visitFieldInsn(
+          Opcodes.PUTFIELD, clzName, fldCpName, Type.getDescriptor(ConstantPool.class)); // [pool]
+      mv.visitInsn(Opcodes.ARETURN);
+      mv.visitLabel(l); // stack: [pool]
+      mv.visitInsn(Opcodes.ARETURN);
+      mv.visitMaxs(3, 2);
+      mv.visitEnd();
+    }
 
     // Generate accessor method: fldType methodName()
     mv =
@@ -290,7 +298,8 @@ final class CodeGenerator {
       Class<?> fldType,
       String fieldName,
       String methodName,
-      Class<?> expectedReturnType) {
+      Class<?> expectedReturnType,
+      boolean generateField) {
     if (fldType == null) {
       // field is never accessed directly, can skip the rest
       return;
@@ -305,8 +314,12 @@ final class CodeGenerator {
             : fldType;
 
     String fldDescriptor = (isArray ? "[" : "") + Type.getDescriptor(fldType);
-    cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fieldName, fldDescriptor, null, null)
-        .visitEnd();
+    // The field exists once; every accessor of it (two methods mapped to one JFR field by
+    // @JfrField) reads it. Declaring it per accessor: ClassFormatError, duplicate field name.
+    if (generateField) {
+      cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, fieldName, fldDescriptor, null, null)
+          .visitEnd();
+    }
     MethodVisitor mv =
         cv.visitMethod(
             Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL,
@@ -1640,8 +1653,24 @@ final class CodeGenerator {
             mappings = new HashSet<>();
             mappings.add(new FieldMapping(fieldName, false));
           }
-          boolean generateRefField = true;
+          // Several accessors may read one JFR field. A fixed order (FieldMapping has identity
+          // equality, so the set's order varies by run): what is emitted once per field must not
+          // depend on which accessor comes first. jafar-processor does not support several
+          // accessors per field (its generated switches get duplicate case labels): a kept
+          // difference between the generators, see doc/agents/Architecture.md.
+          // One mapping per accessor: getMethods() lists a method declared by two superinterfaces
+          // twice, and two mappings of one method emitted it twice (duplicate method name).
+          Map<String, FieldMapping> byAccessor = new HashMap<>();
           for (FieldMapping mapping : mappings) {
+            byAccessor.putIfAbsent(mapping.method() + (mapping.raw() ? "#raw" : ""), mapping);
+          }
+          List<FieldMapping> ordered = new ArrayList<>(byAccessor.values());
+          ordered.sort(Comparator.comparing(FieldMapping::method).thenComparing(FieldMapping::raw));
+          requireOneTypePerField(target, field, fieldName, fldClz, withConstantPool, ordered);
+          boolean generateRefField = true;
+          boolean generatePoolCache = true;
+          boolean generateField = true;
+          for (FieldMapping mapping : ordered) {
             if (withConstantPool) {
               boolean isArray = field.getDimension() > 0;
               if (mapping.raw() && isArray) {
@@ -1659,8 +1688,17 @@ final class CodeGenerator {
                   fieldName,
                   mapping,
                   generateRefField,
+                  generatePoolCache && !mapping.raw(),
                   field);
-              generateRefField = false;
+              // handleFieldRef declares <field>_ref unless it returned early (an object accessor of
+              // a type with no generated class, fldClz == null): a raw accessor after it still
+              // needs the field (NoSuchFieldError otherwise, once accessors had a fixed order).
+              if (mapping.raw() || fldClz != null) {
+                generateRefField = false;
+              }
+              if (!mapping.raw()) {
+                generatePoolCache = false;
+              }
             } else {
               if (mapping.raw()) {
                 throw new RuntimeException("Field " + fieldName + " is not a constant pool entry");
@@ -1672,7 +1710,9 @@ final class CodeGenerator {
                   fldClz,
                   fieldName,
                   mapping.method(),
-                  mapping.expectedReturnType());
+                  mapping.expectedReturnType(),
+                  generateField);
+              generateField = false;
             }
             generatedMethods.add(mapping.method());
           }
@@ -1747,6 +1787,66 @@ final class CodeGenerator {
         throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), debugPath, e);
       } else {
         throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), e);
+      }
+    }
+  }
+
+  /**
+   * Fails generation, naming the accessors, when several accessors of one JFR field declare types
+   * the one generated field cannot serve: every accessor of a field returns the field's class
+   * ({@code fldClz}), or, for an inline primitive field, a wider primitive. Such an interface used
+   * to fail defining the class (duplicate field); without this check it would define, and the
+   * accessor whose type differs would fail when called (AbstractMethodError, or ClassCastException
+   * from the pool). A single accessor is not checked here.
+   */
+  private static void requireOneTypePerField(
+      Class<?> target,
+      MetadataField field,
+      String fieldName,
+      Class<?> fldClz,
+      boolean pooled,
+      List<FieldMapping> mappings)
+      throws JafarSerializationException {
+    List<FieldMapping> accessors = new ArrayList<>();
+    for (FieldMapping mapping : mappings) {
+      if (!mapping.raw() && mapping.expectedReturnType() != null) {
+        accessors.add(mapping);
+      }
+    }
+    if (accessors.size() < 2 || fldClz == null) {
+      return;
+    }
+    boolean isArray = field.getDimension() > 0;
+    for (FieldMapping mapping : accessors) {
+      Class<?> declared = mapping.expectedReturnType();
+      Class<?> element = declared.isArray() ? declared.getComponentType() : declared;
+      boolean fits =
+          declared.isArray() == isArray
+              && (element == fldClz
+                  || (!pooled && !isArray && isPrimitiveWidening(fldClz, element)));
+      if (!fits) {
+        StringBuilder names = new StringBuilder();
+        for (FieldMapping m : accessors) {
+          names
+              .append(names.length() == 0 ? "" : ", ")
+              .append(m.expectedReturnType().getSimpleName())
+              .append(' ')
+              .append(m.method())
+              .append("()");
+        }
+        throw new JafarSerializationException(
+            target.getName()
+                + ": accessors "
+                + names
+                + " all read JFR field '"
+                + field.getName()
+                + "', which is generated once, as "
+                + (isArray ? fldClz.getSimpleName() + "[]" : fldClz.getSimpleName())
+                + "; "
+                + mapping.method()
+                + "() cannot return it. Declare one type for the field's accessors"
+                + (pooled ? "" : " (or a wider primitive)"),
+            field.getName());
       }
     }
   }
