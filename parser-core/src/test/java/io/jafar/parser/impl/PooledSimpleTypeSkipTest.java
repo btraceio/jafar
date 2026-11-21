@@ -31,6 +31,8 @@ public class PooledSimpleTypeSkipTest {
   private static final long T_BOOLEAN = 1;
   private static final long T_BYTE = 2;
   private static final long T_INT = 3;
+  private static final long T_FLOAT = 4;
+
   private static final long T_EVENT = 100;
   private static final long T_BOX = 300;
   private static final long T_ENTRY = 301;
@@ -41,6 +43,11 @@ public class PooledSimpleTypeSkipTest {
   @TempDir Path dir;
 
   private static SyntheticRecording.Element metadata() {
+    return metadata(T_BOX);
+  }
+
+  /** As {@link #metadata()}, with {@code test.Entry.box} pooled of class {@code boxType}. */
+  private static SyntheticRecording.Element metadata(long boxType) {
     return elem("root")
         .with(
             elem("metadata")
@@ -48,6 +55,7 @@ public class PooledSimpleTypeSkipTest {
                     primitiveClass(T_BOOLEAN, "boolean"),
                     primitiveClass(T_BYTE, "byte"),
                     primitiveClass(T_INT, "int"),
+                    primitiveClass(T_FLOAT, "float"),
                     elem(
                             "class",
                             "id",
@@ -64,7 +72,7 @@ public class PooledSimpleTypeSkipTest {
                                 "name",
                                 "box",
                                 "class",
-                                Long.toString(T_BOX),
+                                Long.toString(boxType),
                                 "constantPool",
                                 "true"),
                             elem("field", "name", "n", "class", Long.toString(T_INT))),
@@ -104,33 +112,61 @@ public class PooledSimpleTypeSkipTest {
     return new SyntheticRecording.Bytes().varint(T_EVENT).varint(entryIndex).toByteArray();
   }
 
-  @Test
-  void aPooledSimpleTypeFieldIsSkippedAsItsIndex() throws Exception {
-    byte[] chunk =
-        SyntheticRecording.chunk(
-            metadata(),
-            SyntheticRecording.Pool.section(
-                // a simple type's entry is stored unwrapped: the byte itself
-                new SyntheticRecording.Pool(T_BOX).entry(BOX_INDEX, new byte[] {42}),
-                new SyntheticRecording.Pool(T_ENTRY).entry(1, entry(7)).entry(2, entry(8))),
-            List.of(ref(1), ref(2)),
-            1_700_000_000_000_000_000L,
-            0,
-            1_000_000_000L,
-            1000);
-    Path file = dir.resolve("pooled-simple-type.jfr");
+  /** {@code entry.n} and {@code entry.box} of each event, sorted. */
+  private List<String> parse(byte[] chunk) throws Exception {
+    Path file = dir.resolve("pooled.jfr");
     Files.write(file, chunk);
-
-    List<Object> ns = Collections.synchronizedList(new ArrayList<>());
+    List<String> seen = Collections.synchronizedList(new ArrayList<>());
     try (UntypedJafarParser p = UntypedJafarParser.open(file)) {
       p.handle(
           (type, value, ctl) -> {
             Object entry = Values.resolvedShallow(value).get("entry");
-            ns.add(entry instanceof Map ? ((Map<?, ?>) entry).get("n") : "entry=" + entry);
+            seen.add(
+                entry instanceof Map
+                    ? "n=" + ((Map<?, ?>) entry).get("n") + " box=" + ((Map<?, ?>) entry).get("box")
+                    : "entry=" + entry);
           });
       p.run();
     }
-    Collections.sort(ns, (a, b) -> String.valueOf(a).compareTo(String.valueOf(b)));
-    assertEquals(List.of(7L, 8L), ns);
+    Collections.sort(seen);
+    return seen;
+  }
+
+  private static byte[] chunk(SyntheticRecording.Element metadata, byte[] pools) throws Exception {
+    return SyntheticRecording.chunk(
+        metadata,
+        pools,
+        List.of(ref(1), ref(2)),
+        1_700_000_000_000_000_000L,
+        0,
+        1_000_000_000L,
+        1000);
+  }
+
+  @Test
+  void aPooledSimpleTypeFieldIsSkippedAsItsIndex() throws Exception {
+    byte[] pools =
+        SyntheticRecording.Pool.section(
+            // a simple type's entry is stored unwrapped: the byte itself
+            new SyntheticRecording.Pool(T_BOX).entry(BOX_INDEX, new byte[] {42}),
+            new SyntheticRecording.Pool(T_ENTRY).entry(1, entry(7)).entry(2, entry(8)));
+    // box resolves through its own pool to the entry wrapping the byte
+    assertEquals(List.of("n=7 box={b=42}", "n=8 box={b=42}"), parse(chunk(metadata(), pools)));
+  }
+
+  /**
+   * A pooled field of a primitive type is one varint too. The skipper read it as the primitive,
+   * here 4 bytes of a {@code float}, where the value reader reads the varint, so every entry after
+   * it was misframed.
+   */
+  @Test
+  void aPooledPrimitiveFieldIsSkippedAsItsIndex() throws Exception {
+    byte[] pools =
+        SyntheticRecording.Pool.section(
+            new SyntheticRecording.Pool(T_ENTRY).entry(1, entry(7)).entry(2, entry(8)));
+    List<String> seen = parse(chunk(metadata(T_FLOAT), pools));
+    assertEquals(2, seen.size(), String.valueOf(seen));
+    assertEquals("n=7", seen.get(0).substring(0, 3), String.valueOf(seen));
+    assertEquals("n=8", seen.get(1).substring(0, 3), String.valueOf(seen));
   }
 }

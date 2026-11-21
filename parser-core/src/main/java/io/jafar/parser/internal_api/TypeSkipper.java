@@ -192,11 +192,11 @@ public final class TypeSkipper {
       arraySizeIdx = instructions.size();
       instructions.add(0); // reserve slot for the array size
     }
-    boolean withCp = fld.hasConstantPool();
-    if (withCp) {
+    if (fld.hasConstantPool()) {
       // A pooled field holds one varint, the entry's index, whatever the entry's type. Decided
-      // before unwrapping, as Go's skipFieldValue does: a pooled field of a simple type wrapping a
-      // byte, float or double would otherwise be skipped as that primitive.
+      // before unwrapping, as Go's skipFieldValue does: a pooled field of a primitive (byte,
+      // boolean, float, double) or of a simple type wrapping one would otherwise be skipped as
+      // that primitive.
       instructions.add(Instructions.CP_ENTRY);
       if (fld.getDimension() > 0) {
         instructions.set(arraySizeIdx, instructions.size() - startingSize - 2);

@@ -219,10 +219,12 @@ reader.
   instruction, so an array of an inline type with an array field was misskipped - and constant pool
   entries after such an entry were indexed at the wrong offset, resolving to `null`
   (`NestedArraySkipTest`). A pooled field is one varint, the entry's index, whatever the entry's
-  type: the skipper decides on the pool flag before it unwraps a simple type, as go-parser's
-  `skipFieldValue` does. Unwrapping first skips a pooled simple type wrapping a `byte` as one byte
-  and misframes every entry after it (`PooledSimpleTypeSkipTest`). `unwrappable` compared a
-  scalar's dimension with `0` (it is `-1`), so it never unwrapped and hid that ordering.
+  type, and the skipper now decides on the pool flag first, as go-parser's `skipFieldValue` does.
+  It used to skip a pooled field of a primitive type as that primitive (4 bytes for a `float`)
+  where the value reader reads the varint, misframing every entry after it
+  (`PooledSimpleTypeSkipTest`). Unwrapping simple types before that check would have done the same
+  to a pooled simple type wrapping a `byte`; it never happened only because `unwrappable` compared
+  a scalar's dimension with `0` (it is `-1`) and never unwrapped.
 - **A storage guessed from the Java type.** A complex accessor was read as a pool reference and a
   `String` accessor as an inline value, but in JVM recordings `StackTrace.frames` is inline and
   `ExecutionSample.state` is a pooled `ThreadState`. Both were misread silently. The read is now
