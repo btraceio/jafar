@@ -302,9 +302,16 @@ public class QueryPushdownBenchmark {
     Map<String, LongAdder> counts = new ConcurrentHashMap<>();
     try (UntypedJafarParser parser =
         ParsingContext.create().newUntypedParser(recording.recording)) {
+      requireGeneratedReader(parser);
       parser.handle(
-          (type, value, ctl) ->
-              counts.computeIfAbsent(type.getName(), k -> new LongAdder()).increment());
+          (type, value, ctl) -> {
+            // get() first, as countEvents does, so the two differ only in decoding
+            LongAdder count = counts.get(type.getName());
+            if (count == null) {
+              count = counts.computeIfAbsent(type.getName(), k -> new LongAdder());
+            }
+            count.increment();
+          });
       parser.run();
     }
     requireBenchCounts(recording, name -> counts.get(name) == null ? 0 : counts.get(name).sum());
@@ -317,10 +324,18 @@ public class QueryPushdownBenchmark {
     Map<String, Long> counts;
     try (UntypedJafarParser parser =
         ParsingContext.create().newUntypedParser(recording.recording)) {
+      requireGeneratedReader(parser);
       counts = parser.countEvents();
     }
     requireBenchCounts(recording, name -> counts.getOrDefault(name, 0L));
     bh.consume(counts);
+  }
+
+  /** Both counting benchmarks measure the generated reader, the default of jafar-parser. */
+  private static void requireGeneratedReader(UntypedJafarParser parser) {
+    if (!((UntypedJafarParserImpl) parser).usesGeneratedReader()) {
+      throw new IllegalStateException("the counting benchmarks expect the generated reader");
+    }
   }
 
   private static void requireBenchCounts(

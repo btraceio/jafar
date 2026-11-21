@@ -495,7 +495,7 @@ counts.forEach((name, count) -> System.out.printf("%8d %s%n", count, name));
 
 `countEvents(TypeFilter)` counts only the types the filter accepts. Both read each event's header
 and skip its payload: on the 124.8 MB, 32-chunk recording of `QueryPushdownBenchmark`, counting
-took 132 ms this way and 472 ms by decoding every event in a handler (4 processors, one session).
+took 127 ms this way and 493 ms by decoding every event in a handler (4 processors, one session).
 
 For more than the count, register a header handler. It receives the event's type, its size in
 bytes and its `startTime`, still without the event being decoded:
