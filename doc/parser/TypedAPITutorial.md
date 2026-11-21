@@ -120,7 +120,10 @@ public interface ExecutionSample {
 }
 ```
 
-Without `@JfrIgnore`, the code generator would try to bind these methods to JFR fields, causing errors.
+A default method is the interface's own code: neither the runtime generator nor `jafar-processor`
+binds it to a JFR field, even when its name matches one, so it always runs as written. `@JfrIgnore`
+on it is optional and marks it as a helper. On an abstract method, `@JfrIgnore` keeps it from being
+bound to a field: the generated class returns `0`, `false` or `null` for it.
 
 **Note**: To skip deserializing fields you don't need, simply don't declare them in the interface. The parser automatically skips fields that aren't declared.
 

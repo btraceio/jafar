@@ -46,6 +46,46 @@ public class TypedAccessorShapesTest {
     }
   }
 
+  /** A default method named after a field, without {@code @JfrIgnore}: still the interface's. */
+  @JfrType("jdk.ExecutionSample")
+  public interface WithFieldNamedDefault {
+    @JfrField("startTime")
+    long time();
+
+    default long startTime() {
+      return -42;
+    }
+  }
+
+  /** As above, of another type: it was taken as a second accessor of startTime. */
+  @JfrType("jdk.ExecutionSample")
+  public interface WithFieldNamedDefaultOfOtherType {
+    @JfrField("startTime")
+    long time();
+
+    default String startTime() {
+      return "mine";
+    }
+  }
+
+  @JfrType("jdk.ExecutionSample")
+  public interface WithFieldNamedStatic {
+    @JfrField("startTime")
+    long time();
+
+    static long startTime() {
+      return -7;
+    }
+  }
+
+  /** {@code state(int)} is not an accessor, though {@code state()} is. */
+  @JfrType("jdk.ExecutionSample")
+  public interface WithOverload {
+    String state();
+
+    String state(int index);
+  }
+
   @JfrType("jdk.ExecutionSample")
   public interface WithAbsentArray {
     long startTime();
@@ -145,6 +185,34 @@ public class TypedAccessorShapesTest {
     // the field it is named after is read by time(); it returned 0
     for (String v : each(WithIgnoredDefault.class, WithIgnoredDefault::startTime)) {
       assertEquals("-42", v);
+    }
+  }
+
+  @Test
+  void aDefaultMethodNamedAfterAFieldIsTheInterfaces() throws Exception {
+    // the runtime class overrode it with a getter of the field
+    for (String v : each(WithFieldNamedDefault.class, e -> e.startTime() + " " + e.time())) {
+      assertTrue(v.startsWith("-42 ") && !v.equals("-42 0"), v);
+    }
+    // the parse failed: "accessors String startTime(), long time() all read JFR field 'startTime'"
+    for (String v : each(WithFieldNamedDefaultOfOtherType.class, e -> e.startTime())) {
+      assertEquals("mine", v);
+    }
+  }
+
+  @Test
+  void aStaticMethodNamedAfterAFieldIsNotAnAccessor() throws Exception {
+    assertEquals(-7, WithFieldNamedStatic.startTime());
+    assertTrue(
+        each(WithFieldNamedStatic.class, WithFieldNamedStatic::time).stream()
+            .anyMatch(v -> !v.equals("0")));
+  }
+
+  @Test
+  void aMethodWithParametersIsNotAnAccessor() throws Exception {
+    // it got the stub of the accessor state(), saying state() cannot be returned
+    for (String v : each(WithOverload.class, e -> e.state(0) + " " + (e.state() != null))) {
+      assertEquals("null true", v);
     }
   }
 

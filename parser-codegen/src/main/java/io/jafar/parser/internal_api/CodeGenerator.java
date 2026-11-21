@@ -1798,7 +1798,8 @@ final class CodeGenerator {
             || emitted.contains(m.getName() + Type.getMethodDescriptor(m))) {
           continue;
         }
-        MetadataField read = accessorFields.get(m.getName());
+        // an accessor takes no parameters: foo(int) next to an accessor foo() is not one
+        MetadataField read = m.getParameterCount() == 0 ? accessorFields.get(m.getName()) : null;
         if (read != null) {
           prepareUnreadableAccessor(m, clz.getName(), read, target, cw);
         } else {
@@ -1961,7 +1962,15 @@ final class CodeGenerator {
     while (c != null) {
       usedAttributes.addAll(
           Arrays.stream(c.getMethods())
-              .filter(m -> m.getAnnotation(JfrIgnore.class) == null)
+              // Accessors only, as jafar-processor takes them: a default method is the interface's
+              // own code, so it is never bound to a field, @JfrIgnore or not; nor is a static
+              // method or one taking parameters.
+              .filter(
+                  m ->
+                      m.getAnnotation(JfrIgnore.class) == null
+                          && !m.isDefault()
+                          && !Modifier.isStatic(m.getModifiers())
+                          && m.getParameterCount() == 0)
               .map(
                   m -> {
                     String name = m.getName();
