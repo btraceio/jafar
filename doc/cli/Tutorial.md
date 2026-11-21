@@ -535,11 +535,12 @@ jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=mon
 
 #### Thread Filtering
 
-By default, decoration requires matching thread IDs:
-- Primary event: `eventThread/javaThreadId`
-- Decorator event: `eventThread/javaThreadId`
+By default, decoration requires matching thread IDs, each read from the event's own thread:
+`sampledThread/javaThreadId` for samples (`jdk.ExecutionSample`, `jdk.NativeMethodSample`, which
+have no `eventThread`), `eventThread/javaThreadId` for everything else. So the example above
+matches a sample's `sampledThread` with the wait's `eventThread` without naming either.
 
-Custom thread paths can be specified:
+Custom thread paths can be specified; this spells out the same default:
 
 ```bash
 jfr> events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait,

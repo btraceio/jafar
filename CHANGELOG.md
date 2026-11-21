@@ -74,7 +74,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   thread from `eventThread`, which `jdk.ExecutionSample` and `jdk.NativeMethodSample` do not have;
   they carry `sampledThread`. Per-thread profiles, `totalThreads` and the active-thread count of
   `jfr_use` now follow the sampled thread, and events without `sampledThread` (such as
-  `jdk.JavaMonitorEnter` in the blocking correlation) still use `eventThread`. `jfr_diagnose` merges `jfr_tsa`, so it was affected too
+  `jdk.JavaMonitorEnter` in the blocking correlation) still use `eventThread`. `jfr_diagnose`
+  merges `jfr_tsa`, so it was affected too
+- **`decorateByTime` decorated no sample by default.** Its default thread paths were
+  `eventThread/javaThreadId` on both sides, which `jdk.ExecutionSample` does not have, so the
+  documented `events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, ...)` matched
+  nothing. Without `threadPath`/`decoratorThreadPath`, each event's own thread is now used, as in
+  `jfr_tsa`: `sampledThread` for samples, else `eventThread`
+- **Stack profiles named a sample's thread differently from `jfr_tsa`.** They read `eventThread`
+  before `sampledThread` and the OS name before the Java name; both now use the same rule
+- **`decorateByTime`/`decorateByKey` rejected a named parameter after `fields=`** with `Expected
+  ')'`: `fields=monitorClass, threadPath=...` read `threadPath` as one more field. The tutorial's
+  explicit-thread-path example failed this way
 - **A recording path containing spaces was opened only up to the first space** (#233), in
   `jfr-shell show|metadata|chunks|constants <path> ...`, the same commands through `jafar-shell`,
   and the file given when starting the interactive shell or the TUI. The path was turned back into

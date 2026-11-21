@@ -4,7 +4,6 @@ import static io.jafar.shell.jfrpath.JfrPath.*;
 
 import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.ComplexType;
-import io.jafar.parser.api.Values;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.FlameNode;
 import java.util.ArrayList;
@@ -237,10 +236,8 @@ final class Profiles {
   }
 
   private static String extractThreadName(Map<String, Object> event) {
-    Object tn = Values.get(event, "eventThread", "osName");
-    if (tn == null) tn = Values.get(event, "eventThread", "javaName");
-    if (tn == null) tn = Values.get(event, "sampledThread", "osName");
-    if (tn == null) tn = Values.get(event, "sampledThread", "javaName");
+    // The same thread and name as jfr_tsa: sampledThread first, its Java name first
+    Object tn = EventThreads.name(event);
     return tn != null ? tn.toString() : "<unknown>";
   }
 
