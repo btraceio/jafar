@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **The build failed to configure on Gradle 9.9** (#228) with `Could not get unknown property
+  'sourceSets' for project ':parser-core' of type ...DefaultProjectDependency`. Three build files
+  read `project(':parser-core').sourceSets` inside `dependencies {}`; they now resolve it outside
 - **`jfr2pprof` lost samples, wrote malformed profiles or crashed on recordings of more than one
   chunk.** The parser calls the converter's handler from one thread per chunk at the same time, and
   the converter added samples to an unsynchronized builder. A 32-chunk recording converted to a
