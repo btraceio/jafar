@@ -1,12 +1,11 @@
 package io.jafar.jfr2pprof.convert;
 
-import io.jafar.jfr2pprof.config.LabelSpec;
 import io.jafar.jfr2pprof.config.MappingConfig;
 import io.jafar.jfr2pprof.config.ProfileSpec;
 import io.jafar.jfr2pprof.config.ValueSpec;
 import io.jafar.jfr2pprof.proto.Label;
 import io.jafar.jfr2pprof.proto.PprofBuilder;
-import io.jafar.parser.api.Control;
+import io.jafar.parser.TypeFilter;
 import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.UntypedStrategy;
@@ -42,29 +41,20 @@ public final class Jfr2PprofConverter {
 
     PprofBuilder builder = new PprofBuilder(config.allValueTypes().size());
 
-    long[] timeNanos = {0L};
-    long[] durationNanos = {0L};
-    long[] lastChunkId = {Long.MIN_VALUE};
-
     try (UntypedJafarParser p =
         UntypedJafarParser.open(jfrPath, ParsingContext.create(), UntypedStrategy.FULL_ITERATION)) {
 
+      // Only the mapped event types are decoded; the parser skips every other event unread.
       p.handle(
+          TypeFilter.named(byEvent.keySet()),
           (type, value, ctl) -> {
-            Control.ChunkInfo ci = ctl.chunkInfo();
-            if (ci.chunkId() != lastChunkId[0]) {
-              lastChunkId[0] = ci.chunkId();
-              if (timeNanos[0] == 0L) {
-                timeNanos[0] = ci.startTime().toEpochMilli() * 1_000_000L;
-              }
-              durationNanos[0] += ci.duration().toNanos();
-            }
-
             ProfileSpec spec = byEvent.get(type.getName());
             if (spec == null) return;
 
-            Object frames = Values.get(value, spec.stackField(), "frames");
-            long[] locationIds = builder.internStack(frames, config.frame());
+            // The values are read and the frames rendered on the parsing thread, outside the lock.
+            PprofBuilder.RenderedFrame[] frames =
+                PprofBuilder.renderStack(
+                    Values.get(value, spec.stackField(), "frames"), config.frame());
 
             long[] vals = new long[spec.values().size()];
             for (int i = 0; i < vals.length; i++) {
@@ -79,13 +69,22 @@ public final class Jfr2PprofConverter {
               }
             }
 
-            List<Label> labels = new ArrayList<>(spec.labels().size());
-            for (LabelSpec l : spec.labels()) {
-              Object raw = Values.get(value, (Object[]) l.jfrSegments());
-              labels.add(builder.label(l.pprofKey(), raw));
+            Object[] rawLabels = new Object[spec.labels().size()];
+            for (int i = 0; i < rawLabels.length; i++) {
+              rawLabels[i] = Values.get(value, (Object[]) spec.labels().get(i).jfrSegments());
             }
 
-            builder.addSample(locationIds, spec.sampleTypeIndex(), vals, labels);
+            // The parser calls this handler from one thread per chunk at the same time, and
+            // PprofBuilder is not thread-safe: unsynchronised, samples of different chunks that
+            // share a stack and labels lose each other's additions.
+            synchronized (builder) {
+              long[] locationIds = builder.internFrames(frames);
+              List<Label> labels = new ArrayList<>(rawLabels.length);
+              for (int i = 0; i < rawLabels.length; i++) {
+                labels.add(builder.label(spec.labels().get(i).pprofKey(), rawLabels[i]));
+              }
+              builder.addSample(locationIds, spec.sampleTypeIndex(), vals, labels);
+            }
           });
       p.run();
     } catch (IOException e) {
@@ -98,7 +97,10 @@ public final class Jfr2PprofConverter {
       throw new IllegalStateException("No configured event type found in: " + jfrPath);
     }
 
-    builder.build(config.allValueTypes(), timeNanos[0], durationNanos[0], gzip, out);
+    // From the chunk headers, not from the events: a chunk without a mapped event is never
+    // delivered to the handler, and its time still belongs to the profile.
+    RecordingSpan span = RecordingSpan.read(jfrPath);
+    builder.build(config.allValueTypes(), span.startEpochNanos(), span.durationNanos(), gzip, out);
     return builder.sampleCount();
   }
 }
