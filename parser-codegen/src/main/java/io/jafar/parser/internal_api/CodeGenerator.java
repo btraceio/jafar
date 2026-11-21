@@ -1578,44 +1578,61 @@ final class CodeGenerator {
             appliedFields.add(field);
           }
 
+          // A simple type is read as the value it wraps (a jdk.types.Symbol as its String),
+          // unless an accessor of this field declares the interface registered for one of its
+          // layers: PState state() for a pooled jdk.types.ThreadState. Then the field is of that
+          // interface, as in the build-time handlers, and its pool decodes into it
+          // (generateDeserializer with that target). Unwrapping it too generated state()
+          // returning String, which does not implement PState state(): AbstractMethodError.
           MetadataClass fldType = field.getType();
+          Class<?> simpleTypeTarget = null;
           while (fldType.isSimpleType()) {
+            Class<?> registered = context.getClassTargetType(fldType.getName());
+            if (registered != null
+                && declaresAccessorOf(target, fieldName, fieldMap.get(fieldName), registered)) {
+              simpleTypeTarget = registered;
+              break;
+            }
             List<MetadataField> fl = fldType.getFields();
             fldType = fl.get(0).getType();
           }
 
           String fldTypeNameResolved = fldType.getName();
           Class<?> fldClz;
-          switch (fldTypeNameResolved) {
-            case "byte":
-              fldClz = byte.class;
-              break;
-            case "boolean":
-              fldClz = boolean.class;
-              break;
-            case "short":
-              fldClz = short.class;
-              break;
-            case "char":
-              fldClz = char.class;
-              break;
-            case "int":
-              fldClz = int.class;
-              break;
-            case "long":
-              fldClz = long.class;
-              break;
-            case "float":
-              fldClz = float.class;
-              break;
-            case "double":
-              fldClz = double.class;
-              break;
-            case "java.lang.String":
-              fldClz = String.class;
-              break;
-            default:
-              fldClz = context.getClassTargetType(fldTypeNameResolved);
+          if (simpleTypeTarget != null) {
+            fldClz = simpleTypeTarget;
+          } else {
+            switch (fldTypeNameResolved) {
+              case "byte":
+                fldClz = byte.class;
+                break;
+              case "boolean":
+                fldClz = boolean.class;
+                break;
+              case "short":
+                fldClz = short.class;
+                break;
+              case "char":
+                fldClz = char.class;
+                break;
+              case "int":
+                fldClz = int.class;
+                break;
+              case "long":
+                fldClz = long.class;
+                break;
+              case "float":
+                fldClz = float.class;
+                break;
+              case "double":
+                fldClz = double.class;
+                break;
+              case "java.lang.String":
+                fldClz = String.class;
+                break;
+              default:
+                fldClz = context.getClassTargetType(fldTypeNameResolved);
+            }
           }
           boolean withConstantPool = field.hasConstantPool();
           Set<FieldMapping> mappings = fieldMap.get(fieldName);
@@ -1732,6 +1749,38 @@ final class CodeGenerator {
         throw JafarSerializationException.bytecodeGenerationFailed(clz.getName(), e);
       }
     }
+  }
+
+  /**
+   * Whether an accessor of {@code fieldName} in {@code target} (by its mappings, or by the field's
+   * own name when it has none) returns a type that {@code registered} implements, or an array of
+   * one.
+   */
+  private static boolean declaresAccessorOf(
+      Class<?> target, String fieldName, Set<FieldMapping> mappings, Class<?> registered) {
+    Set<String> names = new HashSet<>();
+    if (mappings == null) {
+      names.add(fieldName);
+    } else {
+      for (FieldMapping mapping : mappings) {
+        if (!mapping.raw()) {
+          names.add(mapping.method());
+        }
+      }
+    }
+    for (Method m : target.getMethods()) {
+      if (m.getParameterCount() != 0 || !names.contains(m.getName())) {
+        continue;
+      }
+      Class<?> returned = m.getReturnType();
+      if (returned.isArray()) {
+        returned = returned.getComponentType();
+      }
+      if (returned.isInterface() && returned.isAssignableFrom(registered)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static Set<String> collectUsedAttributes(
