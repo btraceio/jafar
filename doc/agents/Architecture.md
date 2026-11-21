@@ -117,10 +117,16 @@ Beyond the gates, the conventions the codebase already follows:
     inline, are generated at runtime when they declare the field's one generated type (an inline
     primitive may be widened), next to any number of `raw = true` indices on a pooled scalar field
     (raw is refused on inline and array fields); accessors of unrelated types fail generation
-    naming them (`TypedTwoAccessorsOneFieldTest`). An interface like that does not
-    compile with `jafar-processor`: the generated handler's `opOf` and metadata-check switches get
-    one `case` per accessor, and javac reports `duplicate case label`. No diagnostic of the
-    processor's own names the interface.
+    naming them (`TypedTwoAccessorsOneFieldTest`). `jafar-processor` reads such a field once per
+    accessor: `opOf` maps the field to a group op, and its `read` case rewinds the stream to the
+    field's start before each accessor's own read (`readOp`). Each accessor is planned and
+    checked as if it read the field alone (`BuildTimeRuntimeParityTest` compares an alias, a raw
+    index next to its pooled reference, a widened `int` and a second `String` accessor). An
+    interface with no such field generates the same handler as before, byte for byte. Kept
+    difference: the processor checks each accessor on its own, so it accepts a combination the
+    runtime refuses as a whole (a `long` and an `int` accessor of one `long` field). Until this,
+    the processor emitted one `case` per accessor in `opOf` and in its metadata check, and javac
+    reported `duplicate case label`.
 
   Both read a simple type (one field, such as `jdk.types.Symbol`) as the value it wraps, unless the
   accessor returns the interface registered for that type (`ThreadState state()` for a pooled

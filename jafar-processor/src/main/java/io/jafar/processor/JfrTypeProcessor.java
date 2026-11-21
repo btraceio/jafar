@@ -8,7 +8,9 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
@@ -129,23 +131,19 @@ public class JfrTypeProcessor extends AbstractProcessor {
   // Checks a declared field against the recording's metadata, once per metadata class (see
   // HandlerTemplate.validate): pool storage (0 inline, 1 pooled, 2 either - @JfrField(raw = true),
   // whose value is the pool index for a pooled field), array shape, and the field's JFR type.
+  // The body of one accessor's check; buildValidateCases puts the checks of every accessor of a
+  // JFR field under one case label.
   private static final String VALIDATE_CASE_TEMPLATE =
-      "          case \"%s\":\n"
-          + "            requireStorage(metadata, metaField, %d, %s, %s);\n"
-          + "            break;\n";
+      "            requireStorage(metadata, metaField, %d, %s, %s);\n";
 
   // A complex-typed accessor: a pool reference or an inline value, decided by the metadata.
   private static final String VALIDATE_CASE_COMPLEX_TEMPLATE =
-      "          case \"%1$s\":\n"
-          + "            %2$s_inline = planComplex(metadata, metaField, \"%3$s\", %4$s, %5$s);\n"
-          + "            %2$s_cpType = metaField.getType().getId();\n"
-          + "            break;\n";
+      "            %1$s_inline = planComplex(metadata, metaField, \"%2$s\", %3$s, %4$s);\n"
+          + "            %1$s_cpType = metaField.getType().getId();\n";
 
   // A String accessor: an inline string or a reference to a pooled string or wrapper of one.
   private static final String VALIDATE_CASE_STRING_TEMPLATE =
-      "          case \"%s\":\n"
-          + "            %s = planString(metadata, metaField);\n"
-          + "            break;\n";
+      "            %s = planString(metadata, metaField);\n";
 
   private static final java.util.Map<String, String> BOXED_TO_PRIMITIVE = new java.util.HashMap<>();
 
@@ -345,7 +343,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
             .set("HANDLER_NAME", handlerName)
             .set("JFR_TYPE_NAME", jfrTypeName)
             .set("INSTANCE_FIELDS", buildInstanceFields(fields))
-            .set("SWITCH_CASES", buildSwitchCases(fields))
+            .set("SWITCH_CASES", buildSwitchCases(fields) + buildGroupCases(fields))
+            .set("GROUP_READ", buildGroupRead(fields))
             .set("OP_CASES", buildOpCases(fields))
             .set("VALIDATE_CASES", buildValidateCases(fields))
             .set("PLAN_FIELDS", buildPlanFields(fields))
@@ -578,35 +577,32 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private String buildSwitchCases(List<FieldInfo> fields) {
     StringBuilder sb = new StringBuilder();
     for (int i = 0; i < fields.size(); i++) {
-      FieldInfo field = fields.get(i);
-      // read() switches on the op Plan resolved the metadata field to (opOf), not on its name
-      String label = opLabel(i, field);
-      if (field.isArray) {
-        // Array handling
-        if (field.needsConstantPool) {
-          // Array of complex types - read count + loop of inline values or CP refs
-          sb.append(
-              switchCaseCpArray(label, field.fieldName, field.elementType, field.inlineHandler));
-        } else if (field.elementType.equals("String")) {
-          // String array - read count + loop of UTF-8 strings
-          sb.append(switchCaseStringArray(label, field.fieldName));
-        } else {
-          // Primitive array - read count + loop of primitives
-          String readCode = generateReadCode(field);
-          sb.append(switchCasePrimitiveArray(label, field.fieldName, field.elementType, readCode));
-        }
-      } else {
-        // Non-array handling
-        if (field.needsConstantPool) {
-          sb.append(switchCaseCp(label, field.fieldName, field.inlineHandler));
-        } else if (field.isPooledString()) {
-          sb.append(String.format(SWITCH_CASE_STRING_TEMPLATE, label, field.fieldName));
-        } else {
-          sb.append(switchCase(label, field.fieldName, generateReadCode(field)));
-        }
-      }
+      sb.append(switchCaseOf(i, fields.get(i)));
     }
     return sb.toString();
+  }
+
+  /** The read case of the accessor at {@code i}, labelled with its op. */
+  private String switchCaseOf(int i, FieldInfo field) {
+    // read() switches on the op Plan resolved the metadata field to (opOf), not on its name
+    String label = opLabel(i, field);
+    if (field.isArray) {
+      if (field.needsConstantPool) {
+        // Array of complex types - read count + loop of inline values or CP refs
+        return switchCaseCpArray(label, field.fieldName, field.elementType, field.inlineHandler);
+      } else if (field.elementType.equals("String")) {
+        return switchCaseStringArray(label, field.fieldName);
+      } else {
+        String readCode = generateReadCode(field);
+        return switchCasePrimitiveArray(label, field.fieldName, field.elementType, readCode);
+      }
+    }
+    if (field.needsConstantPool) {
+      return switchCaseCp(label, field.fieldName, field.inlineHandler);
+    } else if (field.isPooledString()) {
+      return String.format(SWITCH_CASE_STRING_TEMPLATE, label, field.fieldName);
+    }
+    return switchCase(label, field.fieldName, generateReadCode(field));
   }
 
   /** The case label of a declared field's read: its op, with its JFR name for the reader. */
@@ -615,52 +611,150 @@ public class JfrTypeProcessor extends AbstractProcessor {
   }
 
   /**
-   * Builds the cases of opOf: a declared field's JFR name to its op (1-based declaration index).
+   * Builds the cases of opOf: a declared field's JFR name to its op (1-based declaration index), or
+   * to its group's op when several accessors read it.
    */
   private String buildOpCases(List<FieldInfo> fields) {
+    Map<String, List<Integer>> groups = groups(fields);
+    List<String> groupNames = new ArrayList<>(groups.keySet());
+    java.util.Set<String> done = new java.util.HashSet<>();
     StringBuilder sb = new StringBuilder();
     for (int i = 0; i < fields.size(); i++) {
+      String name = fields.get(i).jfrFieldName;
+      if (!done.add(name)) {
+        continue;
+      }
+      int g = groupNames.indexOf(name);
       sb.append("      case \"")
-          .append(fields.get(i).jfrFieldName)
+          .append(name)
           .append("\":\n        return ")
-          .append(i + 1)
+          .append(g < 0 ? i + 1 : groupOp(fields, g))
           .append(";\n");
     }
     return sb.toString();
   }
 
-  /** Builds the cases of the handler's metadata check (HandlerTemplate.validate). */
+  /**
+   * Builds the cases of the handler's metadata check (HandlerTemplate.validate): one case per JFR
+   * field, checking it for every accessor that reads it.
+   */
   private String buildValidateCases(List<FieldInfo> fields) {
-    StringBuilder sb = new StringBuilder();
+    Map<String, StringBuilder> byJfrName = new LinkedHashMap<>();
     for (FieldInfo field : fields) {
-      if (field.needsConstantPool) {
-        sb.append(
-            String.format(
-                VALIDATE_CASE_COMPLEX_TEMPLATE,
-                field.jfrFieldName,
-                field.fieldName,
-                field.cpTypeName,
-                field.isArray,
-                field.inlineHandler == null ? "null" : "\"" + field.inlineHandler + "\""));
-        continue;
-      }
-      if (field.isPooledString()) {
-        sb.append(
-            String.format(
-                VALIDATE_CASE_STRING_TEMPLATE, field.jfrFieldName, field.fieldName + "_cpType"));
-        continue;
-      }
-      int pooled = field.needsConstantPool ? 1 : field.isRaw ? 2 : 0;
-      String types;
-      if (field.needsConstantPool) {
-        types = "new String[] {\"" + field.cpTypeName + "\"}";
-      } else {
-        types = expectedJfrTypes(field.isArray ? field.elementType : field.javaType);
-      }
-      sb.append(
-          String.format(VALIDATE_CASE_TEMPLATE, field.jfrFieldName, pooled, field.isArray, types));
+      byJfrName
+          .computeIfAbsent(field.jfrFieldName, k -> new StringBuilder())
+          .append(validateBody(field));
+    }
+    StringBuilder sb = new StringBuilder();
+    for (Map.Entry<String, StringBuilder> e : byJfrName.entrySet()) {
+      sb.append("          case \"")
+          .append(e.getKey())
+          .append("\":\n")
+          .append(e.getValue())
+          .append("            break;\n");
     }
     return sb.toString();
+  }
+
+  /** One accessor's check of its field, without the case label. */
+  private String validateBody(FieldInfo field) {
+    if (field.needsConstantPool) {
+      return String.format(
+          VALIDATE_CASE_COMPLEX_TEMPLATE,
+          field.fieldName,
+          field.cpTypeName,
+          field.isArray,
+          field.inlineHandler == null ? "null" : "\"" + field.inlineHandler + "\"");
+    }
+    if (field.isPooledString()) {
+      return String.format(VALIDATE_CASE_STRING_TEMPLATE, field.fieldName + "_cpType");
+    }
+    int pooled = field.isRaw ? 2 : 0;
+    String types = expectedJfrTypes(field.isArray ? field.elementType : field.javaType);
+    return String.format(VALIDATE_CASE_TEMPLATE, pooled, field.isArray, types);
+  }
+
+  /**
+   * The accessors of each JFR field read by more than one, by the field's name in declaration
+   * order; each list holds the accessors' indexes into {@code fields}.
+   */
+  private static Map<String, List<Integer>> groups(List<FieldInfo> fields) {
+    Map<String, List<Integer>> byJfrName = new LinkedHashMap<>();
+    for (int i = 0; i < fields.size(); i++) {
+      byJfrName.computeIfAbsent(fields.get(i).jfrFieldName, k -> new ArrayList<>()).add(i);
+    }
+    byJfrName.values().removeIf(l -> l.size() < 2);
+    return byJfrName;
+  }
+
+  /**
+   * The op of a group: after every accessor's own op, so a group's case does not collide with its
+   * members' cases.
+   */
+  private static int groupOp(List<FieldInfo> fields, int groupIndex) {
+    return fields.size() + 1 + groupIndex;
+  }
+
+  /**
+   * Builds the read cases of fields read by several accessors: the value is read once per accessor,
+   * each by that accessor's own read (readOp), the stream rewound to the field's start between
+   * them. Each accessor reads it as a field of its own, so the shapes the accessors may declare are
+   * the shapes a single accessor may.
+   */
+  private String buildGroupCases(List<FieldInfo> fields) {
+    StringBuilder sb = new StringBuilder();
+    int g = 0;
+    for (Map.Entry<String, List<Integer>> e : groups(fields).entrySet()) {
+      sb.append("        case ")
+          .append(groupOp(fields, g++))
+          .append(" /* ")
+          .append(e.getKey())
+          .append(", ")
+          .append(e.getValue().size())
+          .append(" accessors */: {\n")
+          .append("          long start = stream.position();\n");
+      boolean first = true;
+      for (int i : e.getValue()) {
+        if (!first) {
+          sb.append("          stream.position(start);\n");
+        }
+        first = false;
+        sb.append("          readOp(")
+            .append(i + 1)
+            .append(", stream, metaField, p, constantPools);\n");
+      }
+      sb.append("          break;\n        }\n");
+    }
+    return sb.toString();
+  }
+
+  /** Builds readOp, the reads of the accessors in groups; empty when there is no group. */
+  private String buildGroupRead(List<FieldInfo> fields) {
+    Map<String, List<Integer>> groups = groups(fields);
+    if (groups.isEmpty()) {
+      return "";
+    }
+    List<Integer> indexes = new ArrayList<>();
+    for (List<Integer> l : groups.values()) {
+      for (int i : l) {
+        indexes.add(i);
+      }
+    }
+    java.util.Collections.sort(indexes);
+    StringBuilder cases = new StringBuilder();
+    for (int i : indexes) {
+      cases.append(switchCaseOf(i, fields.get(i)));
+    }
+    return "  /** The read of one accessor of a field several accessors read (see read). */\n"
+        + "  private void readOp(\n"
+        + "      int op, RecordingStream stream, MetadataField metaField, Plan p,\n"
+        + "      ConstantPools constantPools) throws IOException {\n"
+        + "    switch (op) {\n"
+        + cases
+        + "        default:\n"
+        + "          throw new IllegalStateException(\"no read for op \" + op);\n"
+        + "    }\n"
+        + "  }\n\n";
   }
 
   /** Builds the fields of the handler's read plan (HandlerTemplate.Plan). */

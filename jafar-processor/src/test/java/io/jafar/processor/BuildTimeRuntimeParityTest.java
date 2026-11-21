@@ -54,12 +54,16 @@ class BuildTimeRuntimeParityTest {
             "PSample",
             "@JfrType(\"jdk.ExecutionSample\")\npublic interface PSample {\n"
                 + "  long startTime();\n  PThread sampledThread();\n  PStackTrace stackTrace();\n"
-                + "  PState state();\n}\n"),
+                + "  PState state();\n"
+                // several accessors of one field: an alias, and a pooled reference's raw index
+                + "  @io.jafar.parser.api.JfrField(\"startTime\") long time();\n"
+                + "  @io.jafar.parser.api.JfrField(value = \"sampledThread\", raw = true) long sampledThreadRef();\n"
+                + "  @io.jafar.parser.api.JfrField(\"sampledThread\") PThread thread();\n}\n"),
         source(
             "PThread",
             "@JfrType(\"java.lang.Thread\")\npublic interface PThread {\n"
                 + "  String osName();\n  long osThreadId();\n  String javaName();\n"
-                + "  long javaThreadId();\n}\n"),
+                + "  long javaThreadId();\n  @io.jafar.parser.api.JfrField(\"javaName\") String name();\n}\n"),
         source(
             "PStackTrace",
             "@JfrType(\"jdk.types.StackTrace\")\npublic interface PStackTrace {\n"
@@ -68,7 +72,9 @@ class BuildTimeRuntimeParityTest {
             "PFrame",
             "@JfrType(\"jdk.types.StackFrame\")\npublic interface PFrame {\n"
                 + "  PMethod method();\n  int lineNumber();\n  int bytecodeIndex();\n"
-                + "  String type();\n}\n"),
+                + "  String type();\n"
+                // an inline int widened to long, next to its int accessor
+                + "  @io.jafar.parser.api.JfrField(\"lineNumber\") long line();\n}\n"),
         source(
             "PMethod",
             "@JfrType(\"jdk.types.Method\")\npublic interface PMethod {\n"
@@ -107,6 +113,12 @@ class BuildTimeRuntimeParityTest {
     assertTrue(
         runtime.get(0).startsWith("decoded by ") && !runtime.get(0).equals(buildTime.get(0)),
         "the runtime side was " + runtime.get(0));
+    // Several accessors of one field (time, sampledThreadRef, thread, name, line) read real values
+    // on both sides: two sides that both threw would compare equal.
+    assertTrue(
+        buildTime.stream().skip(1).noneMatch(e -> e.contains("threw")),
+        "a getter threw: " + buildTime.get(1));
+    assertTrue(buildTime.get(1).contains(" time=") && buildTime.get(1).contains(" line="));
     assertEquals(buildTime.size(), runtime.size(), "events");
     for (int i = 1; i < buildTime.size(); i++) {
       // the first difference only: a whole recording rendered is too long to read in a report
