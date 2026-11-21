@@ -52,6 +52,22 @@ class GeneratedFactoryMultiChunkTest {
 
   @Test
   void everyChunkIsReadByTheFactoriesWithItsOwnTypeIds() throws Exception {
+    assertEveryChunkReadWithItsOwnPools(ParsingContext.create());
+  }
+
+  /**
+   * One chunk thread: both chunks are read by the same thread, so by the same thread-local event
+   * handler. A handler keeps the constant pool its getters resolved ({@code label_cp}); kept past
+   * the chunk it belongs to, {@code label()} of the second chunk's events looks its reference up in
+   * the first chunk's pool and answers {@code A0} for {@code B0}. With the default parallelism each
+   * chunk usually gets a thread, and a handler, of its own, which hides that.
+   */
+  @Test
+  void aHandlerReusedForTheNextChunkResolvesThatChunksPools() throws Exception {
+    assertEveryChunkReadWithItsOwnPools(ParsingContext.create().withParallelism(1));
+  }
+
+  private void assertEveryChunkReadWithItsOwnPools(ParsingContext context) throws Exception {
     Path first = dir.resolve("first.jfr");
     Path second = dir.resolve("second.jfr");
     write(first, "A", 0, false);
@@ -82,6 +98,7 @@ class GeneratedFactoryMultiChunkTest {
                 "@JfrType(\"test.Holder\")\npublic interface PHolder {\n  PLabel[] labels();\n}\n"));
     List<String> seen = Collections.synchronizedList(new ArrayList<>());
     parse(
+        context,
         recording,
         loader,
         loader.loadClass("test.PRep"),

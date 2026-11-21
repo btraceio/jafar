@@ -46,6 +46,22 @@ Name the direction (`Java → Go` / `Go → Java`); the obligation is symmetric.
 convention (PRs #135, #150) records the reasoning, not just the verdict. Divergences that are
 kept go into `go-parser/README.md` under "Differences from the Java parser".
 
+## The typed parity statement
+
+A change to one of the two typed handler generators — build time, `jafar-processor` (including
+its templates); runtime, `parser-codegen`'s `CodeGenerator`, `CodeGeneratorDeserializerFactory` or
+`FieldMapping` — must state, in the PR body, what happens on the other one. This is a blocking CI
+check (`scripts/typed-parity-check.sh`, `typed-parity` job in `pr-tests.yml`) that accepts one of:
+
+- `Typed-Parity: ported in this PR` — the counterpart change is in the same PR;
+- `Typed-Parity: not applicable — <reason>` — e.g. the change brings this side to what the other
+  already does, or depends on metadata only one side has.
+
+Parity covers values and the work done per value (pool resolution, field skipping, per-event
+work). When the change touches per-value work, put the `BuildTimeHandlerBenchmark` numbers for both
+`decoder` values, from one session, in the PR. This is a separate line from the Java/Go `Parity:`
+statement; a PR can need both.
+
 ## The API-Break statement
 
 A PR that breaks a gated API surface — an incompatible change to any public member of the

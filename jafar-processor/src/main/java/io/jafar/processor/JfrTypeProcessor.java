@@ -49,7 +49,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private static final String INSTANCE_FIELD_TEMPLATE = "  private %s %s;\n";
 
   private static final String SWITCH_CASE_CP_TEMPLATE =
-      "        case \"%1$s\":\n"
+      "        case %1$s:\n"
           + "          if (p.%2$s_inline) {\n"
           + "            %3$s %2$s_handler = new %3$s();\n"
           + "            %2$s_handler.read(stream, metaField.getType(), constantPools);\n"
@@ -62,13 +62,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
   // A complex accessor whose type has no generated handler: only a pool reference can be read
   // (Plan rejects an inline field).
   private static final String SWITCH_CASE_CP_ONLY_TEMPLATE =
-      "        case \"%s\":\n"
+      "        case %s:\n"
           + "          this.%s_cpRef = stream.readVarint();\n"
           + "          break;\n";
 
   // A String accessor: inline, or a reference resolved in the getter through the field's pool.
   private static final String SWITCH_CASE_STRING_TEMPLATE =
-      "        case \"%1$s\":\n"
+      "        case %1$s:\n"
           + "          this.%2$s_cpType = p.%2$s_cpType;\n"
           + "          if (this.%2$s_cpType != -1L) {\n"
           + "            this.%2$s_cpRef = stream.readVarint();\n"
@@ -78,7 +78,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "          break;\n";
 
   private static final String SWITCH_CASE_CP_ARRAY_TEMPLATE =
-      "        case \"%s\": {\n"
+      "        case %s: {\n"
           + "          int count = (int) stream.readVarint();\n"
           + "%s"
           + "          this.%s_cpRef = new long[count];\n"
@@ -104,7 +104,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "          }\n";
 
   private static final String SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE =
-      "        case \"%s\": {\n"
+      "        case %s: {\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s = new %s[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -114,7 +114,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "        }\n";
 
   private static final String SWITCH_CASE_STRING_ARRAY_TEMPLATE =
-      "        case \"%s\": {\n"
+      "        case %s: {\n"
           + "          int count = (int) stream.readVarint();\n"
           + "          this.%s = new String[count];\n"
           + "          for (int i = 0; i < count; i++) {\n"
@@ -124,7 +124,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "        }\n";
 
   private static final String SWITCH_CASE_TEMPLATE =
-      "        case \"%s\":\n" + "          this.%s = %s;\n" + "          break;\n";
+      "        case %s:\n" + "          this.%s = %s;\n" + "          break;\n";
 
   // Checks a declared field against the recording's metadata, once per metadata class (see
   // HandlerTemplate.validate): pool storage (0 inline, 1 pooled, 2 either - @JfrField(raw = true),
@@ -167,7 +167,9 @@ public class JfrTypeProcessor extends AbstractProcessor {
   // The pool is looked up by the id the field's type has in the chunk the value was read from
   // (Plan): type ids are chunk-local. A chunk need not have a pool of every type; like the
   // runtime-generated handlers (CodeGenerator), an absent pool yields null, and an empty array
-  // for an array field.
+  // for an array field. The pool found is kept in <field>_cp, as CodeGenerator keeps it in its
+  // <field>_cp: a getter called once per stack frame otherwise pays a pool-registry lookup by type
+  // id on every call. read() clears it when the pools or the plan change, and reset() clears it.
   private static final String GETTER_CP_TEMPLATE =
       "  @Override\n"
           + "  public %1$s %2$s() {\n"
@@ -176,7 +178,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "    if (p == null || constantPools == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = this.%3$s_cp;\n"
+          + "    if (cp == null) {\n"
+          + "      cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "      this.%3$s_cp = cp;\n"
+          + "    }\n"
           + "    return cp == null ? null : (%1$s) cp.get(%3$s_cpRef);\n"
           + "  }\n\n";
 
@@ -188,7 +194,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "    if (p == null || constantPools == null || this.%3$s_cpRef == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = this.%3$s_cp;\n"
+          + "    if (cp == null) {\n"
+          + "      cp = constantPools.getConstantPool(p.%3$s_cpType);\n"
+          + "      this.%3$s_cp = cp;\n"
+          + "    }\n"
           + "    if (cp == null) {\n"
           + "      return new %1$s[0];\n"
           + "    }\n"
@@ -216,7 +226,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
           + "    if (constantPools == null) {\n"
           + "      return null;\n"
           + "    }\n"
-          + "    io.jafar.parser.api.ConstantPool cp = constantPools.getConstantPool(this.%1$s_cpType);\n"
+          + "    io.jafar.parser.api.ConstantPool cp = this.%1$s_cp;\n"
+          + "    if (cp == null) {\n"
+          + "      cp = constantPools.getConstantPool(this.%1$s_cpType);\n"
+          + "      this.%1$s_cp = cp;\n"
+          + "    }\n"
           + "    return cp == null ? null : unwrapString(cp.get(this.%1$s_cpRef), \"%1$s\");\n"
           + "  }\n\n";
 
@@ -332,11 +346,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
             .set("JFR_TYPE_NAME", jfrTypeName)
             .set("INSTANCE_FIELDS", buildInstanceFields(fields))
             .set("SWITCH_CASES", buildSwitchCases(fields))
+            .set("OP_CASES", buildOpCases(fields))
             .set("VALIDATE_CASES", buildValidateCases(fields))
             .set("PLAN_FIELDS", buildPlanFields(fields))
             .set("PLAN_DEFAULTS", buildPlanDefaults(fields))
             .set("PLAN_ASSIGN", buildPlanAssign(fields))
-            .set("RESET_FIELDS", buildResetFields(fields))
+            .set("RESET_FIELDS", buildResetFields(fields) + buildCpMemoClear(fields, "    "))
+            .set("CP_MEMO_CLEAR", buildCpMemoClear(fields, "      ").replaceAll("\n$", ""))
             .set("GETTER_METHODS", buildGetterMethods(fields))
             .render();
 
@@ -522,6 +538,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
         } else {
           sb.append(instanceFieldCpDeclaration(field.fieldName));
         }
+        sb.append(cpMemoDeclaration(field.fieldName));
         if (field.inlineHandler != null) {
           // the value read in place when the recording stores the field inline
           String type = field.isArray ? field.elementType + "[]" : field.returnType;
@@ -534,7 +551,24 @@ public class JfrTypeProcessor extends AbstractProcessor {
           // -1 (inline) also in a new instance, which create() and inline reads do not reset
           sb.append("  private long ").append(field.fieldName).append("_cpType = -1L;\n");
           sb.append(instanceFieldCpDeclaration(field.fieldName));
+          sb.append(cpMemoDeclaration(field.fieldName));
         }
+      }
+    }
+    return sb.toString();
+  }
+
+  /** Declares the field a pooled accessor keeps its resolved pool in (see GETTER_CP_TEMPLATE). */
+  private static String cpMemoDeclaration(String fieldName) {
+    return "  private io.jafar.parser.api.ConstantPool " + fieldName + "_cp;\n";
+  }
+
+  /** Clears the pools the getters resolved: they belong to one chunk and one metadata class. */
+  private String buildCpMemoClear(List<FieldInfo> fields, String indent) {
+    StringBuilder sb = new StringBuilder();
+    for (FieldInfo field : fields) {
+      if (field.needsConstantPool || field.isPooledString()) {
+        sb.append(indent).append("this.").append(field.fieldName).append("_cp = null;\n");
       }
     }
     return sb.toString();
@@ -543,35 +577,54 @@ public class JfrTypeProcessor extends AbstractProcessor {
   /** Builds switch cases for field reading. */
   private String buildSwitchCases(List<FieldInfo> fields) {
     StringBuilder sb = new StringBuilder();
-    for (FieldInfo field : fields) {
+    for (int i = 0; i < fields.size(); i++) {
+      FieldInfo field = fields.get(i);
+      // read() switches on the op Plan resolved the metadata field to (opOf), not on its name
+      String label = opLabel(i, field);
       if (field.isArray) {
         // Array handling
         if (field.needsConstantPool) {
           // Array of complex types - read count + loop of inline values or CP refs
           sb.append(
-              switchCaseCpArray(
-                  field.jfrFieldName, field.fieldName, field.elementType, field.inlineHandler));
+              switchCaseCpArray(label, field.fieldName, field.elementType, field.inlineHandler));
         } else if (field.elementType.equals("String")) {
           // String array - read count + loop of UTF-8 strings
-          sb.append(switchCaseStringArray(field.jfrFieldName, field.fieldName));
+          sb.append(switchCaseStringArray(label, field.fieldName));
         } else {
           // Primitive array - read count + loop of primitives
           String readCode = generateReadCode(field);
-          sb.append(
-              switchCasePrimitiveArray(
-                  field.jfrFieldName, field.fieldName, field.elementType, readCode));
+          sb.append(switchCasePrimitiveArray(label, field.fieldName, field.elementType, readCode));
         }
       } else {
         // Non-array handling
         if (field.needsConstantPool) {
-          sb.append(switchCaseCp(field.jfrFieldName, field.fieldName, field.inlineHandler));
+          sb.append(switchCaseCp(label, field.fieldName, field.inlineHandler));
         } else if (field.isPooledString()) {
-          sb.append(
-              String.format(SWITCH_CASE_STRING_TEMPLATE, field.jfrFieldName, field.fieldName));
+          sb.append(String.format(SWITCH_CASE_STRING_TEMPLATE, label, field.fieldName));
         } else {
-          sb.append(switchCase(field.jfrFieldName, field.fieldName, generateReadCode(field)));
+          sb.append(switchCase(label, field.fieldName, generateReadCode(field)));
         }
       }
+    }
+    return sb.toString();
+  }
+
+  /** The case label of a declared field's read: its op, with its JFR name for the reader. */
+  private static String opLabel(int index, FieldInfo field) {
+    return (index + 1) + " /* " + field.jfrFieldName + " */";
+  }
+
+  /**
+   * Builds the cases of opOf: a declared field's JFR name to its op (1-based declaration index).
+   */
+  private String buildOpCases(List<FieldInfo> fields) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < fields.size(); i++) {
+      sb.append("      case \"")
+          .append(fields.get(i).jfrFieldName)
+          .append("\":\n        return ")
+          .append(i + 1)
+          .append(";\n");
     }
     return sb.toString();
   }
