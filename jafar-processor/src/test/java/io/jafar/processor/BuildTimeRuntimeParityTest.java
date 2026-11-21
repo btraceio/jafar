@@ -4,6 +4,7 @@ import static io.jafar.processor.ProcessorTestSupport.compileTo;
 import static io.jafar.processor.ProcessorTestSupport.source;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.HandlerFactory;
@@ -115,10 +116,11 @@ class BuildTimeRuntimeParityTest {
         "the runtime side was " + runtime.get(0));
     // Several accessors of one field (time, sampledThreadRef, thread, name, line) read real values
     // on both sides: two sides that both threw would compare equal.
-    assertTrue(
-        buildTime.stream().skip(1).noneMatch(e -> e.contains("threw")),
-        "a getter threw: " + buildTime.get(1));
-    assertTrue(buildTime.get(1).contains(" time=") && buildTime.get(1).contains(" line="));
+    String threw =
+        buildTime.stream().skip(1).filter(e -> e.contains("=threw ")).findFirst().orElse(null);
+    assertNull(threw, "a getter threw");
+    assertTrue(buildTime.stream().skip(1).allMatch(e -> e.contains(" time=")), "time()");
+    assertTrue(buildTime.stream().skip(1).anyMatch(e -> e.contains(" line=")), "line()");
     assertEquals(buildTime.size(), runtime.size(), "events");
     for (int i = 1; i < buildTime.size(); i++) {
       // the first difference only: a whole recording rendered is too long to read in a report

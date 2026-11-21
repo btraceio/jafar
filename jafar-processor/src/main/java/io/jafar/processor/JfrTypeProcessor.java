@@ -575,9 +575,17 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   /** Builds switch cases for field reading. */
   private String buildSwitchCases(List<FieldInfo> fields) {
+    // an accessor of a field several accessors read is reached only through its group's case and
+    // readOp, never by its own op
+    java.util.Set<Integer> grouped = new java.util.HashSet<>();
+    for (List<Integer> members : groups(fields).values()) {
+      grouped.addAll(members);
+    }
     StringBuilder sb = new StringBuilder();
     for (int i = 0; i < fields.size(); i++) {
-      sb.append(switchCaseOf(i, fields.get(i)));
+      if (!grouped.contains(i)) {
+        sb.append(switchCaseOf(i, fields.get(i)));
+      }
     }
     return sb.toString();
   }
@@ -819,21 +827,26 @@ public class JfrTypeProcessor extends AbstractProcessor {
   }
 
   /**
-   * The JFR types whose encoding the read generated for {@code javaType} consumes correctly: the
-   * varint integer types are interchangeable, as are the one-byte {@code byte} and {@code boolean};
-   * {@code float}, {@code double} and {@code String} match only themselves.
+   * The JFR types the read generated for {@code javaType} reads without losing a value: the varint
+   * integer types, each into its own type or a wider one (an {@code int} accessor of a {@code long}
+   * field would keep its low 32 bits, so it is refused, as the runtime generator refuses it); the
+   * one-byte {@code byte} and {@code boolean} into each other; {@code float}, {@code double} and
+   * {@code String} only into themselves.
    */
   private static String expectedJfrTypes(String javaType) {
     switch (javaType) {
       case "long":
-      case "int":
-      case "short":
-      case "char":
       case "java.lang.Long":
-      case "java.lang.Integer":
-      case "java.lang.Short":
-      case "java.lang.Character":
         return "new String[] {\"long\", \"int\", \"short\", \"char\"}";
+      case "int":
+      case "java.lang.Integer":
+        return "new String[] {\"int\", \"short\", \"char\"}";
+      case "short":
+      case "java.lang.Short":
+        return "new String[] {\"short\"}";
+      case "char":
+      case "java.lang.Character":
+        return "new String[] {\"char\"}";
       case "byte":
       case "boolean":
       case "java.lang.Byte":

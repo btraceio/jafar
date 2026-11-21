@@ -122,11 +122,12 @@ Beyond the gates, the conventions the codebase already follows:
     field's start before each accessor's own read (`readOp`). Each accessor is planned and
     checked as if it read the field alone (`BuildTimeRuntimeParityTest` compares an alias, a raw
     index next to its pooled reference, a widened `int` and a second `String` accessor). An
-    interface with no such field generates the same handler as before, byte for byte. Kept
-    difference: the processor checks each accessor on its own, so it accepts a combination the
-    runtime refuses as a whole (a `long` and an `int` accessor of one `long` field). Until this,
-    the processor emitted one `case` per accessor in `opOf` and in its metadata check, and javac
-    reported `duplicate case label`.
+    interface with no such field generates the same handler as before, byte for byte. Both
+    generators accept an integer accessor of the field's own type or a wider one and refuse a
+    narrower one (an `int` accessor of a `long` field). Kept differences: the processor decodes
+    such a field once per accessor (and, for an inline complex value, allocates one handler per
+    accessor), where the runtime class reads it once; and it reads `byte` and `boolean` as each
+    other, which the runtime does not.
 
   Both read a simple type (one field, such as `jdk.types.Symbol`) as the value it wraps, unless the
   accessor returns the interface registered for that type (`ThreadState state()` for a pooled
