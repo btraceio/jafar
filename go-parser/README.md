@@ -84,6 +84,32 @@ Only the lower bound skips chunks: an event is written when it is committed and 
 before the chunk it was written to, so `jfr.Until(t)` skips nothing. A skipped chunk is reported
 to `Options.OnChunkSkipped`, not to `OnChunkStart` or `OnChunkEnd`.
 
+To count events, or look only at their type, size and start time, read each event's header
+without decoding it. `CountEvents` does it for the common case:
+
+```go
+counts, err := parser.CountEvents(nil) // map[type name]count; nil counts every type
+```
+
+`Options.OnEventHeader` receives a `jfr.EventHeader` for every event `Options.HeaderFilter`
+accepts (every event when it is nil), before the event is decoded and whether or not it is. With a
+`TypeFilter` that rejects every type nothing is decoded. `StartTime` in the header is the decoded
+event's `startTime` (epoch nanoseconds for a `jdk.jfr.Timestamp(TICKS)` field), read by skipping
+the fields before it, or `jfr.NoStartTime` when the type has no `long startTime` field:
+
+```go
+sizes := map[string]int64{}
+err = parser.ParseWith(jfr.Options{
+    TypeFilter: func(*jfr.ClassType) bool { return false }, // decode nothing
+    OnEventHeader: func(h jfr.EventHeader) error {
+        sizes[h.Type.Name] += h.Size
+        return nil
+    },
+}, nil)
+```
+
+While `OnEventHeader` is set, `StartTime` skips no chunk.
+
 Returning `jfr.ErrStop` from the handler ends parsing successfully - the whole
 recording, not only the current chunk; no event is delivered after it. Any other
 error aborts it and is returned from `Parse` unchanged.
@@ -312,6 +338,16 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   chunk reaches `OnChunkSkipped` here; a Java parser listener sees `onChunkStart`, `onMetadata`
   and `onChunkEnd(skipped = true)`. Pinned by `TestStartTime*` here and `UntypedTimeRangeTest` and
   `ChunkPruningTest` in Java.
+* **Event headers: an option here, a handler in Java, with the same values.**
+  `Options.OnEventHeader` and Java's `UntypedJafarParser.handleHeaders(TypeFilter,
+  EventHeaderHandler)` deliver an event's type, size (header included) and `startTime` without
+  decoding it, and both skip the fields before `startTime` to read it. Here the header is
+  delivered whether or not `TypeFilter` lets the event be decoded; in Java an event is decoded
+  only when a value handler wants it. Both run the header callback before decoding, keep every
+  chunk while it is set, and give `NoStartTime` (Java: `EventHeaderHandler.NO_START_TIME`, both
+  `math.MinInt64` / `Long.MIN_VALUE`) to a type without a `long startTime` field. `CountEvents`
+  returns an unordered map here, a `SortedMap` in Java. Pinned by `header_test.go` here and
+  `UntypedHeaderHandlerTest` in Java, which check the same `jfr summary` sizes for test-ap.jfr.
 * **Sequential.** The Java parser hands chunks to a thread pool and calls
   handlers from those threads. This one decodes chunks in recording order and
   calls the handler on the calling goroutine, so events arrive in file order.

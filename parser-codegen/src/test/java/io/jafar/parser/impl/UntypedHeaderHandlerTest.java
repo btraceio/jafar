@@ -304,4 +304,73 @@ class UntypedHeaderHandlerTest {
           }
         });
   }
+
+  /**
+   * The sizes of test-ap.jfr's events, per type, as the JDK's {@code jfr summary} prints them
+   * (OpenJDK 21.0.x, Count and Size (bytes) columns). The Go parser's test checks the same figures.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void headerSizesMatchJfrSummary(boolean generated) throws Exception {
+    Path recording =
+        Paths.get(
+            UntypedHeaderHandlerTest.class.getClassLoader().getResource("test-ap.jfr").toURI());
+    Map<String, LongAdder> sizes = new ConcurrentHashMap<>();
+    Map<String, LongAdder> counts = new ConcurrentHashMap<>();
+    try (UntypedJafarParser parser = open(recording, generated)) {
+      parser.handleHeaders(
+          type -> true,
+          (type, size, startTime, ctl) -> {
+            sizes.computeIfAbsent(type.getName(), k -> new LongAdder()).add(size);
+            counts.computeIfAbsent(type.getName(), k -> new LongAdder()).increment();
+          });
+      parser.run();
+    }
+    Map<String, Long> sizeSums = new TreeMap<>();
+    sizes.forEach((name, adder) -> sizeSums.put(name, adder.sum()));
+    Map<String, Long> countSums = new TreeMap<>();
+    counts.forEach((name, adder) -> countSums.put(name, adder.sum()));
+    assertEquals(
+        Map.of(
+            "jdk.ExecutionSample", 91318L,
+            "jdk.CPULoad", 5985L,
+            "jdk.GCHeapSummary", 10064L,
+            "jdk.InitialSystemProperty", 216L),
+        sizeSums);
+    assertEquals(
+        Map.of(
+            "jdk.ExecutionSample", 8000L,
+            "jdk.CPULoad", 160L,
+            "jdk.GCHeapSummary", 160L,
+            "jdk.InitialSystemProperty", 5L),
+        countSums);
+  }
+
+  /**
+   * A start-time range registered next to a header handler skips no chunk: the header handler asks
+   * for every chunk. Alone, the same range (after the recording) skips them all.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void headerHandlerKeepsEveryChunkNextToARange(boolean generated) throws Exception {
+    Path recording = multiChunk();
+    long total =
+        decodedCounts(recording, generated).values().stream().mapToLong(Long::longValue).sum();
+    io.jafar.parser.TimeRange after = io.jafar.parser.TimeRange.since(1L << 62);
+
+    LongAdder ranged = new LongAdder();
+    try (UntypedJafarParser parser = open(recording, generated)) {
+      parser.handle(type -> true, after, (type, value, ctl) -> ranged.increment());
+      parser.run();
+    }
+    assertEquals(0, ranged.sum(), "alone, the range skips every chunk");
+
+    LongAdder headers = new LongAdder();
+    try (UntypedJafarParser parser = open(recording, generated)) {
+      parser.handle(type -> true, after, (type, value, ctl) -> {});
+      parser.handleHeaders(type -> true, (type, size, startTime, ctl) -> headers.increment());
+      parser.run();
+    }
+    assertEquals(total, headers.sum(), "every event's header, from every chunk");
+  }
 }
