@@ -201,7 +201,13 @@ jfr-shell metadata recording.jfr --events-only
 
 # Chunk information
 jfr-shell chunks recording.jfr --summary
+
+# Compare a candidate recording against a baseline (self and inclusive frame shares, rates)
+jfr-shell compare before.jfr after.jfr --json
 ```
+
+See [Comparing two recordings](../doc/cli/Usage.md#comparing-two-recordings) for what `compare`
+reports.
 
 Exit codes: 0 for success, 1 for errors (sent to stderr).
 

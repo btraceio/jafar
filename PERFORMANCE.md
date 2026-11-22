@@ -249,6 +249,18 @@ those files, exactly as the workflow builds it:
 python3 scripts/jmh_trend.py --current build/jmh
 ```
 
+To compare two builds rather than two nights, run the same benchmarks for both on one
+machine, interleaved (A B B A, `-rf json` each), and hand the result files to
+`scripts/perf_ab.py`. It pools the forks per side and prints, per benchmark, both medians,
+the head/base ratio with a 99% interval, an exact Mann-Whitney p and a verdict. Like the
+trend, it is advisory: it exits 0 whatever the numbers say, and 2 only on malformed data.
+Its header documents the options and the calibration file:
+
+```bash
+python3 scripts/perf_ab.py --base base-r1.json --base base-r2.json \
+    --head head-r1.json --head head-r2.json [--calibration FILE] [--json report.json]
+```
+
 The workflow triggers nightly (03:41 UTC, off the hour), on `workflow_dispatch`,
 and on every push to a branch named `nightly/**` — the last one is how the
 workflow itself is exercised before it reaches the default branch

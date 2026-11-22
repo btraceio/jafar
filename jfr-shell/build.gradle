@@ -77,6 +77,9 @@ dependencies {
     implementation 'dev.tamboui:tamboui-core:0.2.0'
     implementation 'dev.tamboui:tamboui-widgets:0.2.0'
 
+    // JSON for `jfr-shell compare --json` (already on the runtime classpath through shell-core)
+    implementation 'com.google.code.gson:gson:2.10.1'
+
     // Utilities
     implementation 'org.slf4j:slf4j-api:2.0.5'
     implementation 'org.slf4j:slf4j-simple:2.0.5'

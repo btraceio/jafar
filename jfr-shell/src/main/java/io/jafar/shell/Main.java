@@ -6,6 +6,10 @@ import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.analysis.AnalysisTarget;
+import io.jafar.shell.core.compare.CompareOptions;
+import io.jafar.shell.core.compare.CompareResult;
+import io.jafar.shell.core.compare.JfrCompare;
 import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.live.TailRunner;
@@ -33,6 +37,7 @@ import picocli.CommandLine;
       Main.MetadataCommand.class,
       Main.ChunksCommand.class,
       Main.CpCommand.class,
+      Main.CompareCommand.class,
       Main.ScriptCommand.class,
       Main.PsCommand.class,
       Main.TailCommand.class
@@ -84,7 +89,13 @@ public final class Main implements Callable<Integer> {
   public static void main(String[] args) {
     // Parse CLI args to extract plugin-dir and install-plugin before initialization
     Main main = new Main();
-    new CommandLine(main).parseArgs(args);
+    try {
+      new CommandLine(main).parseArgs(args);
+    } catch (CommandLine.ParameterException e) {
+      // A usage error (missing or malformed arguments): say what is wrong and how the command is
+      // used, as picocli's own handler would, instead of escaping with a stack trace.
+      System.exit(usageError(e));
+    }
 
     // Set plugin directory if specified
     if (main.pluginDir != null) {
@@ -110,6 +121,22 @@ public final class Main implements Callable<Integer> {
 
     int exitCode = new CommandLine(new Main()).execute(args);
     System.exit(exitCode);
+  }
+
+  /** Exit code for a usage error, as picocli's {@code execute} returns for invalid input. */
+  static final int USAGE_ERROR = 2;
+
+  /** Prints a usage error's message and the failing command's usage to stderr. */
+  static int usageError(CommandLine.ParameterException e) {
+    System.err.println("Error: " + e.getMessage());
+    e.getCommandLine().usage(System.err);
+    return USAGE_ERROR;
+  }
+
+  /** An exception's message, or its class name when it has none (an NPE, many wrapped errors). */
+  static String describe(Throwable e) {
+    String message = e.getMessage();
+    return message == null || message.isBlank() ? e.getClass().getName() : message;
   }
 
   @Override
@@ -716,6 +743,107 @@ public final class Main implements Callable<Integer> {
       } catch (Exception e) {
         err.println("Error: " + e.getMessage());
         return 1;
+      }
+    }
+  }
+
+  /**
+   * {@code compare <baseline.jfr> <candidate.jfr>}: the {@code jfr_compare} comparison, headless.
+   * Exits 0 when the comparison ran, whatever it found; 1 when it could not run (a missing or
+   * unreadable recording, an unknown event type); and 2 on a usage error (a missing or malformed
+   * argument), with the message and usage on stderr. It reports where time moved; it does not
+   * decide whether a build got slower.
+   */
+  @CommandLine.Command(
+      name = "compare",
+      mixinStandardHelpOptions = true,
+      description =
+          "Compare a candidate recording against a baseline: event rates and per-frame self and"
+              + " inclusive time shares")
+  static class CompareCommand implements Callable<Integer> {
+    @CommandLine.Parameters(index = "0", description = "Baseline recording (the 'before')")
+    private String baselineFile;
+
+    @CommandLine.Parameters(index = "1", description = "Candidate recording (the 'after')")
+    private String candidateFile;
+
+    @CommandLine.Option(
+        names = {"--json"},
+        description = "Print the full result as JSON")
+    private boolean json;
+
+    @CommandLine.Option(
+        names = {"--event-type"},
+        description = "Execution sample event type (default: detected per recording)")
+    private String eventType;
+
+    @CommandLine.Option(
+        names = {"--min-delta-pct"},
+        description = "Noise floor in percentage points for per-frame changes (default: 1.0)")
+    private double minDeltaPct = JfrCompare.DEFAULT_MIN_DELTA_PCT;
+
+    @CommandLine.Option(
+        names = {"--limit", "-l"},
+        description = "Maximum number of changed frames per list (default: 25)")
+    private int limit = JfrCompare.DEFAULT_LIMIT;
+
+    @CommandLine.Option(
+        names = {"-b", "--backend"},
+        description = "JFR backend to use")
+    private String backend;
+
+    @Override
+    public Integer call() {
+      if (limit <= 0) {
+        System.err.println("Error: --limit must be positive");
+        return 1;
+      }
+      if (!Double.isFinite(minDeltaPct) || minDeltaPct < 0) {
+        System.err.println("Error: --min-delta-pct must be a number of zero or more");
+        return 1;
+      }
+      Path baselinePath = Paths.get(baselineFile);
+      Path candidatePath = Paths.get(candidateFile);
+      for (Path p : List.of(baselinePath, candidatePath)) {
+        if (!Files.isRegularFile(p)) {
+          System.err.println("Error: JFR file not found: " + p);
+          return 1;
+        }
+        if (!Files.isReadable(p)) {
+          System.err.println("Error: JFR file not readable: " + p);
+          return 1;
+        }
+      }
+      Integer rc = validateBackend(backend);
+      if (rc != 0) {
+        return rc;
+      }
+
+      ParsingContext ctx = ParsingContext.create();
+      try (JFRSession baseline = open(baselinePath, ctx);
+          JFRSession candidate = open(candidatePath, ctx)) {
+        // Inclusive shares always: they are what names a caller whose callees got slower.
+        CompareResult result =
+            new JfrCompare()
+                .compare(
+                    AnalysisTarget.of(1, baseline),
+                    AnalysisTarget.of(2, candidate),
+                    new CompareOptions(eventType, minDeltaPct, limit, true));
+        System.out.print(json ? CompareOutput.json(result.toMap()) : CompareOutput.table(result));
+        return 0;
+      } catch (Exception e) {
+        System.err.println("Error: " + describe(e));
+        return 1;
+      }
+    }
+
+    /** Opens a recording, naming the file when it is not one the parser can read. */
+    private static JFRSession open(Path path, ParsingContext ctx) {
+      try {
+        return new JFRSession(path, ctx);
+      } catch (Exception e) {
+        throw new IllegalArgumentException(
+            "cannot read JFR recording " + path + ": " + describe(e), e);
       }
     }
   }
