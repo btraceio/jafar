@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`jfr-shell compare <baseline.jfr> <candidate.jfr>`** - the `jfr_compare` comparison without an
+  MCP server, for CI. Prints a short report, or with `--json` the keys `jfr_compare` returns plus
+  `inclusiveFrames`: per frame, the share of samples whose stack contains it (once per sample under
+  recursion), judged by the same significance rule as self time. Options `--event-type`,
+  `--min-delta-pct` and `--limit`; exits 1 with a message when a recording is missing or unreadable.
+  The comparison now lives in `shell-core` (`io.jafar.shell.core.compare`) and `jfr_compare`
+  delegates to it; its MCP output is unchanged and does not include inclusive frames
 - **`UntypedJafarParser.handleHeaders(TypeFilter, EventHeaderHandler)`** - a handler that receives
   each event's type, size and `startTime` without the event being decoded. An event only header
   handlers want is skipped like an unwanted one, except that its `startTime` is read: the fields

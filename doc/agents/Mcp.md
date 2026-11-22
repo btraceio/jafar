@@ -30,6 +30,15 @@ MCP resources: `jafar://sessions`, `jafar://help/jfrpath`, `jafar://help/hdumppa
 de-duplicate and merge — see `Findings.merge`. When adding a tool that makes a judgement, emit
 findings in this shape rather than inventing another one.
 
+**`jfr_compare` is an adapter; the comparison is in `shell-core`.** `io.jafar.shell.core.compare.JfrCompare`
+holds the statistics (the noise floor, the sample minimums, the z threshold) and builds the rows
+and findings; `JfrCompareTools` resolves session ids and adds `sessionId`/`alias` to each side, and
+`jfr-shell compare` prints the same result headless. The core also computes inclusive
+(total-time) frame shares on request. `jfr_compare` does not request them, so its response is
+unchanged; adding them there would change the MCP contract and needs its own change. Read
+recordings through the server's injected evaluator (`JfrAnalysisTools.querySource`), as the other
+core analyses do: `JfrCompareThinDataTest` substitutes it to script exact sample counts.
+
 **`startTime` and `endTime` of `jfr_use` and `jfr_tsa` are nanoseconds from the recording's
 start.** `JfrAnalyses.resolveTimeWindow` adds them to the start of the earliest chunk before
 filtering, and takes a value at or after that start as an epoch timestamp already. The result's
