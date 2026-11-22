@@ -152,6 +152,13 @@ jfr-shell constants <jfr-file> [options]
   --type, -t <name>         Constant pool type name
   --summary                 Show summary only
   --format, -f <format>     Output format: table (default), json
+
+# Compare command - Compare a candidate recording against a baseline
+jfr-shell compare <baseline.jfr> <candidate.jfr> [options]
+  --json                    Print the full result as JSON
+  --event-type <type>       Execution sample event type (default: detected per recording)
+  --min-delta-pct <pct>     Noise floor in percentage points for frame changes (default: 1.0)
+  --limit, -l <N>           Maximum number of changed frames per list (default: 25)
 ```
 
 **Non-Interactive Examples:**
@@ -177,6 +184,38 @@ jfr-shell constants recording.jfr --type jdk.types.Symbol
 # Crosscheck StackTrace CP entries against event references
 jfr-shell show recording.jfr "constants/jdk.types.StackTrace | crossref()"
 ```
+
+#### Comparing two recordings
+
+`jfr-shell compare` runs the comparison behind the MCP tool `jfr_compare`, with no server. Event
+counts are compared as rates per second of each recording's own observed span. Frames are compared
+as shares of each recording's execution samples, in two lists:
+
+- **Self time** (`frames`): the share of samples whose leaf frame is the method.
+- **Inclusive time** (`inclusiveFrames`): the share of samples whose stack contains the method,
+  counted once per sample even when it recurses. This list names a caller whose own code did not
+  change but whose callees got slower, which self time cannot show.
+
+A frame is reported only if its share moved by at least `--min-delta-pct` points. It is called a
+`regression` or an `improvement` only when the move is significant: both recordings have at least
+30 samples, the frame has at least 5 samples in one of them, and the two-proportion z score is at
+least 3. Anything less is `inconclusive`. A share moving says where time went, not that the build
+got slower. Findings are drawn from self time and event rates only.
+
+```bash
+# Short report: rates, both frame lists, findings
+jfr-shell compare before.jfr after.jfr
+
+# Machine output for CI: the keys jfr_compare returns (without session ids), plus inclusiveFrames
+jfr-shell compare before.jfr after.jfr --json | jq '.inclusiveFrames[] | select(.significant)'
+```
+
+The JSON object has the keys `baseline`, `candidate` (each with `recordingPath`, `eventType`,
+`samples`, `observedDurationSeconds`, `totalEvents`), `comparability`, `metrics`, `frames`,
+`inclusiveFrames`, `minDeltaPct`, `sufficientSamples`, `minSamplesPerRecording`, `findings` and
+`findingCounts`. Self-time rows carry `baselineSelfPct` and `candidateSelfPct`; inclusive rows carry
+`baselineTotalPct` and `candidateTotalPct`. The exit code is `0` whenever the comparison ran,
+whatever it found, and `1` when a recording is missing or cannot be read.
 
 **Exit Codes:**
 - `0` - Success
