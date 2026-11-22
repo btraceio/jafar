@@ -24,18 +24,26 @@ import org.junit.jupiter.api.Test;
 class LazyQueryValueRaceTest {
   private static final List<Map<String, Object>> ROWS = List.of(Map.of("count", 42L));
 
+  /**
+   * Held for the whole test: LazyQueryValue keeps its SessionRef only weakly, and once a GC cleared
+   * it every copy() threw, the readers swallowed that as "not evaluable", and the copy() check
+   * stopped running while the test still passed on get() alone.
+   */
+  private SessionManager.SessionRef<JFRSession> ref;
+
   @Test
   void racingReadsNeverSeeEvaluatedWithoutRows() throws Exception {
     // A session the evaluator cannot read: if a reader catches the value invalidated it tries to
     // evaluate, fails, and moves on. Only a "cached" read returning null is a failure.
     JFRSession session = mock(JFRSession.class);
-    var ref = new SessionManager.SessionRef<>(1, null, session);
+    ref = new SessionManager.SessionRef<>(1, null, session);
     LazyQueryValue value = new LazyQueryValue(JfrPathParser.parse("events/x"), ref, "events/x");
     value.setCachedResult(ROWS);
 
     AtomicBoolean stop = new AtomicBoolean();
     AtomicInteger nullReads = new AtomicInteger();
     AtomicInteger cachedReads = new AtomicInteger();
+    AtomicInteger copies = new AtomicInteger();
     int readers = Math.max(2, Runtime.getRuntime().availableProcessors() - 1);
     CountDownLatch done = new CountDownLatch(readers + 1);
 
@@ -66,6 +74,7 @@ class LazyQueryValueRaceTest {
                         cachedReads.incrementAndGet();
                       }
                       LazyQueryValue copy = value.copy();
+                      copies.incrementAndGet();
                       if (copy.isCached() && copy.get() == null) {
                         nullReads.incrementAndGet();
                       }
@@ -91,6 +100,9 @@ class LazyQueryValueRaceTest {
     assertEquals(0, nullReads.get(), "reads that saw 'evaluated' with null rows");
     if (cachedReads.get() == 0) {
       throw new AssertionError("no read ever saw the cached rows; the test exercised nothing");
+    }
+    if (copies.get() == 0) {
+      throw new AssertionError("no copy() succeeded; the copy() check exercised nothing");
     }
   }
 }
