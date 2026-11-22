@@ -229,6 +229,52 @@ func forEachRecording(b *testing.B, workload func(*benchRecording) (Options, fun
 	}
 }
 
+// BenchmarkCountEvents counts the events of every type from their headers
+// (Parser.CountEvents): no event is decoded and no payload is read.
+func BenchmarkCountEvents(b *testing.B) {
+	for _, rec := range recordings(b) {
+		b.Run(rec.name, func(b *testing.B) {
+			p := NewParser(rec.data)
+			b.SetBytes(int64(len(rec.data)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := p.CountEvents(nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkHeadersWithStartTime delivers every event's header with its start
+// time (Options.OnEventHeader) and decodes nothing: the start time is read
+// from each payload by skipping the fields before it.
+func BenchmarkHeadersWithStartTime(b *testing.B) {
+	for _, rec := range recordings(b) {
+		b.Run(rec.name, func(b *testing.B) {
+			p := NewParser(rec.data)
+			var sum int64
+			opts := Options{
+				TypeFilter: func(*ClassType) bool { return false },
+				OnEventHeader: func(h EventHeader) error {
+					sum += h.StartTime
+					return nil
+				},
+			}
+			b.SetBytes(int64(len(rec.data)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := p.ParseWith(opts, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+			_ = sum
+		})
+	}
+}
+
 // BenchmarkScan walks the chunk framing, metadata and constant pool index
 // without decoding a single event. This is the floor every other benchmark
 // builds on.

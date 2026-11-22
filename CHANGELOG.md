@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Go parser: `Options.OnEventHeader`, `Options.HeaderFilter` and `Parser.CountEvents`** - the same
   header delivery, with the same `startTime` rule (`jfr.NoStartTime`). On the same recording
   `CountEvents`, which reads no `startTime` either, took 140-161 ms in 23 of 24 runs (one 206 ms),
-  decoding every event 1,883-2,032 ms
+  decoding every event 1,883-2,032 ms. Skipping the `startTime` read made `CountEvents` 32% faster
+  (`benchstat`, n=10, p=0.000)
 - **The TUI events browser and `TypeDiscovery.getTypeCounts` count from headers** instead of
   decoding every event
 - **`EventStream`, `EventStreamGenerated` and `UntypedEventStreamFactory.Sink` have a
@@ -461,10 +462,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads of bytes 2 to 9 stayed calls, so every multi-byte varint, a `startTime` among them, paid
   up to eight calls. Header handlers also look up the chunk's stream and timing once per chunk
   instead of once per event, and no longer put the stream back after reading `startTime` when
-  nothing decodes the event. On `QueryPushdownBenchmark` (JDK 21, 2 rounds of 2 forks each):
-  `handleHeaders` with start times 116 → 90-92 ms, `countEvents` 119-129 → 91 ms, decoding with
-  the generated reader 436-453 → 378-388 ms; the skip-only and type-filtered paths did not change
-  measurably. Reading the 8 bytes at a varint's start at once and decoding them without branches
+  nothing decodes the event. On `QueryPushdownBenchmark` (JDK 21, generated reader), two runs on
+  one machine (2×2 and 2×3 forks), both with non-overlapping intervals: `handleHeaders` with
+  start times 116 → 90-92 ms and 198 → 149 ms, `countEvents` 119-129 → 91 ms and 207 → 149 ms.
+  Decoding every event was 436-453 → 378-388 ms in the first run but within the noise in the
+  second; the skip-only path did not change measurably. Reading the 8 bytes at a varint's start at once and decoding them without branches
   was measured too and was slower than the loop
 - **`chunks/<n>` and `chunk <n> show` address a chunk by the `index` `chunks` lists** (1-based,
   in file order), which is also what tab completion offers and what `chunks --range` filters on.
