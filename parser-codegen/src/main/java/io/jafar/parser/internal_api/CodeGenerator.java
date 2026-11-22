@@ -15,6 +15,7 @@ import java.io.PrintStream;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -1394,12 +1395,53 @@ final class CodeGenerator {
     mv.visitEnd();
   }
 
+  /**
+   * Implements an accessor of a field this class reads but could not generate for the accessor's
+   * declared type (a narrowing primitive, a raw accessor not returning {@code long}, an object type
+   * with no generated class): it throws, naming the accessor and the field, when called. It was
+   * left unimplemented, and called it threw {@code AbstractMethodError}. Generation does not fail
+   * here, so a parse that never calls the accessor still runs.
+   */
+  static void prepareUnreadableAccessor(
+      Method m, String jfrType, MetadataField field, Class<?> target, ClassVisitor cv) {
+    String message =
+        target.getName()
+            + "."
+            + m.getName()
+            + "() declares "
+            + m.getReturnType().getTypeName()
+            + ", which the runtime-generated class cannot return for JFR field "
+            + jfrType
+            + "."
+            + field.getName()
+            + " (stored as "
+            + (field.hasConstantPool() ? "a constant pool reference to " : "")
+            + field.getType().getName()
+            + (field.getDimension() > 0 ? "[]" : "")
+            + ")";
+    MethodVisitor mv =
+        cv.visitMethod(Opcodes.ACC_PUBLIC, m.getName(), Type.getMethodDescriptor(m), null, null);
+    mv.visitCode();
+    mv.visitTypeInsn(Opcodes.NEW, Type.getInternalName(IllegalStateException.class));
+    mv.visitInsn(Opcodes.DUP);
+    mv.visitLdcInsn(message);
+    mv.visitMethodInsn(
+        Opcodes.INVOKESPECIAL,
+        Type.getInternalName(IllegalStateException.class),
+        "<init>",
+        "(Ljava/lang/String;)V",
+        false);
+    mv.visitInsn(Opcodes.ATHROW);
+    mv.visitMaxs(0, 0);
+    mv.visitEnd();
+  }
+
   static void prepareEmptyMethod(Method m, ClassVisitor cv) {
     MethodVisitor mv =
         cv.visitMethod(Opcodes.ACC_PUBLIC, m.getName(), Type.getMethodDescriptor(m), null, null);
     mv.visitCode();
     Type retType = Type.getReturnType(m);
-    if (retType.getDimensions() > 1) {
+    if (retType.getSort() == Type.ARRAY) {
       mv.visitInsn(Opcodes.ACONST_NULL);
       mv.visitInsn(Opcodes.ARETURN);
     } else {
@@ -1544,7 +1586,20 @@ final class CodeGenerator {
             + "$"
             + CLASS_COUNTER.incrementAndGet();
     // generate handler class
-    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+    // Every method emitted, as name + descriptor: an interface method is implemented only by a
+    // method of the same descriptor, so a method of the accessor's name but another type (a
+    // narrowing int accessor generated as ()J) leaves it unimplemented.
+    Set<String> emitted = new HashSet<>();
+    ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+    ClassVisitor cw =
+        new ClassVisitor(Opcodes.ASM9, writer) {
+          @Override
+          public MethodVisitor visitMethod(
+              int access, String name, String descriptor, String signature, String[] exceptions) {
+            emitted.add(name + descriptor);
+            return super.visitMethod(access, name, descriptor, signature, exceptions);
+          }
+        };
     // Generate classes compatible with Java 8+ to support running on JDK 8
     // while still being usable on newer JDKs.
     cw.visit(
@@ -1585,7 +1640,8 @@ final class CodeGenerator {
     // jdk.ExecutionSample.sampledThread counted eventThread (also a pooled java.lang.Thread) as
     // read, and the constructor stored it into an eventThread_ref no accessor had declared.
     Set<MetadataField> appliedFields = Collections.newSetFromMap(new IdentityHashMap<>());
-    Set<String> generatedMethods = new HashSet<>();
+    // accessor name -> the JFR field it reads, for the message of an accessor left unimplemented
+    Map<String, MetadataField> accessorFields = new HashMap<>();
 
     while (!stack.isEmpty()) {
       MetadataClass current = stack.pop();
@@ -1595,6 +1651,14 @@ final class CodeGenerator {
           allFields.add(field);
           if (usedAttributes.contains(fieldName)) {
             appliedFields.add(field);
+          }
+          Set<FieldMapping> mappings = fieldMap.get(fieldName);
+          if (mappings == null) {
+            // No accessor reads this field: the constructor skips it, so nothing is generated for
+            // it. A getter named after the field used to be, and it collided with an accessor of
+            // that name reading another field (@JfrField("bytecodeIndex") int lineNumber():
+            // ClassFormatError, duplicate method name), or replaced an interface's default method.
+            continue;
           }
 
           // A simple type is read as the value it wraps (a jdk.types.Symbol as its String),
@@ -1654,11 +1718,6 @@ final class CodeGenerator {
             }
           }
           boolean withConstantPool = field.hasConstantPool();
-          Set<FieldMapping> mappings = fieldMap.get(fieldName);
-          if (mappings == null) {
-            mappings = new HashSet<>();
-            mappings.add(new FieldMapping(fieldName, false));
-          }
           // Several accessors may read one JFR field. A fixed order (FieldMapping has identity
           // equality, so the set's order varies by run): what is emitted once per field must not
           // depend on which accessor comes first. jafar-processor does not support several
@@ -1720,7 +1779,7 @@ final class CodeGenerator {
                   generateField);
               generateField = false;
             }
-            generatedMethods.add(mapping.method());
+            accessorFields.putIfAbsent(mapping.method(), field);
           }
         }
 
@@ -1730,22 +1789,29 @@ final class CodeGenerator {
       ;
     }
     if (target != null) {
-      Deque<Class<?>> checkClasses = new ArrayDeque<>();
-      checkClasses.push(target);
-      Class<?> checkClass = null;
-      while ((checkClass = checkClasses.poll()) != null) {
-        for (Method m : checkClass.getMethods()) {
-          if (!generatedMethods.contains(m.getName())) {
-            prepareEmptyMethod(m, cw);
-          }
+      // getMethods() of an interface lists its superinterfaces' methods too. A default method is
+      // left to the interface, as the build-time handlers do: an empty method replaced it, so a
+      // @JfrIgnore default returned 0 or null.
+      for (Method m : target.getMethods()) {
+        if (m.isDefault()
+            || Modifier.isStatic(m.getModifiers())
+            || emitted.contains(m.getName() + Type.getMethodDescriptor(m))) {
+          continue;
         }
-        checkClasses.addAll(Arrays.asList(checkClass.getInterfaces()));
+        // an accessor takes no parameters: foo(int) next to an accessor foo() is not one
+        MetadataField read = m.getParameterCount() == 0 ? accessorFields.get(m.getName()) : null;
+        if (read != null) {
+          prepareUnreadableAccessor(m, clz.getName(), read, target, cw);
+        } else {
+          // no such field in this recording: the accessor returns the type's default value
+          prepareEmptyMethod(m, cw);
+        }
       }
       // add factory method returning the created instance
       prepareFactory(cw, clzName.replace('.', '/'));
       cw.visitEnd();
     }
-    byte[] classData = cw.toByteArray();
+    byte[] classData = writer.toByteArray();
 
     Path debugPath = null;
     if (log.isDebugEnabled()) {
@@ -1896,7 +1962,15 @@ final class CodeGenerator {
     while (c != null) {
       usedAttributes.addAll(
           Arrays.stream(c.getMethods())
-              .filter(m -> m.getAnnotation(JfrIgnore.class) == null)
+              // Accessors only, as jafar-processor takes them: a default method is the interface's
+              // own code, so it is never bound to a field, @JfrIgnore or not; nor is a static
+              // method or one taking parameters.
+              .filter(
+                  m ->
+                      m.getAnnotation(JfrIgnore.class) == null
+                          && !m.isDefault()
+                          && !Modifier.isStatic(m.getModifiers())
+                          && m.getParameterCount() == 0)
               .map(
                   m -> {
                     String name = m.getName();
