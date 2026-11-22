@@ -486,24 +486,34 @@ parser.handle((type, value, ctl) -> {
 
 ### Counting Event Types
 
-Discover all event types in a recording:
+Count the events of every type without decoding any of them:
 
 ```java
-Map<String, AtomicLong> eventCounts = new ConcurrentHashMap<>();
-
-parser.handle((type, value, ctl) -> {
-    eventCounts.computeIfAbsent(type.getName(), k -> new AtomicLong())
-              .incrementAndGet();
-});
-
-parser.run();
-
-// Display results
-eventCounts.entrySet().stream()
-    .sorted(Map.Entry.<String, AtomicLong>comparingByValue((a, b) ->
-        Long.compare(b.get(), a.get())))
-    .forEach(e -> System.out.printf("%6d %s%n", e.getValue().get(), e.getKey()));
+SortedMap<String, Long> counts = parser.countEvents(); // runs the parse
+counts.forEach((name, count) -> System.out.printf("%8d %s%n", count, name));
 ```
+
+`countEvents(TypeFilter)` counts only the types the filter accepts. Both read each event's header
+and skip its payload: on the 124.8 MB, 32-chunk recording of `QueryPushdownBenchmark`, counting
+took 127 ms this way and 493 ms by decoding every event in a handler (4 processors, one session).
+
+For more than the count, register a header handler. It receives the event's type, its size in
+bytes and its `startTime`, still without the event being decoded:
+
+```java
+Map<String, LongAdder> bytes = new ConcurrentHashMap<>();
+parser.handleHeaders(
+    type -> true,
+    (type, size, startTime, ctl) ->
+        bytes.computeIfAbsent(type.getName(), k -> new LongAdder()).add(size));
+parser.run();
+```
+
+`startTime` is the value a decoded event carries under `"startTime"` (epoch nanoseconds for every
+JDK event), or `UntypedJafarParser.EventHeaderHandler.NO_START_TIME` for a type without a `long startTime` field. The
+fields before it are skipped, not decoded. A header handler and a value handler can share a parse:
+an event a value handler wants is decoded for it, after the header handler has run. The Go parser
+offers the same as `Options.OnEventHeader` and `Parser.CountEvents`.
 
 ## Advanced Techniques
 

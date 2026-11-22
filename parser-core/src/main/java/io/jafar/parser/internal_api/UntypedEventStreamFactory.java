@@ -33,6 +33,19 @@ public interface UntypedEventStreamFactory {
       return Boolean.TRUE;
     }
 
+    /**
+     * {@link #select(ParserContext, long, MetadataClass)} with the event's size and the parse's
+     * control. Called with the chunk's {@code RecordingStream} at the start of the event's payload;
+     * an implementation may read from it and must leave it at that position. The default calls
+     * {@link #select(ParserContext, long, MetadataClass)}.
+     *
+     * @param size the event's size in bytes, header included
+     */
+    default Object select(
+        ParserContext context, long typeId, MetadataClass type, long size, Control ctl) {
+      return select(context, typeId, type);
+    }
+
     /** An event was decoded; {@code selection} is what {@link #select} returned for it. */
     default void onEventValue(
         MetadataClass type, Map<String, Object> value, Control ctl, Object selection) {

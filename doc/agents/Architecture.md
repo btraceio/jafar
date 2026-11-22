@@ -128,6 +128,16 @@ Beyond the gates, the conventions the codebase already follows:
     such a field once per accessor (and, for an inline complex value, allocates one handler per
     accessor), where the runtime class reads it once; and it reads `byte` and `boolean` as each
     other, which the runtime does not.
+  - Interface methods with no field read behind them (`TypedAccessorShapesTest`). Both sides
+    bind only abstract, non-static, parameterless methods without `@JfrIgnore`; a `default`
+    method is left to the interface even when its name matches a field. An accessor of a field
+    the recording lacks returns `0`, `false` or `null` at runtime. An accessor of a field present
+    whose declared type cannot be produced (a narrowing primitive, a `raw = true` accessor not
+    returning `long`) fails the parse at build time, naming the field (`HandlerTemplate`'s plan
+    check). At runtime it throws `IllegalStateException` naming the accessor and the field when
+    called, and generation does not fail, so a parse that never calls it runs: a kept
+    difference. A field no accessor reads generates nothing at runtime, so an alias may take its
+    name (`@JfrField("bytecodeIndex") int lineNumber()`).
 
   Both read a simple type (one field, such as `jdk.types.Symbol`) as the value it wraps, unless the
   accessor returns the interface registered for that type (`ThreadState state()` for a pooled

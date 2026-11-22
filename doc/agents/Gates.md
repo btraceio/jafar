@@ -211,6 +211,17 @@ stream on their parse path; every run logs `poolThreads=0`), so they run in
 the normal `test` task with a calling-thread meter and carry explicit
 `jdk8=excluded: …` lines instead of a JDK 8 budget.
 
+**Header counting.** `parser-core.untyped-headers.tck-test.jfr` and
+`parser-codegen.untyped-headers.tck-test.jfr` budget the untyped parse of
+`tck-test.jfr` with one header handler for every type and no value handler
+(`handleHeaders`), with the generic and the generated reader: 67,657 headers
+read, no event decoded, about 1.79 MB against the unfiltered key's 44.2 MB.
+An allocation per header fails both (`HeaderCountAllocationBudgetTest` and
+its three twins; measurements and the mutation in the budget file). The same
+tests measure the generated `test-ap.jfr`
+(`*.untyped-headers.test-ap.jfr`), where every header skips two fields before
+its start time, so an allocation in the skipping fails there.
+
 **The meter.** `AllocationMeter` (`test-support`) sums the calling thread's
 allocation delta plus the *absolute* counters of every chunk-pool thread,
 read on that thread from the `onChunkEnd` parser-listener callback while the

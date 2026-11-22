@@ -18,8 +18,9 @@ public final class GeneratedUntypedEventStreamFactory implements UntypedEventStr
       }
 
       @Override
-      protected Object select(ParserContext context, long typeId, MetadataClass type) {
-        return sink.select(context, typeId, type);
+      protected Object select(
+          ParserContext context, long typeId, MetadataClass type, long size, Control ctl) {
+        return sink.select(context, typeId, type, size, ctl);
       }
 
       @Override

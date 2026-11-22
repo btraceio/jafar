@@ -133,7 +133,8 @@ jobs:
           set -euo pipefail
           args=(--current build/jmh)
           for method in decodeAllFilterInHandler typeFilterInParser ceilingSkipEveryEvent \
-              ceilingSkipEveryChunk startTimeRangeSecondHalf startTimeRangeNothing; do
+              ceilingSkipEveryChunk startTimeRangeSecondHalf startTimeRangeNothing \
+              countByDecoding countEventsFromHeaders; do
             args+=(--require "QueryPushdownBenchmark.$method")
           done
           # Ratios of two results of the same run: they move less than the
@@ -144,6 +145,8 @@ jobs:
             --ratio "type filter cost over no decoding=$b.typeFilterInParser/$b.ceilingSkipEveryEvent"
             --ratio "second-half range over every chunk=$b.startTimeRangeSecondHalf/$b.typeFilterInParser[targetType=bench.Common,generatedReader=true]"
             --ratio "skipping every chunk over reading headers=$b.startTimeRangeNothing/$b.ceilingSkipEveryChunk"
+            --ratio "header count speedup=$b.countByDecoding/$b.countEventsFromHeaders"
+            --ratio "header count cost over walking events=$b.countEventsFromHeaders/$b.ceilingSkipEveryEvent"
           )
           if [ "${{ steps.previous.outputs.have_previous }}" = "true" ]; then
             args+=(--previous build/jmh-previous)
