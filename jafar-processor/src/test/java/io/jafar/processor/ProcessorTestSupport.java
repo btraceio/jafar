@@ -53,7 +53,13 @@ public final class ProcessorTestSupport {
    * class path entry: for a class loader that must also load the parser itself.
    */
   public static void compileTo(Path dir, JavaFileObject... sources) throws Exception {
-    for (Map.Entry<String, byte[]> c : compile(sources).entrySet()) {
+    compileTo(dir, java.util.Collections.emptyList(), sources);
+  }
+
+  /** As {@link #compileTo(Path, JavaFileObject...)}, with javac {@code options} (-A...). */
+  public static void compileTo(Path dir, java.util.List<String> options, JavaFileObject... sources)
+      throws Exception {
+    for (Map.Entry<String, byte[]> c : compile(options, sources).entrySet()) {
       Path file = dir.resolve(c.getKey().replace('.', '/') + ".class");
       Files.createDirectories(file.getParent());
       Files.write(file, c.getValue());
@@ -62,7 +68,13 @@ public final class ProcessorTestSupport {
 
   /** The classes compiling {@code sources} with the processor produces, by binary name. */
   private static Map<String, byte[]> compile(JavaFileObject... sources) throws Exception {
-    Compilation compilation = javac().withProcessors(new JfrTypeProcessor()).compile(sources);
+    return compile(java.util.Collections.emptyList(), sources);
+  }
+
+  private static Map<String, byte[]> compile(
+      java.util.List<String> options, JavaFileObject... sources) throws Exception {
+    Compilation compilation =
+        javac().withProcessors(new JfrTypeProcessor()).withOptions(options).compile(sources);
     assertThat(compilation).succeeded();
     Map<String, byte[]> classes = new HashMap<>();
     for (JavaFileObject f : compilation.generatedFiles()) {

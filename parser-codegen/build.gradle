@@ -189,6 +189,19 @@ tasks.named('check') {
 // JMH benchmark compilation
 tasks.named('compileJmhJava').configure { JavaCompile t ->
     t.javaCompiler.set(j21CompilerProvider)
+    // The benchmarks read test-ap.jfr (async-profiler): its layouts get straight-line reads in
+    // the build-time handlers, as the compiling JDK's layouts do (jafar-processor's Layouts).
+    // -Pjafar.jmh.layouts=false compiles them without any layout (the read loop only), for A/B
+    // measurements of the straight-line reads.
+    def layouts = (findProperty('jafar.jmh.layouts') ?: 'true') != 'false'
+    t.inputs.property('jafarJmhLayouts', layouts)
+    if (layouts) {
+        def layoutRecording = project(':parser-core').file('src/test/resources/test-ap.jfr')
+        t.inputs.file(layoutRecording).withPathSensitivity(PathSensitivity.NONE)
+        t.options.compilerArgs.add("-Ajafar.layouts=${layoutRecording.absolutePath}")
+    } else {
+        t.options.compilerArgs.add('-Ajafar.layouts.jdk=false')
+    }
 }
 
 // Resolved outside `dependencies {}` on purpose: inside it `project(':parser-core')` is a

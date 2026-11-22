@@ -64,7 +64,7 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
     // instead of a name switch over metadata.getFields() for every value.
     MetadataField[] fields = p.fields;
     int[] ops = p.ops;
-    for (int fieldIndex = 0; fieldIndex < ops.length; fieldIndex++) {
+{{LAYOUT_DISPATCH}}    for (int fieldIndex = 0; fieldIndex < ops.length; fieldIndex++) {
       MetadataField metaField = fields[fieldIndex];
       switch (ops[fieldIndex]) {
 {{SWITCH_CASES}}
