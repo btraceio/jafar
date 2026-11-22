@@ -138,20 +138,35 @@ For every benchmark whose verdict is `slower` or `faster`:
    version on the classpath) ships `JavaFlightRecorderProfiler`. `-prof jfr:help` lists the
    options `dir`, `configName` (default `profile`), `debugNonSafePoints` (default `true`) and
    `stackDepth`.
+   - The profiled forks pass `-prof jfr:stackDepth=2048`. JMH turns that into
+     `-XX:FlightRecorderOptions=stackdepth=2048` for the forked JVM: the class file contains
+     both strings.
+   - JFR keeps 64 frames per stack by default. When a stack is cut, its outer callers are
+     missing, so their inclusive shares come out too low.
+   - Measured on JDK 21.0.12 with a 3,000-deep recursion and `settings=profile`: the deepest
+     recorded stack was 64 frames by default and 2048 with `stackdepth=2048`. `stackdepth=4096`
+     also gave 2048, capped without a warning, so 2048 is the ceiling on this JDK.
+   - Deeper stacks cost more per sample. That matters little here, because the profiled forks
+     are separate from the timing forks (section 3.2).
 2. **Compare** the two recordings with the `jfr_compare` logic:
    - Self-time share per leaf frame.
    - A frame is reported only if its share moved by at least 1 percentage point
      (`DEFAULT_MIN_DELTA_PCT`), it has at least 5 samples (`MIN_FRAME_SAMPLES`), and the
      two-proportion z-score is at least 3 (`MIN_SIGNIFICANCE_Z`).
    - A recording with fewer than 30 samples (`MIN_RECORDING_SAMPLES`) is too thin to judge.
-   - All four constants are in `JfrCompareTools.java:54-70`.
+   - All four constants were in `JfrCompareTools.java:54-70`. Since step 1 they are in
+     `shell-core/.../compare/JfrCompare.java`.
 3. **Report the frames as attribution, not proof.** A share shift says where time moved, not
    whether the benchmark got slower. Only the JMH verdict decides that. Two known blind spots:
    - A uniform slowdown (every frame slower by the same factor) moves no share. The JMH verdict
      still catches it.
-   - The comparison is leaf-only (self time). A callee called more often shows up, but a caller
-     whose own code is unchanged and whose callees got slower does not. Adding inclusive shares is
-     part of the extraction step below.
+   - Self time alone misses a caller whose own code is unchanged but whose callees got slower.
+     Inclusive (total-time) shares cover that case. Step 1 added them, and `jfr-shell compare`
+     reports them.
+   - Frames of JVM-generated classes (for example `LambdaForm$MH/0x00007f2e…`) carry an address
+     that differs per JVM. The same frame therefore gets a different name in each fork's
+     recording and shows up as a large move. Their names must be normalised before comparing.
+     This is not done yet; see step 3.
 
 **`jfr_compare` cannot run headless today.** It exists only as an MCP tool:
 - `handleJfrCompare` takes MCP session ids.
@@ -237,7 +252,7 @@ two Gradle builds and, per changed benchmark, 2 profiled forks. That makes a loc
 |---|---|---|
 | 1 | Extract the compare core into `shell-core`; `jfr_compare` delegates; `jfr-shell compare --json`; inclusive shares added | — |
 | 2 | `scripts/perf_ab.py`: reads both sides' JMH JSON, computes fork-level statistics, verdicts, markdown and `report.json`; self-tests with fixed JSON fixtures, including a fire test | — |
-| 3 | `.github/workflows/perf-ab.yml`: worktrees, interleaved rounds, profiled forks, artifact, step summary; triggers from 3.1 | 1, 2 |
+| 3 | `.github/workflows/perf-ab.yml`: worktrees, interleaved rounds, profiled forks (`-prof jfr:stackDepth=2048`), artifact, step summary; triggers from 3.1. In the compare core: normalise the names of JVM-generated classes (`/0x…` suffix) | 1, 2 |
 | 4 | Comment job (`workflow_run`), no PR checkout, escaped content | 3 |
 | 5 | Calibration (section 5), minimum effects committed beside the script | 3 |
 | 6 | Docs: a "Performance A/B" section in `doc/agents/Build.md`; `AGENTS.md` pointer | 5 |
