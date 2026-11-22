@@ -4,12 +4,23 @@ on:
   pull_request:
     branches:
       - '**'
+  # Also on main, so each job writes the Gradle cache its PR runs restore. setup-gradle writes
+  # only on the default branch (cache-read-only elsewhere) and a PR job restores, by preference,
+  # the latest main entry of the same job and workflow. With no main run, PR jobs fell back to
+  # the Go benchmark's entry (any job on the same OS), which lacks the test classpaths, and
+  # fetched them from Maven Central on every run: HTTP 429 under parallel PRs. The PR-body gates
+  # skip themselves outside pull_request.
+  push:
+    branches:
+      - main
   merge_group:
   workflow_dispatch:
 
 concurrency:
   group: pr-tests-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A main run is not cancelled by the next merge: a cancelled job does not save the Gradle
+  # cache, and merges in quick succession would leave PR jobs with none.
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
@@ -98,6 +109,12 @@ jobs:
 
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # Not the local build cache: restored from a main run's entry, a test task (an
+          # allocation or golden gate among them) would report main's results FROM-CACHE
+          # instead of running on this JVM. Dependencies and wrappers are still cached.
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       # Liberica JDK 8, 25 and 21 (the default), and Gradle pointed at exactly these:
       # see .github/actions/liberica-jdks.
@@ -207,10 +224,16 @@ jobs:
 
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # Not the local build cache: restored from a main run's entry, a test task (an
+          # allocation or golden gate among them) would report main's results FROM-CACHE
+          # instead of running on this JVM. Dependencies and wrappers are still cached.
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
-      # --rerun per task, never once at the end: setup-gradle restores the
-      # build cache, and a test task restored FROM-CACHE reports a previous
-      # JVM's results. The R9 audit line below must come from this run's JVMs
+      # --rerun per task, never once at the end: a test task restored FROM-CACHE
+      # (any build cache the job reaches, though setup-gradle no longer restores
+      # the local one) reports a previous JVM's results. The R9 audit line below must come from this run's JVMs
       # (the same cache lie the allocation gate records in Gates.md).
       # Liberica JDK 8, 25 and 21 (the default), and Gradle pointed at exactly these:
       # see .github/actions/liberica-jdks.
@@ -309,6 +332,12 @@ jobs:
 
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # Not the local build cache: restored from a main run's entry, a test task (an
+          # allocation or golden gate among them) would report main's results FROM-CACHE
+          # instead of running on this JVM. Dependencies and wrappers are still cached.
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       # Liberica JDK 8, 25 and 21 (the default), and Gradle pointed at exactly these:
       # see .github/actions/liberica-jdks.
@@ -340,8 +369,8 @@ jobs:
           fetch-depth: 0
 
       # On pull_request the differential runs only when the diff touches one
-      # of the two parsers being compared; every other trigger (merge_group,
-      # workflow_dispatch) runs it unconditionally, so a required check stays
+      # of the two parsers being compared; every other trigger (push to main,
+      # merge_group, workflow_dispatch) runs it unconditionally, so a required check stays
       # meaningful there and the merge queue keeps the differential green.
       - name: Gate (does this change touch the differential's inputs?)
         id: gate
@@ -374,10 +403,16 @@ jobs:
       - name: Setup Gradle caching
         if: steps.gate.outputs.run == 'true'
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # Not the local build cache: restored from a main run's entry, a test task (an
+          # allocation or golden gate among them) would report main's results FROM-CACHE
+          # instead of running on this JVM. Dependencies and wrappers are still cached.
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
-      # --rerun for the same reason the concurrency-matrix job gives it:
-      # setup-gradle restores the build cache, and a test task restored
-      # FROM-CACHE reports a previous JVM's results instead of running the
+      # --rerun for the same reason the concurrency-matrix job gives it: a
+      # test task restored FROM-CACHE reports a previous JVM's results instead
+      # of running the
       # differential against this commit's parsers.
       # Liberica JDK 8, 25 and 21 (the default), and Gradle pointed at exactly these:
       # see .github/actions/liberica-jdks.
@@ -412,8 +447,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      # A push run on a commit already tagged for release (the CHANGELOG commit, tagged by
+      # scripts/release.sh right after) would derive a release version
+      # (gradle/version-from-tag.gradle) and fail "Publish parser to mavenLocal" on signing,
+      # as ci.yml records for tag checkouts. PR runs check out an untagged merge commit.
+      - name: Build a snapshot on a release-tagged commit (push to main)
+        if: github.event_name == 'push'
+        run: git tag --points-at HEAD | xargs -r git tag -d
+
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # Not the local build cache: restored from a main run's entry, a test task (an
+          # allocation or golden gate among them) would report main's results FROM-CACHE
+          # instead of running on this JVM. Dependencies and wrappers are still cached.
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
 
       # No recording download: the build generates the test recordings
       # (:test-recordings:generateTestRecordings, a dependency of every test task).
