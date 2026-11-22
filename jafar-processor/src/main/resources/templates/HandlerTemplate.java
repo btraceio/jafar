@@ -78,14 +78,18 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
     }
   }
 
-  /**
+{{GROUP_READ}}  /**
    * The op of a field no accessor reads that holds one constant pool reference: a varint, skipped
    * as {@code CodeGenerator.addFieldSkipper} skips it ({@code skipSimpleRef}). Every other field no
    * accessor reads is op {@code 0}, skipped by its {@link TypeSkipper}.
    */
   private static final int SKIP_REFERENCE = -1;
 
-  /** The op of the declared field named {@code name}: its 1-based declaration index, or 0. */
+  /**
+   * The op of the declared field named {@code name}: its accessor's 1-based declaration index; for
+   * a field several accessors read, its group's op (after every accessor's), whose read case runs
+   * each accessor's read through readOp; or 0.
+   */
   private static int opOf(String name) {
     switch (name) {
 {{OP_CASES}}
@@ -105,7 +109,7 @@ public final class {{HANDLER_NAME}} implements {{INTERFACE_NAME}} {
     final MetadataClass metadata;
     /** The metadata class's fields, in the order the recording stores them. */
     final MetadataField[] fields;
-    /** What reads each of {@link #fields}: a declared field's op, {@link #SKIP_REFERENCE} or 0. */
+    /** What reads each of {@link #fields}: its op from opOf, {@link #SKIP_REFERENCE} or 0. */
     final int[] ops;
 {{PLAN_FIELDS}}
 

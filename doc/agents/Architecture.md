@@ -117,10 +117,17 @@ Beyond the gates, the conventions the codebase already follows:
     inline, are generated at runtime when they declare the field's one generated type (an inline
     primitive may be widened), next to any number of `raw = true` indices on a pooled scalar field
     (raw is refused on inline and array fields); accessors of unrelated types fail generation
-    naming them (`TypedTwoAccessorsOneFieldTest`). An interface like that does not
-    compile with `jafar-processor`: the generated handler's `opOf` and metadata-check switches get
-    one `case` per accessor, and javac reports `duplicate case label`. No diagnostic of the
-    processor's own names the interface.
+    naming them (`TypedTwoAccessorsOneFieldTest`). `jafar-processor` reads such a field once per
+    accessor: `opOf` maps the field to a group op, and its `read` case rewinds the stream to the
+    field's start before each accessor's own read (`readOp`). Each accessor is planned and
+    checked as if it read the field alone (`BuildTimeRuntimeParityTest` compares an alias, a raw
+    index next to its pooled reference, a widened `int` and a second `String` accessor). An
+    interface with no such field generates the same handler as before, byte for byte. Both
+    generators accept an integer accessor of the field's own type or a wider one and refuse a
+    narrower one (an `int` accessor of a `long` field). Kept differences: the processor decodes
+    such a field once per accessor (and, for an inline complex value, allocates one handler per
+    accessor), where the runtime class reads it once; and it reads `byte` and `boolean` as each
+    other, which the runtime does not.
   - Interface methods with no field read behind them (`TypedAccessorShapesTest`). Both sides
     bind only abstract, non-static, parameterless methods without `@JfrIgnore`; a `default`
     method is left to the interface even when its name matches a field. An accessor of a field

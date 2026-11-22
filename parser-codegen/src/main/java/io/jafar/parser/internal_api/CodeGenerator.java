@@ -1720,9 +1720,8 @@ final class CodeGenerator {
           boolean withConstantPool = field.hasConstantPool();
           // Several accessors may read one JFR field. A fixed order (FieldMapping has identity
           // equality, so the set's order varies by run): what is emitted once per field must not
-          // depend on which accessor comes first. jafar-processor does not support several
-          // accessors per field (its generated switches get duplicate case labels): a kept
-          // difference between the generators, see doc/agents/Architecture.md.
+          // depend on which accessor comes first. jafar-processor reads such a field once per
+          // accessor instead, each as a field of its own (doc/agents/Architecture.md).
           // One mapping per accessor: getMethods() lists a method declared by two superinterfaces
           // twice, and two mappings of one method emitted it twice (duplicate method name).
           Map<String, FieldMapping> byAccessor = new HashMap<>();

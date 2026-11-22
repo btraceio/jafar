@@ -228,6 +228,47 @@ class GeneratedHandlerStorageMismatchTest {
             + " the accessor's type, and PStack declares it with a type that has none");
   }
 
+  /**
+   * An integer accessor narrower than its field is refused, as the runtime generator refuses it: an
+   * {@code int} read of the {@code long} startTime kept its low 32 bits, a wrong value with no
+   * error. A wider accessor still reads, also next to the field's own accessor.
+   */
+  @Test
+  void narrowingIntegerAccessorFailsWideningReads() throws Exception {
+    Path jfr = recordInlineFrames(2);
+    ClassLoader loader =
+        compileAndLoad(
+            source(
+                "PNarrow",
+                "@JfrType(\"test.InlineFrames\")\npublic interface PNarrow {\n"
+                    + "  @io.jafar.parser.api.JfrField(\"startTime\") int t();\n}\n"),
+            source(
+                "PWide",
+                "@JfrType(\"test.InlineFrames\")\npublic interface PWide {\n"
+                    + "  int seq();\n  @io.jafar.parser.api.JfrField(\"seq\") long seqWide();\n}\n"));
+    Exception thrown =
+        assertThrows(
+            Exception.class,
+            () ->
+                parse(
+                    jfr, loader, loader.loadClass("test.PNarrow"), ev -> call(ev, "t"), "PNarrow"));
+    assertChain(
+        thrown,
+        "PNarrowHandler cannot read test.InlineFrames.startTime: the recording stores it as an inline"
+            + " value of type long, but PNarrow declares it as an inline value of type int or short"
+            + " or char");
+    List<String> wide = Collections.synchronizedList(new ArrayList<>());
+    parse(
+        jfr,
+        loader,
+        loader.loadClass("test.PWide"),
+        ev -> wide.add(call(ev, "seq") + "=" + call(ev, "seqWide")),
+        "PWide");
+    List<String> sorted = new ArrayList<>(wide);
+    Collections.sort(sorted);
+    assertEquals(List.of("0=0", "1=1"), sorted);
+  }
+
   /** A {@code String} accessor for a pooled {@code jdk.types.Symbol} resolves and unwraps it. */
   @Test
   void stringAccessorForAPooledSymbolIsRead() throws Exception {
