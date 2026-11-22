@@ -329,6 +329,10 @@ recordings as the Java parser's `UnindexedPoolReferenceTest`
   `Values.resolvedDeepCollapsed`, which turns a reference to a JFR simple type into its scalar.
   Here such a reference still decodes to the one-entry map `{field: value}` and no helper collapses
   it; not ported yet (btraceio/jafar#108).
+* **Only dimension 1 is an array here.** `Field.Dimension != 1` is read and skipped as a scalar,
+  as Java's `GenericValueReader` reads it; Java's `TypeSkipper` and both typed generators take any
+  positive dimension as an array. A field of dimension 2 or more would be framed differently by
+  the two skippers.
 * **Untyped only.** No typed API, no code generation, no annotation processor.
 * **The type filter is per parse here, per handler in Java.** `Options.TypeFilter` governs the one
   `EventFunc` of a `ParseWith` call. Java's `UntypedJafarParser.handle(TypeFilter, EventHandler)`
