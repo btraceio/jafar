@@ -96,27 +96,41 @@ class BuildTimeRuntimeParityTest {
   };
 
   /**
-   * Each fixture twice: with the fixture as a layout reference, so the build-time handlers read it
-   * with their straight-line reads (Layouts), and with every layout source off, so they use the
-   * read loop. Either must read what the runtime classes read.
+   * Each fixture with its own layouts (the build-time handlers read it with a straight-line read,
+   * see Layouts), with none, and with the compiling JDK's, which differ (both use the read loop).
+   * Every way must read what the runtime classes read.
+   */
+  /*
+   * The third column is where the handlers' layouts come from: a recording, "-" (none), or "jdk"
+   * (only the compiling JDK). Both fixtures store jdk.ExecutionSample as stackTrace, eventThread,
+   * startTime, sampledThread, state; a current JDK writes startTime, sampledThread, stackTrace,
+   * state. Compiled with the JDK's layout and reading a fixture, the plan finds no straight-line
+   * read and uses the loop: what a recording from another JDK or app version gets.
    */
   @ParameterizedTest
   @CsvSource({
-    "test-ap.jfr, true",
-    "test-ap.jfr, false",
-    "test-jfr.jfr, true",
-    "test-jfr.jfr, false"
+    "test-ap.jfr, readLayout1, test-ap.jfr",
+    "test-ap.jfr, the loop, -",
+    "test-ap.jfr, the loop, jdk",
+    "test-jfr.jfr, readLayout1, test-jfr.jfr",
+    "test-jfr.jfr, the loop, -",
+    "test-jfr.jfr, the loop, jdk"
   })
-  void buildTimeAndRuntimeHandlersReadTheSameValues(String fixture, boolean layouts)
-      throws Exception {
+  void buildTimeAndRuntimeHandlersReadTheSameValues(
+      String fixture, String expectedRead, String layoutsFrom) throws Exception {
     URL resource = getClass().getClassLoader().getResource(fixture);
     assertNotNull(resource, fixture + " is not on the test classpath (parser-core test resources)");
     Path jfr = Paths.get(resource.toURI());
-    compileInterfaces(
-        classes,
-        layouts
-            ? Arrays.asList("-Ajafar.layouts=" + jfr, "-Ajafar.layouts.jdk=false")
-            : Arrays.asList("-Ajafar.layouts.jdk=false"));
+    List<String> options = new ArrayList<>();
+    if (!layoutsFrom.equals("jdk")) {
+      options.add("-Ajafar.layouts.jdk=false");
+    }
+    if (!layoutsFrom.equals("-") && !layoutsFrom.equals("jdk")) {
+      URL layoutResource = getClass().getClassLoader().getResource(layoutsFrom);
+      assertNotNull(layoutResource, layoutsFrom);
+      options.add("-Ajafar.layouts=" + Paths.get(layoutResource.toURI()));
+    }
+    compileInterfaces(classes, options);
 
     List<String> buildTime = probe(jfr, true);
     List<String> runtime = probe(jfr, false);
@@ -126,9 +140,9 @@ class BuildTimeRuntimeParityTest {
     assertTrue(buildTime.size() > 1, "no " + fixture + " samples");
     assertEquals("decoded by test.PSampleHandler", buildTime.get(0));
     // which read the build-time handler's plan chose for the samples: a straight-line one only
-    // when the fixture's layout was given
+    // when the handlers were compiled with this recording's layout
     String read = buildTime.remove(1);
-    assertEquals(layouts ? "read by readLayout1" : "read by the loop", read);
+    assertEquals("read by " + expectedRead, read);
     assertTrue(
         runtime.get(0).startsWith("decoded by ") && !runtime.get(0).equals(buildTime.get(0)),
         "the runtime side was " + runtime.get(0));
