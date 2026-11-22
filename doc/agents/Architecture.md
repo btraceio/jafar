@@ -132,6 +132,15 @@ Beyond the gates, the conventions the codebase already follows:
     such a field once per accessor (and, for an inline complex value, allocates one handler per
     accessor), where the runtime class reads it once; and it reads `byte` and `boolean` as each
     other, which the runtime does not.
+  - How an event's fields are read. A runtime class is generated for one metadata layout and
+    reads straight through. A build-time handler cannot know the layout, so it reads in a loop
+    dispatching on each field's op (`Plan`), and for the layouts `jafar-processor` knew when it
+    generated the handler (`Layouts`: recordings named by `-Ajafar.layouts`, and the compiling
+    JDK's own for `jdk.*` types) it also has a straight-line read (`readLayoutK`), which `Plan`
+    picks when the recording's ops equal one of them. Any other layout uses the loop with the same
+    values (`BuildTimeRuntimeParityTest`, which also compiles with a layout that differs). With
+    the straight-line read, `BuildTimeHandlerBenchmark.parseAndConsumeEvent` ran 8.8% faster in
+    median over 8 paired runs against `-Pjafar.jmh.layouts=false`, 7 of 8 faster.
   - Interface methods with no field read behind them (`TypedAccessorShapesTest`). Both sides
     bind only abstract, non-static, parameterless methods without `@JfrIgnore`; a `default`
     method is left to the interface even when its name matches a field. An accessor of a field
