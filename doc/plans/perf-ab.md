@@ -1,7 +1,7 @@
-# Performance A/B report for pull requests (`perf-regression-gate`)
+# Performance A/B report for pull requests (`perf-ab`)
 
-Status: proposal, 2026-11-22. Nothing here is built. Section 9 lists the decisions still open, and
-section 10 what is not verified.
+Status: proposal, 2026-11-22. Nothing here is built. Section 9 records the decisions taken on
+2026-11-22 and the one still open; section 10 lists what is not verified.
 
 Origin: idea 3 of the 2026-11 brainstorm ("agent-native profiler analyst"). Most of that idea has
 shipped: the `Finding` contract, `jfr_compare`, the MCP prompts and the `jafar-perf` plugin
@@ -29,8 +29,8 @@ version of a "performance gate".
 
 So this is **not a gate in the Gates.md sense**: it never blocks a merge, it does not get a row in
 the Gates table, and it does not run on every PR. It is an **advisory A/B report a maintainer asks
-for**. The name `perf-regression-gate` is kept only because the existing plan uses it (decision Q1
-in section 9).
+for**. That is why it is called `perf-ab` (workflow `perf-ab.yml`, label `perf-ab`) rather than
+the plan's `perf-regression-gate` (decision Q1 in section 9).
 
 What makes it worth building despite the noise: comparing base and PR **on the same runner, in
 the same job, interleaved** cancels the runner's speed. Section 2 gives the evidence for that.
@@ -189,22 +189,6 @@ the move, because the code goes from the consumer (`jfr-mcp`) down into `shell-c
   - It treats the artifact as untrusted data: a PR controls what its benchmark prints, so
     benchmark names and frame names are escaped before they go into markdown.
 
-### 3.6 Optional agent layer (phase 2)
-
-The deterministic report above is the product. An agent can add a written explanation on top of
-it, with three limits:
-
-- **It never changes a verdict.** It reads `report.json` and the recordings through `jfr-mcp`
-  (the `compare` prompt and the `perf-lead` agent already exist) and writes a section headed as
-  the agent's interpretation.
-- **It needs an API key.** That rules out `pull_request` runs from forks, which get no secrets. It
-  can run only in the `workflow_run` job, which holds secrets but runs no PR code. That job must
-  treat everything from the artifact as untrusted input to the model (prompt injection through a
-  frame or benchmark name).
-- **It costs money per run.** Hence opt-in, behind its own label or input.
-
-Whether phase 2 is wanted at all is decision Q4.
-
 ## 4. What stays the same
 
 - `nightly-jmh.yml` keeps its trend role: the same commit night to night, absolute scores and
@@ -257,8 +241,7 @@ two Gradle builds and, per changed benchmark, 2 profiled forks. That makes a loc
 | 4 | Comment job (`workflow_run`), no PR checkout, escaped content | 3 |
 | 5 | Calibration (section 5), minimum effects committed beside the script | 3 |
 | 6 | Docs: a "Performance A/B" section in `doc/agents/Build.md`; `AGENTS.md` pointer | 5 |
-| 7 | Optional: agent layer (3.6) | 4, Q4 |
-| 8 | Later: `parser-core` and `pprof-parser` benchmarks; Go benchmarks via `benchstat` with the same A/B layout | 5 |
+| 7 | Later: `parser-core` and `pprof-parser` benchmarks; Go benchmarks via `benchstat` with the same A/B layout | 5 |
 
 Steps 1 and 2 are independent and can go in parallel. Step 1 is the only production-code change.
 It touches `jfr-mcp` and `shell-core`, so it needs the API-compatibility check for the shell
@@ -279,19 +262,23 @@ surface. It does not touch the untyped parser, so the Java/Go parity statement i
   money and adds a maintenance burden. The same-runner A/B already cancels the runner's speed, so
   it is not needed for v1.
 
-## 9. Decisions to make
+## 9. Decisions
 
-- **Q1. Name.** Keep `perf-regression-gate` from the plan, or call it what it is: `perf-ab`
-  (workflow `perf-ab.yml`, label `perf-ab`)? Proposed: `perf-ab`, because "gate" contradicts
-  Gates.md.
-- **Q2. Trigger.** A label only, or also automatically on PRs that touch `parser-core/src/main` or
-  `parser-codegen/src/main`? Proposed: label only. Automatic runs would add 40-50 runner minutes to
-  each such PR, and Gates.md principle 4 keeps JMH out of default PR CI.
-- **Q3. Scope of v1.** `QueryPushdownBenchmark` only, or also the `parser-core` and `pprof-parser`
-  suites? Proposed: `QueryPushdownBenchmark` only, until calibration shows what the runner can
-  resolve.
-- **Q4. Agent layer.** Build phase 2 at all, and if so with which API key and budget? Proposed:
-  not in v1. Decide after the deterministic report has run on a few real PRs.
+Taken on 2026-11-22:
+
+- **Q1. Name: `perf-ab`.** Workflow `perf-ab.yml`, label `perf-ab`. "Gate" would contradict
+  Gates.md, where a gate blocks merges.
+- **Q2. Trigger: the label only** (plus `workflow_dispatch` and `perf/**` pushes for the workflow's
+  own testing). No automatic runs on parser changes: each would add 40-50 runner minutes to the PR,
+  and Gates.md principle 4 keeps JMH out of default PR CI.
+- **Q3. Scope of v1: `QueryPushdownBenchmark` only.** The `parser-core` and `pprof-parser` suites
+  follow (step 7) once calibration shows what the runner can resolve.
+- **Q4. No agent layer.** The report stays deterministic: no model call, no API key, no cost per
+  run beyond runner minutes. An agent can still read the published artifact (`report.json` and the
+  recordings) through `jfr-mcp` on a developer's machine, outside CI.
+
+Still open:
+
 - **Q5. Work counters.** Add deterministic counters as a separate ratchet gate (section 8)?
   Proposed: a separate design doc if wanted.
 
