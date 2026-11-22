@@ -196,6 +196,13 @@ as shares of each recording's execution samples, in two lists:
   counted once per sample even when it recurses. This list names a caller whose own code did not
   change but whose callees got slower, which self time cannot show.
 
+JFR cuts every stack at its stack depth, 64 frames unless the recorded JVM ran with
+`-XX:FlightRecorderOptions:stackdepth=<n>`. On JDK 21 that option was measured to cap at 2048 frames.
+A cut stack lacks its outermost frames, so their inclusive share is understated. Each side's
+`truncatedStacks` and `truncatedStacksPct` say how many stacks were cut. When more than 1% were cut
+on either side, a comparability note says so and no inclusive change is called significant; self
+time is judged as usual.
+
 A frame is reported only if its share moved by at least `--min-delta-pct` points. It is called a
 `regression` or an `improvement` only when the move is significant: both recordings have at least
 30 samples, the frame has at least 5 samples in one of them, and the two-proportion z score is at
@@ -211,15 +218,17 @@ jfr-shell compare before.jfr after.jfr --json | jq '.inclusiveFrames[] | select(
 ```
 
 The JSON object has the keys `baseline`, `candidate` (each with `recordingPath`, `eventType`,
-`samples`, `observedDurationSeconds`, `totalEvents`), `comparability`, `metrics`, `frames`,
+`samples`, `observedDurationSeconds`, `totalEvents`, `truncatedStacks`, `truncatedStacksPct`),
+`comparability`, `metrics`, `frames`,
 `inclusiveFrames`, `minDeltaPct`, `sufficientSamples`, `minSamplesPerRecording`, `findings` and
 `findingCounts`. Self-time rows carry `baselineSelfPct` and `candidateSelfPct`; inclusive rows carry
 `baselineTotalPct` and `candidateTotalPct`. The exit code is `0` whenever the comparison ran,
-whatever it found, and `1` when a recording is missing or cannot be read.
+whatever it found, `1` when a recording is missing or cannot be read, and `2` on a usage error.
 
 **Exit Codes:**
 - `0` - Success
 - `1` - Error (with message to stderr)
+- `2` - Usage error: a missing or malformed argument (message and the command's usage to stderr)
 
 All non-interactive commands execute without prompts, making them suitable for automation and CI pipelines.
 

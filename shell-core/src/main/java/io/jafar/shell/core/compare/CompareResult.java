@@ -62,6 +62,11 @@ public record CompareResult(
     map.put("samples", profile.sampleCount());
     map.put("observedDurationSeconds", JfrCompare.round(profile.durationSeconds(), 3));
     map.put("totalEvents", profile.totalEvents());
+    // Only with inclusive counts, so jfr_compare (which reads none) keeps its keys.
+    if (profile.inclusiveCounted()) {
+      map.put("truncatedStacks", profile.truncatedSamples());
+      map.put("truncatedStacksPct", JfrCompare.round(profile.truncatedPct(), 2));
+    }
     return map;
   }
 

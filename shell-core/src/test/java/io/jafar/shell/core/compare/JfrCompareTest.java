@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.parser.api.ParsingContext;
@@ -16,6 +17,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
@@ -159,6 +161,96 @@ class JfrCompareTest {
     }
   }
 
+  @Test
+  void inclusiveFramesFromProfilesReadWithoutThemAreRefused() throws Exception {
+    List<Map<String, Object>> events = samples(Map.of(List.of("a.A.a", "b.B.b"), 100L));
+    RecordingProfile base =
+        new JfrCompare(scripted(events)).profile(target("base.jfr"), "jdk.ExecutionSample", false);
+    RecordingProfile cand =
+        new JfrCompare(scripted(events)).profile(target("cand.jfr"), "jdk.ExecutionSample", true);
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> new JfrCompare(scripted(List.of())).compare(base, cand, SELF_AND_INCLUSIVE));
+    assertTrue(e.getMessage().contains("baseline"), e.getMessage());
+    // Self time alone is fine from either profile.
+    assertNull(
+        new JfrCompare(scripted(List.of()))
+            .compare(base, cand, CompareOptions.defaults())
+            .inclusiveFrames());
+  }
+
+  @Test
+  void truncatedStacksMakeInclusiveChangesInconclusive() {
+    // Same work on both sides; the candidate's stacks are cut before Thread.run, as a deeper
+    // stack is at JFR's 64-frame default. Thread.run's inclusive share falls with no time moving.
+    CompareResult result =
+        compare(
+            samples(Map.of(List.of("m.Leaf.work", "m.Mid.call", "java.lang.Thread.run"), 1000L)),
+            samples(Map.of(List.of("m.Leaf.work", "m.Mid.call"), 1000L), true),
+            SELF_AND_INCLUSIVE);
+
+    assertEquals(0L, result.baseline().truncatedSamples());
+    assertEquals(1000L, result.candidate().truncatedSamples());
+    Map<String, Object> run = row(result.inclusiveFrames(), "java.lang.Thread.run");
+    assertEquals(-100.0, run.get("deltaPct"));
+    assertEquals(false, run.get("significant"), run.toString());
+    assertEquals("inconclusive", run.get("direction"));
+    assertTrue(
+        result.comparability().stream().anyMatch(n -> n.startsWith("Truncated stacks")),
+        result.comparability().toString());
+    assertFalse(result.comparability().contains("Recordings appear comparable."));
+    assertEquals(1000L, CompareResult.describe(result.candidate()).get("truncatedStacks"));
+  }
+
+  @Test
+  void truncationIsNotReportedWithoutInclusiveFrames() {
+    CompareResult result =
+        compare(
+            samples(Map.of(List.of("m.Leaf.work"), 100L), true),
+            samples(Map.of(List.of("m.Leaf.work"), 100L), true),
+            CompareOptions.defaults());
+    assertEquals(0L, result.candidate().truncatedSamples());
+    // jfr_compare's description keys stay as they were.
+    assertFalse(CompareResult.describe(result.candidate()).containsKey("truncatedStacks"));
+  }
+
+  @Test
+  void aProfileCannotChangeAfterItIsRead() {
+    RecordingProfile profile =
+        compare(
+                samples(Map.of(List.of("a.A.a", "b.B.b"), 100L)),
+                samples(Map.of(List.of("a.A.a", "b.B.b"), 100L)),
+                SELF_AND_INCLUSIVE)
+            .baseline();
+    assertThrows(UnsupportedOperationException.class, () -> profile.leafFrameCounts().clear());
+    assertThrows(
+        UnsupportedOperationException.class, () -> profile.inclusiveFrameCounts().put("x", 1L));
+    assertThrows(UnsupportedOperationException.class, () -> profile.eventCounts().clear());
+  }
+
+  @Test
+  void comparabilityNotesDoNotFollowTheDefaultLocale() {
+    Locale previous = Locale.getDefault();
+    Locale.setDefault(Locale.GERMANY);
+    try {
+      // 131 samples one second apart span 130 s, 40 span 39 s: durations differ by 3.3x.
+      CompareResult result =
+          compare(
+              samples(Map.of(List.of("a.A.a"), 131L)),
+              samples(Map.of(List.of("a.A.a"), 40L)),
+              CompareOptions.defaults());
+      String note =
+          result.comparability().stream()
+              .filter(n -> n.startsWith("Observed durations"))
+              .findFirst()
+              .orElseThrow(() -> new AssertionError(result.comparability()));
+      assertTrue(note.contains("differ by 3.3x (130.0s vs 39.0s)"), note);
+    } finally {
+      Locale.setDefault(previous);
+    }
+  }
+
   // ---------------------------------------------------------------------------------------------
 
   private static CompareResult compare(
@@ -207,6 +299,12 @@ class JfrCompareTest {
    * {@code package.Class.method}.
    */
   private static List<Map<String, Object>> samples(Map<List<String>, Long> stacks) {
+    return samples(stacks, false);
+  }
+
+  /** As {@link #samples(Map)}, with every stack marked {@code truncated} as given. */
+  private static List<Map<String, Object>> samples(
+      Map<List<String>, Long> stacks, boolean truncated) {
     List<Map<String, Object>> events = new ArrayList<>();
     long startTime = 0;
     for (Map.Entry<List<String>, Long> stack : stacks.entrySet()) {
@@ -220,7 +318,7 @@ class JfrCompareTest {
                     "type", Map.of("name", frame.substring(0, dot)),
                     "name", frame.substring(dot + 1))));
       }
-      Map<String, Object> stackTrace = Map.of("frames", frames);
+      Map<String, Object> stackTrace = Map.of("frames", frames, "truncated", truncated);
       for (long i = 0; i < stack.getValue(); i++) {
         Map<String, Object> event = new LinkedHashMap<>();
         event.put("startTime", startTime);

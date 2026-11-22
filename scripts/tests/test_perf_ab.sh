@@ -200,10 +200,12 @@ run "no calibration file: uncalibrated, numbers still shown" 0 "| 1.200 |" "| 0.
 file "$W/spec/base.json" "$(base_r1 typeFilterInParser)" "$(base_r2 typeFilterInParser)"
 file "$W/spec/head.json" "$(slow_r1 typeFilterInParser)" "$(slow_r2 typeFilterInParser)"
 run "calibration: the selector naming more params wins; unused entries reported" 0 "| slower |" \
-    "calibration entry 'QueryPushdownBenchmark.neverRun' matches no benchmark" -- \
+    "calibration entry 'QueryPushdownBenchmark.neverRun' applied to no benchmark" -- \
     --base "$W/spec/base.json" --head "$W/spec/head.json" --calibration "$W/calibration.json" --json "$W/report.json"
 check "calibration: selector and unused list in report.json" \
     "rows['typeFilterInParser']['calibration_selector'] == 'QueryPushdownBenchmark.typeFilterInParser[chunks=32]' and 'QueryPushdownBenchmark.neverRun' in r['calibration']['unused_selectors']"
+check "calibration: a selector shadowed by a more specific one is listed as unused" \
+    "'QueryPushdownBenchmark.typeFilterInParser' in r['calibration']['unused_selectors']"
 
 # ---------------------------------------------------------------- new / removed / changed class
 file "$W/nr/base.json" "$(base_r1 headersWithStartTime)" "$(rec io.jafar.parser.benchmark.Other.gone avgt ms/op "" 5 5)"
@@ -343,6 +345,28 @@ cp "$W/fire/base-r1.json" "$W/fire/base-r2.json" "$W/dirs/base/"
 cp "$W/fire/head-r1.json" "$W/fire/head-r2.json" "$W/dirs/head/"
 run "directories per side: pooled like files (6 forks each)" 0 "| 6 | 6 | slower |" -- \
     --base "$W/dirs/base" --head "$W/dirs/head" --calibration "$W/calibration.json"
+
+# ---------------------------------------------------------------- empty results, directory contents
+# JMH leaves a benchmark that throws out of the file and the Gradle task exits 0: an empty
+# file is a run where everything failed, and must not turn into a table of "new" rows.
+printf '[]\n' > "$W/empty.json"
+run "an empty JMH result file on one side is refused" 2 "holds no JMH records" -- \
+    --base "$W/empty.json" --head "$W/fire/head-r1.json"
+run "an empty JMH result file among several is refused" 2 "holds no JMH records" -- \
+    --base "$W/fire/base-r1.json" --base "$W/empty.json" --head "$W/fire/head-r1.json"
+# A directory may hold an earlier --json report or a calibration file: skipped, named, not fatal.
+mkdir -p "$W/mixed/base" "$W/mixed/head"
+cp "$W/fire/base-r1.json" "$W/fire/base-r2.json" "$W/mixed/base/"
+cp "$W/fire/head-r1.json" "$W/fire/head-r2.json" "$W/mixed/head/"
+cp "$W/calibration.json" "$W/mixed/head/calibration.json"
+python3 "$script" --base "$W/fire/base-r1.json" --head "$W/fire/head-r1.json" --json "$W/mixed/head/report.json" >/dev/null 2>&1
+run "a directory's non-JMH JSON files are skipped with a note" 0 "| 6 | 6 | slower |" \
+    "skipping $W/mixed/head/report.json" "skipping $W/mixed/head/calibration.json" -- \
+    --base "$W/mixed/base" --head "$W/mixed/head" --calibration "$W/calibration.json" --json "$W/report.json"
+check "skipped files are listed in report.json and not counted as read" \
+    "sorted(i['path'].rpartition('/')[2] for i in r['inputs']['head'] if 'skipped' in i) == ['calibration.json', 'report.json']"
+run "a non-JMH file named directly is still refused" 2 "expected a list, got dict" -- \
+    --base "$W/fire/base-r1.json" --head "$W/calibration.json"
 
 det() {
     python3 "$script" --base "$W/dirs/base" --head "$W/dirs/head" --base "$W/noisy/base.json" --head "$W/noisy/head.json" \

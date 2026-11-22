@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -70,6 +71,13 @@ public final class JfrCompare {
 
   /** Frame rows returned per list unless the caller asks for another number. */
   public static final int DEFAULT_LIMIT = 25;
+
+  /**
+   * Above this share of truncated stacks on either side, in percentage points, no inclusive change
+   * is called significant. A truncated stack lacks its outermost frames, so a change in how many
+   * stacks get cut moves those frames' inclusive shares with no time moving.
+   */
+  public static final double MAX_TRUNCATED_PCT_FOR_INCLUSIVE = 1.0;
 
   /** Event types compared as rates, besides the total. */
   private static final List<String> TRACKED_EVENT_TYPES =
@@ -137,6 +145,7 @@ public final class JfrCompare {
     Map<String, Long> leafFrames = new ConcurrentHashMap<>();
     Map<String, Long> inclusiveFrames = new ConcurrentHashMap<>();
     LongAdder samples = new LongAdder();
+    LongAdder truncated = new LongAdder();
     AtomicLong minStart = new AtomicLong(Long.MAX_VALUE);
     AtomicLong maxStart = new AtomicLong(Long.MIN_VALUE);
 
@@ -153,6 +162,10 @@ public final class JfrCompare {
               maxStart.accumulateAndGet(value, Math::max);
             }
             if (inclusive) {
+              if (event.get("stackTrace") instanceof Map<?, ?> stackTrace
+                  && Boolean.TRUE.equals(stackTrace.get("truncated"))) {
+                truncated.increment();
+              }
               List<String> frames = analyses.extractFrames(event, "bottom-up", null);
               if (!frames.isEmpty()) {
                 leafFrames.merge(frames.get(0), 1L, Long::sum);
@@ -185,14 +198,45 @@ public final class JfrCompare {
         durationSeconds,
         leafFrames,
         inclusiveFrames,
+        inclusive,
+        truncated.sum(),
         eventCounts,
         totalEvents);
   }
 
-  /** Compares two profiles already read. */
+  /**
+   * Compares two profiles already read.
+   *
+   * @throws IllegalArgumentException when {@code options} asks for inclusive frames but a profile
+   *     was read without counting them: its empty counts would read as "no caller moved"
+   */
   public CompareResult compare(
       RecordingProfile baseline, RecordingProfile candidate, CompareOptions options) {
+    if (options.inclusiveFrames()
+        && !(baseline.inclusiveCounted() && candidate.inclusiveCounted())) {
+      throw new IllegalArgumentException(
+          "inclusive frames were requested, but the "
+              + (baseline.inclusiveCounted() ? "candidate" : "baseline")
+              + " profile was read without counting them: read both with profile(..., true)");
+    }
     List<String> comparability = comparabilityNotes(baseline, candidate);
+    boolean judgeInclusive = true;
+    if (options.inclusiveFrames()
+        && (baseline.truncatedPct() > MAX_TRUNCATED_PCT_FOR_INCLUSIVE
+            || candidate.truncatedPct() > MAX_TRUNCATED_PCT_FOR_INCLUSIVE)) {
+      judgeInclusive = false;
+      comparability.add(
+          String.format(
+              Locale.ROOT,
+              "Truncated stacks (baseline %.1f%%, candidate %.1f%% of samples, above %.1f%%):"
+                  + " JFR cut them at its stack depth, so the outermost frames' inclusive shares"
+                  + " are understated and no inclusive change is called significant. Record with"
+                  + " -XX:FlightRecorderOptions:stackdepth=2048 to keep deeper stacks.",
+              baseline.truncatedPct(),
+              candidate.truncatedPct(),
+              MAX_TRUNCATED_PCT_FOR_INCLUSIVE));
+      comparability.remove("Recordings appear comparable.");
+    }
     List<Map<String, Object>> metrics = compareMetrics(baseline, candidate);
     List<Map<String, Object>> frames =
         compareFrames(
@@ -201,6 +245,7 @@ public final class JfrCompare {
             baseline.leafFrameCounts(),
             candidate.leafFrameCounts(),
             "SelfPct",
+            true,
             options.minDeltaPct(),
             options.limit());
     List<Map<String, Object>> inclusive =
@@ -211,6 +256,7 @@ public final class JfrCompare {
                 baseline.inclusiveFrameCounts(),
                 candidate.inclusiveFrameCounts(),
                 "TotalPct",
+                judgeInclusive,
                 options.minDeltaPct(),
                 options.limit())
             : List.of();
@@ -293,24 +339,32 @@ public final class JfrCompare {
       if (ratio > DURATION_RATIO_WARN) {
         notes.add(
             String.format(
+                Locale.ROOT,
                 "Observed durations differ by %.1fx (%.1fs vs %.1fs): rates are normalised, but"
                     + " a much shorter recording may simply have missed periodic work.",
-                ratio, baseline.durationSeconds(), candidate.durationSeconds()));
+                ratio,
+                baseline.durationSeconds(),
+                candidate.durationSeconds()));
       }
     }
 
     if (!hasSufficientSamples(baseline, candidate)) {
       notes.add(
           String.format(
+              Locale.ROOT,
               "Too few samples to judge changes (baseline %,d, candidate %,d, need %d in each):"
                   + " no regression is raised, and none being raised is not evidence of no change.",
-              baseline.sampleCount(), candidate.sampleCount(), MIN_RECORDING_SAMPLES));
+              baseline.sampleCount(),
+              candidate.sampleCount(),
+              MIN_RECORDING_SAMPLES));
     } else if (baseline.sampleCount() < 1000 || candidate.sampleCount() < 1000) {
       notes.add(
           String.format(
+              Locale.ROOT,
               "Low sample count (baseline %,d, candidate %,d): per-frame shares are noisy below"
                   + " a few thousand samples, so treat small moves as inconclusive.",
-              baseline.sampleCount(), candidate.sampleCount()));
+              baseline.sampleCount(),
+              candidate.sampleCount()));
     }
 
     if (notes.isEmpty()) {
@@ -376,7 +430,8 @@ public final class JfrCompare {
   /**
    * One frame list: self time ({@code shareKey} {@code SelfPct}) or inclusive time ({@code
    * TotalPct}). The row keys and the significance rule are the same for both; only the counts and
-   * the share's name differ.
+   * the share's name differ. With {@code judge} false no row is significant: every move is reported
+   * as {@code inconclusive}.
    */
   private List<Map<String, Object>> compareFrames(
       RecordingProfile baseline,
@@ -384,6 +439,7 @@ public final class JfrCompare {
       Map<String, Long> baseCounts,
       Map<String, Long> candCounts,
       String shareKey,
+      boolean judge,
       double minDeltaPct,
       int limit) {
     Set<String> allFrames = new HashSet<>(baseCounts.keySet());
@@ -407,7 +463,7 @@ public final class JfrCompare {
       row.put("deltaPct", round(delta, 2));
       row.put("baselineSamples", baseSamples);
       row.put("candidateSamples", candSamples);
-      boolean significant = isSignificant(baseline, candidate, baseSamples, candSamples);
+      boolean significant = judge && isSignificant(baseline, candidate, baseSamples, candSamples);
       row.put(
           "direction", !significant ? "inconclusive" : delta > 0 ? "regression" : "improvement");
       row.put("significant", significant);

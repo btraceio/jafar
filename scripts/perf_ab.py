@@ -29,7 +29,12 @@
 #              [--json report.json]
 #
 #   PATH is a JMH JSON result file or a directory of them (*.json, or **/*.json when the
-#   top level has none, as in jmh_trend.py). Every file of a side is pooled.
+#   top level has none, as in jmh_trend.py). Every file of a side is pooled. In a directory,
+#   a JSON file whose top level is not a list (an earlier --json report, a calibration file)
+#   is skipped with a note on stderr and listed under "skipped" in the report's inputs; a
+#   file named directly must be a JMH result. A result file with no records, or a side with
+#   none at all, is refused (exit 2): JMH leaves a benchmark that throws out of the file
+#   while the Gradle task exits 0, so an empty file is a run where everything failed.
 #   --changed-class names a benchmark class (fully qualified, or any dot-separated tail)
 #   whose source the PR changed: its benchmarks are reported as "benchmark changed, not
 #   compared", because each side ran its own version of the workload.
@@ -145,8 +150,11 @@ def is_number(value):
 
 
 def result_files(path, label):
+    """(file, from_directory) pairs. A file named on the command line must be a JMH result;
+    a JSON file found in a directory that is not one (an earlier --json report, a calibration
+    file) is skipped with a note instead."""
     if os.path.isfile(path):
-        return [path]
+        return [(path, False)]
     if not os.path.isdir(path):
         die(f"--{label} {path}: no such file or directory")
     files = sorted(glob.glob(os.path.join(path, "*.json")))
@@ -154,7 +162,7 @@ def result_files(path, label):
         files = sorted(glob.glob(os.path.join(path, "**", "*.json"), recursive=True))
     if not files:
         die(f"--{label} {path}: no JMH result JSON files")
-    return files
+    return [(file, True) for file in files]
 
 
 def sha256_of(path):
@@ -195,15 +203,31 @@ def load_side(paths, label):
     """Every record of one side, pooled by key: {key: {"unit", "forks": [means]}}."""
     pooled = {}
     inputs = []
+    skipped = []
     for path in paths:
-        for file in result_files(path, label):
+        for file, from_directory in result_files(path, label):
             try:
                 with open(file, encoding="utf-8") as fh:
                     data = json.load(fh)
             except (OSError, ValueError) as exc:
                 die(f"malformed JMH result JSON in --{label} file {file}: {exc}")
             if not isinstance(data, list):
+                if from_directory:
+                    print(
+                        f"perf_ab: skipping {file} in --{label} {path}: not a JMH result list "
+                        f"(top level is {type(data).__name__})",
+                        file=sys.stderr,
+                    )
+                    skipped.append({"path": file, "reason": f"top level is {type(data).__name__}"})
+                    continue
                 die(f"malformed JMH result JSON in --{label} file {file}: expected a list, got {type(data).__name__}")
+            if not data:
+                # JMH leaves a benchmark that throws out of the file and its Gradle task still
+                # exits 0, so an empty file is an invocation where every benchmark failed.
+                die(
+                    f"--{label} file {file} holds no JMH records: every benchmark of that run failed "
+                    "or none was selected; read that run's log"
+                )
             inputs.append({"path": file, "sha256": sha256_of(file), "records": len(data)})
             for index, record in enumerate(data):
                 where = f"--{label} file {file}, record {index}"
@@ -231,6 +255,10 @@ def load_side(paths, label):
                 if entry["unit"] != unit:
                     die(f"--{label}: {key_text(key)} is in {entry['unit']} in one file and {unit} in {file}")
                 entry["forks"].extend(means)
+    if not pooled:
+        die(f"--{label}: no JMH records in {', '.join(paths)}")
+    for entry in skipped:
+        inputs.append({"path": entry["path"], "skipped": entry["reason"]})
     return pooled, inputs
 
 
@@ -314,7 +342,8 @@ def calibration_for(key, selectors, used):
     top = [m for m in matching if m[0] == best]
     if any(m[2] != top[0][2] for m in top):
         die(f"calibration is ambiguous for {key_text(key)}: {', '.join(m[1] for m in top)} match equally")
-    for m in matching:
+    # Only the selectors that applied: one shadowed by a more specific selector is unused.
+    for m in top:
         used.add(m[1])
     return top[0][2], top[0][1]
 
@@ -527,11 +556,16 @@ def compare(key, base, head, args, selectors, used):
     return row
 
 
+def read_count(inputs):
+    """Files read, leaving out those skipped as not JMH results."""
+    return sum(1 for entry in inputs if "skipped" not in entry)
+
+
 def markdown(rows, args, base_inputs, head_inputs):
     lines = []
     lines.append("## Performance A/B (advisory)")
     lines.append(
-        f"_base: {len(base_inputs)} file(s), head: {len(head_inputs)} file(s). One sample is one fork's mean. "
+        f"_base: {read_count(base_inputs)} file(s), head: {read_count(head_inputs)} file(s). One sample is one fork's mean. "
         f"Ratio = head/base in time (a thrpt score s counts as time 1/s), so > 1 is slower in every mode; "
         f"Hodges-Lehmann estimate with a {CONFIDENCE:.0%} distribution-free interval; two-sided Mann-Whitney p. "
         f"slower/faster needs p < {ALPHA} and |ratio - 1| >= the benchmark's calibrated minimum effect. "
@@ -633,7 +667,11 @@ def main():
     ]
     unused = [spec for spec, _, _ in selectors if spec not in used]
     for spec in unused:
-        print(f"perf_ab: calibration entry {spec!r} matches no benchmark", file=sys.stderr)
+        print(
+            f"perf_ab: calibration entry {spec!r} applied to no benchmark "
+            "(it matches none, or a more specific entry wins wherever it matches)",
+            file=sys.stderr,
+        )
 
     sys.stdout.write(markdown(rows, args, base_inputs, head_inputs))
 

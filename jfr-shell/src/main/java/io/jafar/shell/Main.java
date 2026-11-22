@@ -89,7 +89,13 @@ public final class Main implements Callable<Integer> {
   public static void main(String[] args) {
     // Parse CLI args to extract plugin-dir and install-plugin before initialization
     Main main = new Main();
-    new CommandLine(main).parseArgs(args);
+    try {
+      new CommandLine(main).parseArgs(args);
+    } catch (CommandLine.ParameterException e) {
+      // A usage error (missing or malformed arguments): say what is wrong and how the command is
+      // used, as picocli's own handler would, instead of escaping with a stack trace.
+      System.exit(usageError(e));
+    }
 
     // Set plugin directory if specified
     if (main.pluginDir != null) {
@@ -115,6 +121,22 @@ public final class Main implements Callable<Integer> {
 
     int exitCode = new CommandLine(new Main()).execute(args);
     System.exit(exitCode);
+  }
+
+  /** Exit code for a usage error, as picocli's {@code execute} returns for invalid input. */
+  static final int USAGE_ERROR = 2;
+
+  /** Prints a usage error's message and the failing command's usage to stderr. */
+  static int usageError(CommandLine.ParameterException e) {
+    System.err.println("Error: " + e.getMessage());
+    e.getCommandLine().usage(System.err);
+    return USAGE_ERROR;
+  }
+
+  /** An exception's message, or its class name when it has none (an NPE, many wrapped errors). */
+  static String describe(Throwable e) {
+    String message = e.getMessage();
+    return message == null || message.isBlank() ? e.getClass().getName() : message;
   }
 
   @Override
@@ -727,9 +749,10 @@ public final class Main implements Callable<Integer> {
 
   /**
    * {@code compare <baseline.jfr> <candidate.jfr>}: the {@code jfr_compare} comparison, headless.
-   * Exits 0 when the comparison ran, whatever it found, and 1 when it could not run (a missing or
-   * unreadable recording, bad options). It reports where time moved; it does not decide whether a
-   * build got slower.
+   * Exits 0 when the comparison ran, whatever it found; 1 when it could not run (a missing or
+   * unreadable recording, an unknown event type); and 2 on a usage error (a missing or malformed
+   * argument), with the message and usage on stderr. It reports where time moved; it does not
+   * decide whether a build got slower.
    */
   @CommandLine.Command(
       name = "compare",
@@ -809,7 +832,7 @@ public final class Main implements Callable<Integer> {
         System.out.print(json ? CompareOutput.json(result.toMap()) : CompareOutput.table(result));
         return 0;
       } catch (Exception e) {
-        System.err.println("Error: " + e.getMessage());
+        System.err.println("Error: " + describe(e));
         return 1;
       }
     }
@@ -820,7 +843,7 @@ public final class Main implements Callable<Integer> {
         return new JFRSession(path, ctx);
       } catch (Exception e) {
         throw new IllegalArgumentException(
-            "cannot read JFR recording " + path + ": " + e.getMessage(), e);
+            "cannot read JFR recording " + path + ": " + describe(e), e);
       }
     }
   }

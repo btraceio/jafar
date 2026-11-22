@@ -155,6 +155,32 @@ class CompareCommandTest {
     assertEquals("", out.toString(StandardCharsets.UTF_8));
   }
 
+  @Test
+  void aMissingCandidateIsAUsageErrorWithUsageText() {
+    // main() parses once before execute(); a usage error there must not escape as a stack trace.
+    CommandLine.ParameterException e =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CommandLine.ParameterException.class,
+            () -> new CommandLine(new Main()).parseArgs("compare", TCK.toString()));
+    assertEquals(Main.USAGE_ERROR, Main.usageError(e));
+    String text = err.toString(StandardCharsets.UTF_8);
+    assertTrue(text.contains("Error: Missing required parameter"), streams());
+    assertTrue(text.contains("Usage: jfr-shell compare"), streams());
+  }
+
+  @Test
+  void aMalformedOptionIsAUsageError() {
+    assertEquals(
+        Main.USAGE_ERROR, run("compare", TCK.toString(), TCK.toString(), "--limit", "abc"));
+    assertTrue(err.toString(StandardCharsets.UTF_8).contains("--limit"), streams());
+  }
+
+  @Test
+  void anErrorWithoutAMessageIsNamedByItsClass() {
+    assertEquals("java.lang.NullPointerException", Main.describe(new NullPointerException()));
+    assertEquals("boom", Main.describe(new IllegalStateException("boom")));
+  }
+
   private static int run(String... args) {
     return new CommandLine(new Main()).execute(args);
   }

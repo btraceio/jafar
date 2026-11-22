@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MCP server, for CI. Prints a short report, or with `--json` the keys `jfr_compare` returns plus
   `inclusiveFrames`: per frame, the share of samples whose stack contains it (once per sample under
   recursion), judged by the same significance rule as self time. Options `--event-type`,
-  `--min-delta-pct` and `--limit`; exits 1 with a message when a recording is missing or unreadable.
+  `--min-delta-pct` and `--limit`. Exits 1 with a message when a recording is missing or
+  unreadable, and 2 with the message and usage on a missing or malformed argument. Stacks JFR cut at
+  its stack depth are counted per side (`truncatedStacks`): above 1% on either side, no inclusive
+  change is called significant, since a cut stack understates its outermost frames.
   The comparison now lives in `shell-core` (`io.jafar.shell.core.compare`) and `jfr_compare`
   delegates to it; its MCP output is unchanged and does not include inclusive frames
 - **`UntypedJafarParser.handleHeaders(TypeFilter, EventHeaderHandler)`** - a handler that receives
@@ -101,6 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **`jfr-shell`: a usage error no longer escapes as a stack trace.** A missing or malformed
+  argument to any subcommand failed in the parse `main` runs before executing, with an uncaught
+  picocli exception. It now prints the message and the command's usage and exits 2, as picocli's
+  own handler does
 - **`jfr_tsa` put every execution sample under one thread named "unknown"** (#222). It read the
   thread from `eventThread`, which `jdk.ExecutionSample` and `jdk.NativeMethodSample` do not have;
   they carry `sampledThread`. Per-thread profiles, `totalThreads` and the active-thread count of
