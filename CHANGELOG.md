@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also on demand (`workflow_dispatch`, any two refs) and on `perf/*` branches. A benchmark class
   the PR changed is not compared. Until a calibration is committed every verdict reads
   `uncalibrated`. See [doc/plans/perf-ab.md](doc/plans/perf-ab.md)
+- **`perf-ab` PR comment** (`.github/workflows/perf-ab-comment.yml`) - after a perf-ab run on a
+  PR, one comment with the verdict table and the significant attributed frames, edited in place
+  on later runs. It runs from the default branch and never runs the PR's code: the comment is
+  rebuilt from the run's `report.json` and attribution JSON by `scripts/perf_ab_comment.py`, which
+  type-checks every value and escapes every name, and `scripts/perf_ab_post.py` takes the PR from
+  the run's metadata, never from the artifact. Active once merged: `workflow_run` fires only for
+  workflows on the default branch
 - **`jfr-shell compare <baseline.jfr> <candidate.jfr>`** - the `jfr_compare` comparison without an
   MCP server, for CI. Prints a short report, or with `--json` the keys `jfr_compare` returns plus
   `inclusiveFrames`: per frame, the share of samples whose stack contains it (once per sample under
@@ -118,7 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lambda classes a per-run number (`Foo$$Lambda$14`), so every such frame read as gone from one
   recording and new in the other: in a comparison of two JVM runs they took the top four
   inclusive rows at about 99 points each. Both parts are now left out of frame names, so the same
-  frame keeps one name; lambdas of one class that differ only in them become one frame
+  frame keeps one name; lambdas of one class that differ only in them become one frame. So are
+  javac's per-compilation numbers in synthetic accessors (`access$300`, for code compiled for Java
+  8) and lambda bodies (`lambda$main$0`): between two builds of #250 the same accessor was
+  `access$400` and then `access$300`, and read as -53 and +57 points
 - **`jfr-shell`: a usage error no longer escapes as a stack trace.** A missing or malformed
   argument to any subcommand failed in the parse `main` runs before executing, with an uncaught
   picocli exception. It now prints the message and the command's usage and exits 2, as picocli's

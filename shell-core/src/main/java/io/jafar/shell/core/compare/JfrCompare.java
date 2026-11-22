@@ -125,18 +125,28 @@ public final class JfrCompare {
   private static final Pattern LAMBDA_INDEX = Pattern.compile("\\$\\$Lambda\\$\\d+");
 
   /**
-   * {@code frame} without the parts the JVM assigns per run: a hidden class's {@code /0x...}
-   * address and a lambda class's {@code $$Lambda$<n>} number. Two recordings come from two JVMs, so
-   * with those parts the same frame has a different name on each side and every such frame reads as
-   * gone from one and new in the other. Lambdas of one class that differ only in those parts become
-   * one frame: across two JVMs they cannot be told apart anyway.
+   * javac's number in a synthetic accessor ({@code access$300}, for code compiled for Java 8,
+   * before nestmates) or a lambda body ({@code lambda$main$0}): assigned per compilation, in order
+   * of appearance, so it changes whenever the class does.
+   */
+  private static final Pattern JAVAC_INDEX =
+      Pattern.compile("(?<=\\.)(access|lambda\\$[\\w$]*?)\\$\\d+$");
+
+  /**
+   * {@code frame} without the parts the JVM assigns per run, a hidden class's {@code /0x...}
+   * address and a lambda class's {@code $$Lambda$<n>} number, and without the numbers javac assigns
+   * per compilation, in {@code access$<n>} and {@code lambda$<method>$<n>}. Two recordings come
+   * from two JVMs, often running two builds, so with those parts the same frame has a different
+   * name on each side and reads as gone from one and new in the other. Frames that differ only in
+   * those parts become one: across two runs they cannot be told apart.
    */
   static String stableName(String frame) {
-    if (frame.indexOf("/0x") < 0 && frame.indexOf("$$Lambda$") < 0) {
+    if (frame.indexOf('$') < 0) {
       return frame;
     }
     String name = HIDDEN_CLASS_ADDRESS.matcher(frame).replaceAll("");
-    return LAMBDA_INDEX.matcher(name).replaceAll(Matcher.quoteReplacement("$$Lambda"));
+    name = LAMBDA_INDEX.matcher(name).replaceAll(Matcher.quoteReplacement("$$Lambda"));
+    return JAVAC_INDEX.matcher(name).replaceAll("$1\\$");
   }
 
   private static List<String> stableNames(List<String> frames) {

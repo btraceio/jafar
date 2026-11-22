@@ -196,10 +196,12 @@ as shares of each recording's execution samples, in two lists:
   counted once per sample even when it recurses. This list names a caller whose own code did not
   change but whose callees got slower, which self time cannot show.
 
-Frame names leave out what the JVM assigns per run: a hidden class's address (`/0x…`, as in
-`LambdaForm$MH/0x00007f2e141a1000`) and a lambda class's number (`$$Lambda$14`). Two recordings
-come from two JVMs, so with those parts the same frame would have a different name on each side.
-Lambdas of one class that differ only in them are counted as one frame.
+Frame names leave out what the JVM assigns per run, a hidden class's address (`/0x…`, as in
+`LambdaForm$MH/0x00007f2e141a1000`) and a lambda class's number (`$$Lambda$14`), and what javac
+assigns per compilation: the number in a synthetic accessor (`access$300`, for code compiled for
+Java 8) and in a lambda body (`lambda$main$0`). Two recordings come from two JVMs, often running
+two builds, so with those parts the same frame would have a different name on each side. Frames
+that differ only in them are counted as one.
 
 JFR cuts every stack at its stack depth, 64 frames unless the recorded JVM ran with
 `-XX:FlightRecorderOptions:stackdepth=<n>`. On JDK 21 that option was measured to cap at 2048 frames.

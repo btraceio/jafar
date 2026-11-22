@@ -1,0 +1,80 @@
+name: Performance A/B comment
+
+# Posts the result of a perf-ab run on its PR: doc/plans/perf-ab.md, step 4.
+#
+# perf-ab.yml runs the PR's own code with a read-only token, so it cannot comment. This
+# workflow can (pull-requests: write), and therefore never runs the PR's code: workflow_run
+# workflows run from the default branch, the checkout below is the default branch, and the
+# perf-ab artifact is read as data only.
+#   - The comment is rebuilt from report.json and the attribution JSON by
+#     scripts/perf_ab_comment.py, which type-checks every value and escapes every name. The
+#     artifact's own markdown (summary.md) is never posted.
+#   - The PR is taken from the run's metadata (workflow_run.pull_requests, else the open PR whose
+#     head is the run's head commit), never from the artifact.
+#   - One comment per PR, edited in place: scripts/perf_ab_post.py finds it by its marker.
+#
+# workflow_run fires only for workflows on the default branch, so this workflow does nothing
+# until it and perf-ab.yml are merged.
+
+on:
+  workflow_run:
+    workflows: ['Performance A/B (perf-ab)']
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Comment the perf-ab result
+    # Only runs for a PR; a cancelled run (superseded by a newer push) leaves the comment alone.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the default branch (trusted scripts only)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download the perf-ab artifact
+        id: artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: perf-ab
+          path: perf-ab
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Render the comment
+        env:
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$ARTIFACT_OUTCOME" = "success" ] && [ -f perf-ab/report.json ] \
+              && python3 scripts/perf_ab_comment.py --artifact perf-ab --run-url "$RUN_URL" > comment.md; then
+            echo "rendered from the artifact"
+          else
+            # No report: say so, and point to the run, without reading anything from it.
+            {
+              echo '<!-- perf-ab-report -->'
+              echo '### Performance A/B (advisory)'
+              echo
+              echo "The perf-ab run ended with \`$CONCLUSION\` and produced no report that could be read. See $RUN_URL"
+            } > comment.md
+          fi
+
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+        run: python3 scripts/perf_ab_post.py --comment comment.md

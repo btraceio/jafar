@@ -249,6 +249,41 @@ the move, because the code goes from the consumer (`jfr-mcp`) down into `shell-c
   `headersWithStartTime`, which the base lacks (n base = 0). The workflow ran, and no attribution
   followed.
 
+### 3.7 Step 4 as implemented (2026-11-22)
+
+- `.github/workflows/perf-ab-comment.yml` runs on `workflow_run` of `Performance A/B (perf-ab)`
+  for PR runs that were not cancelled or skipped. It has `pull-requests: write`, so it runs only
+  default-branch code. Its checkout is the default branch with `persist-credentials: false`, and
+  it reads the run's `perf-ab` artifact as data.
+- **The comment is rebuilt, not copied.** `scripts/perf_ab_comment.py` renders it from
+  `report.json`, `attribute.tsv` and `attribution/<i>.json`:
+  - every value is type-checked, and a file of the wrong shape is refused, so nothing is posted;
+  - every name goes through `perf_ab.esc`;
+  - the comment is capped at 60,000 characters (GitHub's limit is 65,536), dropping attribution
+    rows first.
+
+  `summary.md`, which the PR's own code wrote, is never posted.
+- **The PR comes from the run, not the artifact.** `scripts/perf_ab_post.py` takes it from
+  `workflow_run.pull_requests`; that list is empty for a PR from a fork, and then it uses the open
+  PR whose head is the run's head commit. None or several matching PRs post nothing. It edits the
+  newest comment by `github-actions[bot]` that starts with `<!-- perf-ab-report -->`, or creates one.
+- **A run without a readable report** (a failed run, a malformed artifact) gets a short comment
+  with its conclusion and link, built without reading the artifact.
+- **Tested locally:** `scripts/tests/test_perf_ab_comment.sh`, 27 checks.
+  - The renderer escapes a name built from `|`, a backtick, `<img>`, a markdown link,
+    `@everyone`, `**` and `_`; with escaping removed, all six leak checks fail.
+  - It refuses seven malformed shapes.
+  - The poster runs against a local fake of the GitHub API. It finds the PR from the metadata and,
+    for a fork, by head commit, and it edits only its own marked comment. It posts nothing for zero
+    or two PRs, for a head that is not a commit id, or for a comment without the marker.
+- **Not run on GitHub:** `workflow_run` fires only for workflows on the default branch, so the
+  comment job cannot run before both workflows are merged.
+- **javac numbers, from the first real comment rendered locally.** The attribution of #250
+  showed `UntypedJafarParserImpl.access$400` at 53.42% → 0% and `access$300` at 0% → 57.57%: the
+  same accessor, renumbered by javac between the two builds. `parser-core` targets Java 8, which
+  predates nestmates, so it still has synthetic accessors. The compare core now drops the number
+  in `access$<n>` and `lambda$<method>$<n>`, as it does for hidden-class addresses.
+
 ## 4. What stays the same
 
 - `nightly-jmh.yml` keeps its trend role: the same commit night to night, absolute scores and

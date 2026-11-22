@@ -286,6 +286,27 @@ class JfrCompareTest {
     assertEquals("m.Foo$Inner.bar", JfrCompare.stableName("m.Foo$Inner.bar"));
     assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda/0x0000000801234.run"));
     assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda$3/0x00000008abcd.run"));
+    // javac's per-compilation numbers: accessors (Java 8 targets) and lambda bodies.
+    assertEquals("m.Foo.access$", JfrCompare.stableName("m.Foo.access$300"));
+    assertEquals("m/x/Outer.access$", JfrCompare.stableName("m/x/Outer.access$400"));
+    assertEquals("m.Foo.lambda$main$", JfrCompare.stableName("m.Foo.lambda$main$0"));
+    assertEquals("m.Foo.lambda$static$", JfrCompare.stableName("m.Foo.lambda$static$12"));
+    // Not javac's: left as they are.
+    assertEquals("m.Foo.access", JfrCompare.stableName("m.Foo.access"));
+    assertEquals("m.Foo$1.run", JfrCompare.stableName("m.Foo$1.run"));
+    assertEquals("m.Foo.value$1x", JfrCompare.stableName("m.Foo.value$1x"));
+  }
+
+  @Test
+  void accessorsRenumberedBetweenBuildsAreOneFrame() {
+    // Seen in a perf-ab run: the same accessor was access$400 in the base build and access$300
+    // in the head build, and read as -53 and +57 points.
+    CompareResult result =
+        compare(
+            samples(Map.of(List.of("m.Work.leaf", "m.Parser.access$400", "m.Main.run"), 100L)),
+            samples(Map.of(List.of("m.Work.leaf", "m.Parser.access$300", "m.Main.run"), 100L)),
+            SELF_AND_INCLUSIVE);
+    assertEquals(List.of(), result.inclusiveFrames(), "the same accessor, renumbered by javac");
   }
 
   // ---------------------------------------------------------------------------------------------
