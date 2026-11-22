@@ -131,9 +131,9 @@ public final class StreamingChunkParser implements AutoCloseable {
    * </ol>
    *
    * <p>Note: Unlike {@link #parse(Path, ChunkParserListener)}, this method processes chunks
-   * sequentially as it reads from the stream, one chunk in memory at a time. The recording ends
-   * where the stream ends before a chunk's first byte; a stream that ends inside a chunk fails the
-   * parse.
+   * sequentially as it reads from the stream, reading each chunk whole before processing it. The
+   * recording ends where the stream ends before a chunk's first byte; a stream that ends inside a
+   * chunk fails the parse.
    *
    * @param inputStream the InputStream containing the JFR recording
    * @param listener the parser listener
@@ -147,6 +147,7 @@ public final class StreamingChunkParser implements AutoCloseable {
     try {
       listener.onRecordingStart(recordingContext);
       int chunkCounter = 1;
+      long chunkOffset = 0;
       byte[] headerBytes = new byte[68];
       while (true) {
         // The end of the stream before a chunk's first byte ends the recording; anywhere else in
@@ -183,7 +184,7 @@ public final class StreamingChunkParser implements AutoCloseable {
             new RecordingStream(
                 new BufferedRecordingStreamReader(CustomByteBuffer.wrap(headerBytes)),
                 contextFactory.newContext(recordingContext, chunkCounter));
-        ChunkHeader parsedHeader = new ChunkHeader(headerStream, chunkCounter);
+        ChunkHeader parsedHeader = new ChunkHeader(headerStream, chunkCounter, chunkOffset);
         int headerSize = (int) headerStream.position();
 
         // Build chunkData = header bytes + payload, then hand it to processChunk
@@ -198,22 +199,61 @@ public final class StreamingChunkParser implements AutoCloseable {
                   + " is smaller than its header "
                   + headerSize);
         }
-        byte[] chunkData = new byte[totalSize];
-        System.arraycopy(headerBytes, 0, chunkData, 0, headerSize);
-        if (readFully(inputStream, chunkData, headerSize, payloadSize) < payloadSize) {
-          throw new IOException("Unexpected end of stream while reading chunk " + chunkCounter);
-        }
+        byte[] chunkData = readChunk(inputStream, headerBytes, headerSize, totalSize, chunkCounter);
 
         RecordingStream chunkStream =
             new RecordingStream(
                 new BufferedRecordingStreamReader(CustomByteBuffer.wrap(chunkData)),
                 contextFactory.newContext(recordingContext, chunkCounter));
-        processChunk(chunkStream, parsedHeader, listener, headerSize);
+        try {
+          processChunk(chunkStream, parsedHeader, listener, headerSize);
+        } finally {
+          chunkStream.close();
+        }
+        chunkOffset += totalSize;
         chunkCounter++;
       }
     } finally {
       listener.onRecordingEnd(recordingContext);
     }
+  }
+
+  /** The most a chunk's buffer grows by at once while the stream has not yet shown it is there. */
+  private static final int CHUNK_READ_STEP = 1 << 20;
+
+  /**
+   * The chunk whose header is the first {@code headerSize} bytes of {@code header}: those bytes and
+   * the rest of the chunk's {@code totalSize}, read from {@code in}.
+   *
+   * <p>The buffer grows as the bytes arrive instead of being allocated at the declared size: a
+   * corrupt or hostile header may declare up to 2 GiB, and a stream that ends long before that must
+   * fail with an {@link IOException}, not an {@link OutOfMemoryError}.
+   */
+  private static byte[] readChunk(
+      InputStream in, byte[] header, int headerSize, int totalSize, int chunkCounter)
+      throws IOException {
+    byte[] chunk = new byte[Math.min(totalSize, headerSize + CHUNK_READ_STEP)];
+    System.arraycopy(header, 0, chunk, 0, headerSize);
+    int filled = headerSize;
+    while (filled < totalSize) {
+      if (filled == chunk.length) {
+        int grown = (int) Math.min(totalSize, 2L * chunk.length);
+        chunk = java.util.Arrays.copyOf(chunk, grown);
+      }
+      int got = readFully(in, chunk, filled, chunk.length - filled);
+      filled += got;
+      if (filled < chunk.length) {
+        throw new IOException(
+            "Unexpected end of stream while reading chunk "
+                + chunkCounter
+                + ": "
+                + filled
+                + " of its declared "
+                + totalSize
+                + " byte(s)");
+      }
+    }
+    return chunk;
   }
 
   /**

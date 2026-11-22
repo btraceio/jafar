@@ -16,11 +16,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * {@link RecordingStreamReader#readVarint()} on varints of every length from 1 to 9 bytes, written
- * back to back, read through every kind of buffer a reader sits on.
+ * back to back, read by a buffered reader over a wrapped array, over a {@link ByteArrayByteBuffer}
+ * and over a file mapped in 7-byte splices, and by a mapped reader.
  *
- * <p>Each value is written in its shortest form and padded to every longer length, the way the JDK
- * writes event sizes: continuation bits set over zero groups. After each varint the value, the
- * position and {@link RecordingStreamReader#remaining()} must all be right.
+ * <p>Each value is written in its shortest form and padded to every longer length: continuation
+ * bits set over zero groups, which the encoding allows and a writer that reserves a field's width
+ * produces. After each varint the value, the position and {@link RecordingStreamReader#remaining()}
+ * must all be right.
  */
 class RecordingStreamReaderVarintTest {
 

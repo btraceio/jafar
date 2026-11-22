@@ -139,13 +139,13 @@ public abstract class RecordingStreamReader {
     }
 
     /**
-     * One {@code buffer.get()} call site for every byte keeps this method small enough for the JIT
-     * to inline at its hot call sites, along with the reads in it. An unrolled version (354 bytes
-     * of bytecode) was not inlined, and in its compiled body the reads of bytes 2 to 9 stayed
-     * calls, their sites being cold when it was compiled, so every multi-byte varint paid them.
-     * Reading the 8 bytes at the varint's start at once and decoding them without branches measured
-     * slower than this loop on JDK 21, both for every varint and for those whose first byte has the
-     * continuation bit set.
+     * One {@code buffer.get()} call site for bytes 1 to 8, and one for the ninth, keep this method
+     * small enough for the JIT to inline at its hot call sites, along with the reads in it. An
+     * unrolled version (354 bytes of bytecode) was not inlined, and in its compiled body the reads
+     * of bytes 2 to 9 stayed calls, their sites being cold when it was compiled, so every
+     * multi-byte varint paid them. Reading the 8 bytes at the varint's start at once and decoding
+     * them without branches measured slower than this loop on JDK 21, both for every varint and for
+     * those whose first byte has the continuation bit set.
      */
     private long readVarintSeq() {
       long ret = 0;

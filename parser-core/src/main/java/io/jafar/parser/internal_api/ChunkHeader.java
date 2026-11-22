@@ -65,8 +65,22 @@ public final class ChunkHeader {
    * @throws IOException if an I/O error occurs during construction
    */
   ChunkHeader(RecordingStream recording, int index) throws IOException {
+    this(recording, index, recording.position());
+  }
+
+  /**
+   * Constructs a new ChunkHeader from the recording stream, for a chunk at {@code offset} in the
+   * recording: the stream holds the header alone, as when the recording is read from an {@code
+   * InputStream}.
+   *
+   * @param recording the recording stream to read from, positioned at the chunk's first byte
+   * @param index the index/order of this chunk
+   * @param offset the chunk's offset in the recording
+   * @throws IOException if an I/O error occurs during construction
+   */
+  ChunkHeader(RecordingStream recording, int index, long offset) throws IOException {
     order = index;
-    offset = recording.position();
+    this.offset = offset;
     long left = recording.available();
     // The magic is checked first, whenever there are four bytes to check: a file that is not a
     // recording at all should be told so ("Invalid JFR Magic Number"), whatever its length, and

@@ -559,7 +559,7 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
       if (targets.beforeStartTime != null) {
         // With no value handler to decode the event, select returns null and nothing reads the
         // payload after the header: the event stream puts the stream back for a parser listener,
-        // and the chunk parser moves to the next event from wherever it is.
+        // and the chunk parser seeks to the next event's absolute position whatever this leaves.
         boolean restore = targets.handlers.length > 0;
         long raw = peekStartTime(selection.stream, targets.beforeStartTime, restore);
         startTime =

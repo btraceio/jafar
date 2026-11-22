@@ -90,9 +90,12 @@ class StreamingChunkParserIoTest {
   /** Real Datadog profiler recording: 67,657 events in 2 chunks. */
   private static final Path TCK = Paths.get("../jfr-shell-tck/src/main/resources/tck-test.jfr");
 
-  /** Event counts by chunk index, and the context's chunk index, from one parse. */
+  /**
+   * Event counts and header offsets by chunk index, and the context's chunk index, from a parse.
+   */
   private static final class ChunkCounts implements ChunkParserListener {
     final Map<Integer, LongAdder> events = new ConcurrentHashMap<>();
+    final Map<Integer, Long> offsets = new ConcurrentHashMap<>();
     final Set<String> mismatchedIndexes = ConcurrentHashMap.newKeySet();
 
     @Override
@@ -102,6 +105,7 @@ class StreamingChunkParserIoTest {
             chunkIndex + ": context " + context.getChunkIndex() + ", header " + header.order);
       }
       events.put(chunkIndex, new LongAdder());
+      offsets.put(chunkIndex, header.offset);
       return true;
     }
 
@@ -130,8 +134,8 @@ class StreamingChunkParserIoTest {
 
   /**
    * Every chunk of a recording read from a stream, each with the events the file-mapped parse reads
-   * from it. The stream path used to read the first chunk only (40,058 of tck-test.jfr's 67,657
-   * events) and number every chunk 1.
+   * from it and at the same offset. The stream path used to read the first chunk only (40,058 of
+   * tck-test.jfr's 67,657 events) and number every chunk 1.
    */
   @Test
   void streamReadsEveryChunkLikeThePath() throws Exception {
@@ -145,6 +149,7 @@ class StreamingChunkParserIoTest {
     ChunkCounts stream = parse(new ByteArrayInputStream(Files.readAllBytes(TCK)));
 
     assertEquals(path.counts(), stream.counts());
+    assertEquals(new TreeMap<>(path.offsets), new TreeMap<>(stream.offsets));
     assertEquals(Set.of(), path.mismatchedIndexes);
     assertEquals(Set.of(), stream.mismatchedIndexes);
   }
@@ -163,6 +168,22 @@ class StreamingChunkParserIoTest {
           }
         };
     assertEquals(67_657L, parse(unavailable).counts().values().stream().mapToLong(c -> c).sum());
+  }
+
+  /**
+   * A header that declares a chunk of almost 2 GiB on a stream that ends right after it fails with
+   * an {@link IOException}. The whole chunk used to be allocated before any of it was read, which
+   * for this size throws {@link OutOfMemoryError} ("Requested array size exceeds VM limit") on any
+   * heap.
+   */
+  @Test
+  void hugeDeclaredChunkOnAShortStreamFailsWithoutAllocatingIt() throws Exception {
+    byte[] bytes = Files.readAllBytes(TCK);
+    ByteBuffer header = ByteBuffer.wrap(Arrays.copyOf(bytes, 68 + 1000));
+    header.putLong(8, Integer.MAX_VALUE); // big-endian chunk size, after magic and version
+    IOException e =
+        assertThrows(IOException.class, () -> parse(new ByteArrayInputStream(header.array())));
+    assertTrue(e.getMessage().contains("chunk 1"), e.getMessage());
   }
 
   /** A stream that ends inside a chunk fails the parse rather than ending the recording there. */

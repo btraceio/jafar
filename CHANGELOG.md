@@ -133,7 +133,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned after the first chunk (40,058 of `tck-test.jfr`'s 67,657 events), numbered every chunk
   1, and parsed nothing from a stream whose `available()` was 0, as a pipe's is while it waits
   for data. It now reads every chunk until the stream ends, and a stream that ends inside a chunk
-  fails the parse
+  fails the parse. Each chunk's `ChunkHeader.offset` is its offset in the stream, as on the path
+  parse; and a chunk's buffer grows as its bytes arrive, so a header declaring up to
+  2 GiB on a short stream fails with an `IOException` instead of allocating the whole chunk first
+  (an `OutOfMemoryError`, "Requested array size exceeds VM limit", for the largest size)
 - **`jfr2pprof` lost samples, wrote malformed profiles or crashed on recordings of more than one
   chunk.** The parser calls the converter's handler from one thread per chunk at the same time, and
   the converter added samples to an unsynchronized builder. A 32-chunk recording converted to a
