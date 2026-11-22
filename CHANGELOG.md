@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type-checks every value and escapes every name, and `scripts/perf_ab_post.py` takes the PR from
   the run's metadata, never from the artifact. Active once merged: `workflow_run` fires only for
   workflows on the default branch
+- **`scripts/perf_ab_calibrate.py`** - derives `perf_ab.py`'s calibration from at least 10 A/A
+  perf-ab runs (base = head): per benchmark, `min_effect` = 1.5 x the largest |ratio - 1| seen and
+  `noise_bound` = 1.5 x the largest spread of fork means, rounded up to 0.005. Refuses runs that
+  are not A/A, too few runs, and inconsistent benchmark sets. The procedure is in
+  [doc/plans/perf-ab.md](doc/plans/perf-ab.md), section 3.8; the calibration file follows once the
+  runs exist on the runner
 - **`jfr-shell compare <baseline.jfr> <candidate.jfr>`** - the `jfr_compare` comparison without an
   MCP server, for CI. Prints a short report, or with `--json` the keys `jfr_compare` returns plus
   `inclusiveFrames`: per frame, the share of samples whose stack contains it (once per sample under

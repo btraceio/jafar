@@ -13,8 +13,13 @@
 #   3. Benchmark classes whose source differs between the two (parser-codegen/src/main/jmh) are
 #      passed to perf_ab.py as --changed-class: each side ran its own version of them, so their
 #      numbers are not compared.
-#   4. JMH runs in the order base, head, head, base (A B B A), each invocation in its own
-#      worktree, so drift during the run does not favour one side. Timing runs carry no profiler.
+#   4. JMH runs four times, each invocation in its own worktree: base, head, head, base
+#      (A B B A) or head, base, base, head (B A A B), alternating between runs. A B B A cancels
+#      a linear drift during the run but not a penalty on one position: three local A/A runs
+#      found the last round slowest each time, which with a fixed order always lands on base.
+#      Alternating turns such a bias into noise in both directions, which calibration (step 5)
+#      measures. The order comes from --order, else from the GitHub run id's parity, else at
+#      random; runner.txt records it. Timing runs carry no profiler.
 #   5. scripts/perf_ab.py turns the four result files into DIR/report.md and DIR/report.json.
 #   6. Attribution: every benchmark that perf_ab.py calls slower or faster, or, while no
 #      calibration exists, every one with p < 0.01, gets one more fork per side under JMH's JFR
@@ -34,6 +39,14 @@
 #   --exact-base         compare against REF itself, not the merge base
 #   --no-attribution     skip step 6
 #   --java25 PATH        JAVA_HOME of a JDK 25 for jfr-shell (default: $JAVA_HOME_25_X64)
+#   --order abba|baab    the round order (default: alternating, see step 4)
+#   --attribution-min-delta PCT
+#                        the smallest frame share move, in points, that attribution reports
+#                        (default 3). One profiled fork per side compares two JVMs whose JIT
+#                        decisions differ, so moves the z-test calls significant also appear
+#                        when nothing changed: up to 2.84 points in the first A/A run on a GitHub
+#                        runner. jfr_compare's own floor of 1 point assumes two recordings of one
+#                        build, not this.
 #
 # Exit status: 0 whenever the comparison ran, whatever it found: timing is never a gate
 # (Gates.md, principle 3). Non-zero only when it could not run: a bad ref, a JMH or Gradle
@@ -53,6 +66,8 @@ calibration=""
 exact_base=false
 attribution=true
 java25="${JAVA_HOME_25_X64:-}"
+order=""
+attribution_min_delta=3
 
 die() {
     echo "perf_ab_run: $*" >&2
@@ -72,12 +87,27 @@ while [ "$#" -gt 0 ]; do
         --exact-base) exact_base=true; shift ;;
         --no-attribution) attribution=false; shift ;;
         --java25) java25="$2"; shift 2 ;;
+        --order) order="$2"; shift 2 ;;
+        --attribution-min-delta) attribution_min_delta="$2"; shift 2 ;;
         -h|--help) sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//;$d'; exit 0 ;;
         *) die "unknown option $1 (see --help)" ;;
     esac
 done
 [ -n "$base_ref" ] && [ -n "$head_ref" ] && [ -n "$out" ] || die "--base, --head and --out are required"
 case "$benchmarks" in *" "*) die "--benchmarks must not contain spaces (Gradle splits -PjmhArgs at spaces)" ;; esac
+if [ -z "$order" ]; then
+    seed="${GITHUB_RUN_ID:-$RANDOM}"
+    case "$seed" in *[!0-9]*|"") seed=$RANDOM ;; esac
+    if [ $((seed % 2)) -eq 0 ]; then order=abba; else order=baab; fi
+fi
+case "$attribution_min_delta" in
+    ''|*[!0-9.]*|*.*.*) die "--attribution-min-delta must be a number of points" ;;
+esac
+case "$order" in
+    abba) rounds="base head head base" ;;
+    baab) rounds="head base base head" ;;
+    *) die "--order must be abba or baab" ;;
+esac
 if [ -z "$calibration" ] && [ -f "$repo/scripts/perf-ab-calibration.json" ]; then
     calibration="$repo/scripts/perf-ab-calibration.json"
 fi
@@ -106,6 +136,7 @@ echo "perf_ab_run: base $base_sha ($base_ref$($exact_base || echo ', merge base'
     grep -m1 MemTotal /proc/meminfo 2>/dev/null || true
     echo "jmh: $jmh $params"
     echo "benchmarks: $benchmarks"
+    echo "order: $order"
 } > "$out/runner.txt"
 cat "$out/runner.txt"
 
@@ -149,7 +180,7 @@ run_jmh() { # run_jmh <side> <log name> <jmh args...>
 }
 
 round=0
-for side in base head head base; do
+for side in $rounds; do
     round=$((round + 1))
     # shellcheck disable=SC2086 # the option strings are word-split on purpose
     run_jmh "$side" "timing-$round-$side" $jmh $params -rf json -rff "$out/$side-r$round.json" "$benchmarks"
@@ -211,7 +242,8 @@ PY
             head_jfr="$(find "$out/jfr/$index/head" -name profile.jfr | head -1)"
             [ -n "$base_jfr" ] && [ -n "$head_jfr" ] || die "the JFR profiler wrote no recording for $bench"
             compare=("$java25/bin/java" -Djfr.shell.plugin.dir="$out/no-plugins" -Djfr.shell.registry.remote=false
-                -Djfr.shell.backend.jars="$backend_jar" -jar "$shell_jar" compare "$base_jfr" "$head_jfr")
+                -Djfr.shell.backend.jars="$backend_jar" -jar "$shell_jar" compare "$base_jfr" "$head_jfr"
+                --min-delta-pct "$attribution_min_delta")
             "${compare[@]}" --json > "$out/attribution/$index.json" 2> "$logs/compare-$index.log" \
                 || die "jfr-shell compare failed for $bench ($logs/compare-$index.log)"
             "${compare[@]}" > "$out/attribution/$index.txt" 2>> "$logs/compare-$index.log" \

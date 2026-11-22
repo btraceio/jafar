@@ -284,6 +284,84 @@ the move, because the code goes from the consumer (`jfr-mcp`) down into `shell-c
   predates nestmates, so it still has synthetic accessors. The compare core now drops the number
   in `access$<n>` and `lambda$<method>$<n>`, as it does for hidden-class addresses.
 
+### 3.8 Step 5: calibration tooling and procedure (2026-11-22)
+
+Calibration needs runner data, which needs dispatch, which needs `perf-ab.yml` on the default
+branch. This step therefore ships the tool and the procedure. The calibration file itself is
+committed after the A/A runs on the runner.
+
+**The tool.** `scripts/perf_ab_calibrate.py` reads perf-ab artifacts of A/A runs, where base and
+head are the same commit. For each benchmark key (class, method, params) it sets:
+- `min_effect`: 1.5 × the largest |ratio − 1| in any run, rounded up to 0.005. No run of the set
+  would have been called `slower` or `faster`.
+- `noise_bound`: 1.5 × the largest spread of fork means on either side, rounded up to 0.005.
+
+It refuses (exit 2):
+- fewer than 10 runs;
+- a run whose `runner.txt` names different base and head commits;
+- a verdict an A/A run cannot have;
+- a benchmark missing from some run;
+- a benchmark seen in several modes;
+- a margin below 1.
+
+Tests: `scripts/tests/test_perf_ab_calibrate.sh` has 15 checks, including that `perf_ab.py`
+accepts the output and calls a 20% slowdown `slower`. With the margin removed, four checks fail.
+
+**The procedure, once merged:**
+1. Dispatch `perf-ab.yml` at least 10 times with `base_ref` = `head_ref` = the same commit of
+   `main`, leaving `merge_base` unset (exact base), and default benchmarks and JMH options.
+   Calibrating with other JMH options would calibrate other noise. Separate dispatches land on
+   separate runner machines, which is the variation a later PR run will meet.
+2. Download each run's artifact: `gh run download <run-id> -n perf-ab -D aa/<run-id>`.
+3. Run `scripts/perf_ab_calibrate.py aa/* --out scripts/perf-ab-calibration.json --json-summary
+   calibration-summary.json`.
+4. Commit `scripts/perf-ab-calibration.json`, and put the summary (every run's ratio, p and
+   spreads) in the PR. `perf_ab_run.sh` uses the file when it exists, so verdicts stop reading
+   `uncalibrated` from then on.
+5. Repeat when the benchmark, the JMH options or the runner image change. A calibration describes
+   the noise of one setup.
+
+**Round order alternates.** The tool was first run end to end, with `--min-runs 3`, on three
+local A/A runs: this machine, short settings, two benchmarks. Results:
+- no run reached p < 0.01, and the worst |ratio − 1| was 4.25%, which gives minimum effects of
+  6–6.5%;
+- `headersWithStartTime` came out below 1 in all three runs (0.961, 0.966, 0.973);
+- the per-round medians showed the cause: the fourth round, which is base in A B B A, was the
+  slowest every time (155.7, 154.3 and 158.4 ms against about 146–153 for the others).
+
+A B B A cancels a linear drift but not a penalty on one position, and with a fixed order that
+penalty always lands on base. `perf_ab_run.sh` now alternates A B B A and B A A B between runs
+(by the GitHub run id's parity, random locally, or `--order`) and records the order in
+`runner.txt`. The calibration summary carries it per run, so a set of A/A runs sees a position
+effect in both directions. Three runs do not establish the effect; what matters is that it can no
+longer bias one side. These local numbers are not the calibration: they come from another machine
+and from short JMH settings.
+
+**The first A/A run on the runner.** That was run 45037111140. Its head, `1da927a2`, differs
+from its base, `12b5c791`, only in scripts, workflows and the compare core, none of which
+QueryPushdownBenchmark runs.
+- **All six benchmarks** came out between 0.972 and 1.010, with fork-mean spreads of 1.8–8.1% per
+  side.
+- **One false positive by p alone.** `countEventsFromHeaders` came out at 0.980 with p = 0.0087,
+  below 0.01 with nothing changed. With a calibrated minimum effect above 2%, it stays "no change
+  detected", which is why `perf_ab.py` requires both conditions. The fork means are not fully
+  independent: forks of one round share the machine's state at that time, so p is optimistic and
+  the minimum effect is the real guard.
+- **No consistent position effect,** unlike locally. The fourth round, base, was the slowest only
+  for `decodeAllFilterInHandler` (356.86 in round 3, head, was slower still).
+- **Attribution noise.** The p < 0.01 above triggered attribution, so the run also measured the
+  attribution's noise between two JVMs. At `jfr_compare`'s 1-point floor, 13 frame rows came out
+  "significant", up to 2.84 points (metadata parsing, +2.8). With 3 points there were none.
+  `perf_ab_run.sh` therefore passes `--min-delta-pct 3` to attribution, adjustable with
+  `--attribution-min-delta`.
+- **Not a calibration:** this is one run, short of the 10 that `perf_ab_calibrate.py` requires.
+
+**What a calibration does not promise.** The thresholds are the worst of about 10 noise draws,
+times 1.5. A later A/A run can still exceed them, so the false-positive rate is low but not
+measured. A benchmark whose noise is close to the effects that matter (section 2:
+`decodeAllFilterInHandler`) gets a minimum effect too large to be useful. The summary shows this,
+and the right answer then is a longer benchmark, not a smaller threshold.
+
 ## 4. What stays the same
 
 - `nightly-jmh.yml` keeps its trend role: the same commit night to night, absolute scores and
@@ -319,13 +397,20 @@ measured before anyone reads a verdict. This is the analogue of R5, a gate's pro
      hurting, and inclusive shares move up in priority.
 4. **Cost.** Record the job's wall time per run.
 
-## 6. Cost estimate (to be replaced by measurements)
+## 6. Cost, measured on a GitHub runner
 
-Locally, one invocation of the default benchmarks took 9 min 23 s (JMH's "Total time", 6
-benchmarks × 3 forks × 8 iterations). The A/B needs 4 such invocations, so about 38 minutes, plus
-two Gradle builds and, per changed benchmark, 2 profiled forks. That makes a local estimate of
-**40-50 minutes per labelled PR**. The GitHub runner's time is unknown until step 1 of section 5;
-`nightly-jmh.yml` allows 90 minutes for its three suites.
+The first run on GitHub was
+[run 45037111140](https://github.com/btraceio/jafar/actions/runs/45037111140), the `perf-ab` label
+on btraceio/jafar#253:
+- **Total: 38 minutes.** The `Compare` step took 37 min 23 s; the four rounds took 9:05, 8:56,
+  8:53 and 8:52.
+- **Attribution added 1 min 37 s** for one benchmark: building `jfr-shell` took 20 s, and the two
+  profiled forks the rest.
+- **The runner had 4 vCPUs** (`Intel(R) Xeon(R) 6975P-C`) and 16 GB, as GitHub documents for
+  public repositories.
+
+Locally, one round of the default benchmarks took 9 min 23 s, so the earlier 40–50 minute estimate
+held. The 150-minute timeout leaves room for several attributed benchmarks.
 
 ## 7. Steps
 

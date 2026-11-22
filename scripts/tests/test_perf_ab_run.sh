@@ -40,6 +40,10 @@ refuse "no --out" "--base, --head and --out are required" --base HEAD --head HEA
 refuse "unknown option" "unknown option --frobnicate" --frobnicate
 refuse "a benchmark regex with a space" "must not contain spaces" \
     --base HEAD --head HEAD --out "$W/b" --benchmarks 'Foo bar'
+refuse "an unknown round order" "--order must be abba or baab" \
+    --base HEAD --head HEAD --out "$W/e" --order abab
+refuse "an attribution floor that is not a number" "--attribution-min-delta must be a number" \
+    --base HEAD --head HEAD --out "$W/f" --attribution-min-delta '3; rm -rf /'
 refuse "a base that names no commit" "no commit no-such-ref-perf-ab" \
     --base no-such-ref-perf-ab --head HEAD --out "$W/c"
 refuse "a head that names no commit" "no commit no-such-ref-perf-ab" \

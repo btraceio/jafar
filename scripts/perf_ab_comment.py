@@ -30,6 +30,7 @@ import math
 import os
 import sys
 
+sys.dont_write_bytecode = True  # importing perf_ab must not leave scripts/__pycache__ behind
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from perf_ab import esc  # noqa: E402  (same directory; the escaping rules live in one place)
 
