@@ -26,7 +26,7 @@ import java.util.Comparator;
 import java.util.List;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * The typed parser has two implementations of the same interfaces: the handlers {@code
@@ -46,9 +46,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 class BuildTimeRuntimeParityTest {
 
   /** One interface per type an execution sample reaches, with every accessor kind in use. */
-  private static void compileInterfaces(Path classes) throws Exception {
+  private static void compileInterfaces(Path classes, List<String> options) throws Exception {
     compileTo(
         classes,
+        options,
         source(
             "PSample",
             "@JfrType(\"jdk.ExecutionSample\")\npublic interface PSample {\n"
@@ -94,13 +95,28 @@ class BuildTimeRuntimeParityTest {
     "PSample", "PThread", "PStackTrace", "PFrame", "PMethod", "PClass", "PState"
   };
 
+  /**
+   * Each fixture twice: with the fixture as a layout reference, so the build-time handlers read it
+   * with their straight-line reads (Layouts), and with every layout source off, so they use the
+   * read loop. Either must read what the runtime classes read.
+   */
   @ParameterizedTest
-  @ValueSource(strings = {"test-ap.jfr", "test-jfr.jfr"})
-  void buildTimeAndRuntimeHandlersReadTheSameValues(String fixture) throws Exception {
+  @CsvSource({
+    "test-ap.jfr, true",
+    "test-ap.jfr, false",
+    "test-jfr.jfr, true",
+    "test-jfr.jfr, false"
+  })
+  void buildTimeAndRuntimeHandlersReadTheSameValues(String fixture, boolean layouts)
+      throws Exception {
     URL resource = getClass().getClassLoader().getResource(fixture);
     assertNotNull(resource, fixture + " is not on the test classpath (parser-core test resources)");
     Path jfr = Paths.get(resource.toURI());
-    compileInterfaces(classes);
+    compileInterfaces(
+        classes,
+        layouts
+            ? Arrays.asList("-Ajafar.layouts=" + jfr, "-Ajafar.layouts.jdk=false")
+            : Arrays.asList("-Ajafar.layouts.jdk=false"));
 
     List<String> buildTime = probe(jfr, true);
     List<String> runtime = probe(jfr, false);
@@ -109,6 +125,10 @@ class BuildTimeRuntimeParityTest {
     // names. Two runs of one implementation would agree whatever the other does.
     assertTrue(buildTime.size() > 1, "no " + fixture + " samples");
     assertEquals("decoded by test.PSampleHandler", buildTime.get(0));
+    // which read the build-time handler's plan chose for the samples: a straight-line one only
+    // when the fixture's layout was given
+    String read = buildTime.remove(1);
+    assertEquals(layouts ? "read by readLayout1" : "read by the loop", read);
     assertTrue(
         runtime.get(0).startsWith("decoded by ") && !runtime.get(0).equals(buildTime.get(0)),
         "the runtime side was " + runtime.get(0));
@@ -177,7 +197,7 @@ class BuildTimeRuntimeParityTest {
       ClassLoader loader = Probe.class.getClassLoader();
       Class<?> iface = loader.loadClass("test.PSample");
       List<String> events = Collections.synchronizedList(new ArrayList<>());
-      String[] decodedBy = new String[1];
+      String[] decodedBy = new String[2];
       try (TypedJafarParser p = ParsingContext.create().newTypedParser(jfr)) {
         if (buildTime) {
           for (String simpleName : FACTORIES) {
@@ -198,6 +218,7 @@ class BuildTimeRuntimeParityTest {
                   synchronized (decodedBy) {
                     if (decodedBy[0] == null) {
                       decodedBy[0] = e.getClass().getName();
+                      decodedBy[1] = readBy(e);
                     }
                   }
                   events.add(render(e, iface, 0));
@@ -207,7 +228,30 @@ class BuildTimeRuntimeParityTest {
       List<String> out = new ArrayList<>(events);
       Collections.sort(out);
       out.add(0, "decoded by " + decodedBy[0]);
+      if (buildTime) {
+        out.add(1, "read by " + decodedBy[1]);
+      }
       return out;
+    }
+
+    /** Which read a build-time handler's current plan uses: its straight-line read, or the loop. */
+    private static String readBy(Object handler) {
+      try {
+        java.lang.reflect.Field planField = handler.getClass().getDeclaredField("plan");
+        planField.setAccessible(true);
+        Object plan = planField.get(handler);
+        java.lang.reflect.Field layout;
+        try {
+          layout = plan.getClass().getDeclaredField("layout");
+        } catch (NoSuchFieldException none) {
+          return "the loop"; // no layout known when the handler was generated
+        }
+        layout.setAccessible(true);
+        int k = layout.getInt(plan);
+        return k == 0 ? "the loop" : "readLayout" + k;
+      } catch (ReflectiveOperationException ex) {
+        return "the runtime class";
+      }
     }
   }
 

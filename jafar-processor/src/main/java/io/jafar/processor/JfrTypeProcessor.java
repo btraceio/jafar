@@ -239,6 +239,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private final Set<String> processedInterfaces = new HashSet<>();
   private TemplateEngine handlerTemplate;
   private TemplateEngine factoryTemplate;
+  // read once, on the first round that has @JfrType interfaces (Layouts)
+  private Layouts layouts;
+
+  /** Most straight-line reads one handler gets; further layouts use the loop. */
+  private static final int MAX_LAYOUTS = 8;
 
   @Override
   public synchronized void init(ProcessingEnvironment processingEnv) {
@@ -263,6 +268,14 @@ public class JfrTypeProcessor extends AbstractProcessor {
   }
 
   @Override
+  public Set<String> getSupportedOptions() {
+    Set<String> options = new HashSet<>();
+    options.add(Layouts.OPTION_RECORDINGS);
+    options.add(Layouts.OPTION_JDK);
+    return options;
+  }
+
+  @Override
   public SourceVersion getSupportedSourceVersion() {
     return SourceVersion.latestSupported();
   }
@@ -275,6 +288,17 @@ public class JfrTypeProcessor extends AbstractProcessor {
       if (element.getKind() == ElementKind.INTERFACE
           && !((TypeElement) element).getNestingKind().isNested()) {
         processedInterfaces.add(((TypeElement) element).getQualifiedName().toString());
+      }
+    }
+
+    if (layouts == null && !processedInterfaces.isEmpty()) {
+      Set<String> types = new HashSet<>();
+      for (Element element : roundEnv.getElementsAnnotatedWith(JfrType.class)) {
+        types.add(element.getAnnotation(JfrType.class).value());
+      }
+      layouts = Layouts.load(processingEnv.getOptions(), types);
+      for (String note : layouts.notes()) {
+        messager.printMessage(Diagnostic.Kind.NOTE, "jafar-processor: " + note);
       }
     }
 
@@ -333,6 +357,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
     String jfrTypeName = jfrType.value();
 
     List<FieldInfo> fields = extractFields(interfaceElement);
+    List<int[]> layoutOps = layoutOps(fields, layouts == null ? null : layouts.of(jfrTypeName));
 
     // Generate handler code from template
     String handlerCode =
@@ -344,12 +369,13 @@ public class JfrTypeProcessor extends AbstractProcessor {
             .set("JFR_TYPE_NAME", jfrTypeName)
             .set("INSTANCE_FIELDS", buildInstanceFields(fields))
             .set("SWITCH_CASES", buildSwitchCases(fields) + buildGroupCases(fields))
-            .set("GROUP_READ", buildGroupRead(fields))
+            .set("GROUP_READ", buildGroupRead(fields) + buildLayoutReads(fields, layoutOps))
+            .set("LAYOUT_DISPATCH", buildLayoutDispatch(layoutOps))
             .set("OP_CASES", buildOpCases(fields))
             .set("VALIDATE_CASES", buildValidateCases(fields))
-            .set("PLAN_FIELDS", buildPlanFields(fields))
+            .set("PLAN_FIELDS", buildPlanFields(fields) + buildLayoutField(layoutOps))
             .set("PLAN_DEFAULTS", buildPlanDefaults(fields))
-            .set("PLAN_ASSIGN", buildPlanAssign(fields))
+            .set("PLAN_ASSIGN", buildPlanAssign(fields) + buildLayoutAssign(layoutOps))
             .set("RESET_FIELDS", buildResetFields(fields) + buildCpMemoClear(fields, "    "))
             .set("CP_MEMO_CLEAR", buildCpMemoClear(fields, "      ").replaceAll("\n$", ""))
             .set("GETTER_METHODS", buildGetterMethods(fields))
@@ -713,27 +739,185 @@ public class JfrTypeProcessor extends AbstractProcessor {
     StringBuilder sb = new StringBuilder();
     int g = 0;
     for (Map.Entry<String, List<Integer>> e : groups(fields).entrySet()) {
-      sb.append("        case ")
-          .append(groupOp(fields, g++))
-          .append(" /* ")
-          .append(e.getKey())
-          .append(", ")
-          .append(e.getValue().size())
-          .append(" accessors */: {\n")
-          .append("          long start = stream.position();\n");
-      boolean first = true;
-      for (int i : e.getValue()) {
-        if (!first) {
-          sb.append("          stream.position(start);\n");
-        }
-        first = false;
-        sb.append("          readOp(")
-            .append(i + 1)
-            .append(", stream, metaField, p, constantPools);\n");
-      }
-      sb.append("          break;\n        }\n");
+      sb.append(groupCase(fields, g++, e.getKey(), e.getValue()));
     }
     return sb.toString();
+  }
+
+  /** The read case of group {@code g}: each member's read, the stream rewound between them. */
+  private static String groupCase(
+      List<FieldInfo> fields, int g, String name, List<Integer> members) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("        case ")
+        .append(groupOp(fields, g))
+        .append(" /* ")
+        .append(name)
+        .append(", ")
+        .append(members.size())
+        .append(" accessors */: {\n")
+        .append("          long start = stream.position();\n");
+    boolean first = true;
+    for (int i : members) {
+      if (!first) {
+        sb.append("          stream.position(start);\n");
+      }
+      first = false;
+      sb.append("          readOp(")
+          .append(i + 1)
+          .append(", stream, metaField, p, constantPools);\n");
+    }
+    sb.append("          break;\n        }\n");
+    return sb.toString();
+  }
+
+  /**
+   * The op of each field of each known layout of this handler's type, as Plan resolves them (opOf;
+   * a field no accessor reads is 0 here, whatever Plan makes of it), distinct, at most {@link
+   * #MAX_LAYOUTS}; layouts no accessor reads anything of are left out.
+   */
+  private static List<int[]> layoutOps(List<FieldInfo> fields, List<List<String>> layouts) {
+    List<int[]> out = new ArrayList<>();
+    if (layouts == null) {
+      return out;
+    }
+    Map<String, Integer> opByName = new LinkedHashMap<>();
+    Map<String, List<Integer>> groups = groups(fields);
+    List<String> groupNames = new ArrayList<>(groups.keySet());
+    for (int i = 0; i < fields.size(); i++) {
+      String name = fields.get(i).jfrFieldName;
+      int g = groupNames.indexOf(name);
+      opByName.putIfAbsent(name, g < 0 ? i + 1 : groupOp(fields, g));
+    }
+    for (List<String> layout : layouts) {
+      int[] ops = new int[layout.size()];
+      boolean reads = false;
+      for (int i = 0; i < ops.length; i++) {
+        ops[i] = opByName.getOrDefault(layout.get(i), 0);
+        reads |= ops[i] != 0;
+      }
+      boolean known = false;
+      for (int[] o : out) {
+        known |= java.util.Arrays.equals(o, ops);
+      }
+      if (reads && !known && out.size() < MAX_LAYOUTS) {
+        out.add(ops);
+      }
+    }
+    return out;
+  }
+
+  /** The read case of op {@code op} without its label: the body a straight-line read runs. */
+  private String caseBody(List<FieldInfo> fields, int op) {
+    String c;
+    if (op <= fields.size()) {
+      c = switchCaseOf(op - 1, fields.get(op - 1));
+    } else {
+      int g = op - fields.size() - 1;
+      Map.Entry<String, List<Integer>> e = new ArrayList<>(groups(fields).entrySet()).get(g);
+      c = groupCase(fields, g, e.getKey(), e.getValue());
+    }
+    return c.replaceFirst("^\\s*case [^:]*:", "");
+  }
+
+  /**
+   * The straight-line reads, one per known layout: each field's read in recording order, with no
+   * loop and no dispatch, the shape of the code CodeGenerator emits per layout at runtime. Each
+   * body is the loop's own case for that op, in a {@code do ... while (false)} so its {@code break}
+   * keeps its meaning; a field no accessor reads is skipped as the loop skips it, by its op. Also
+   * the table Plan matches the recording's ops against.
+   */
+  private String buildLayoutReads(List<FieldInfo> fields, List<int[]> layoutOps) {
+    if (layoutOps.isEmpty()) {
+      return "";
+    }
+    StringBuilder sb = new StringBuilder();
+    sb.append(
+            "  /** The ops of the layouts with a straight-line read (readLayout1...), unread as 0. */\n")
+        .append("  private static final int[][] LAYOUTS = {\n");
+    for (int[] ops : layoutOps) {
+      sb.append("    {");
+      for (int i = 0; i < ops.length; i++) {
+        sb.append(i == 0 ? "" : ", ").append(ops[i]);
+      }
+      sb.append("},\n");
+    }
+    sb.append("  };\n\n")
+        .append(
+            "  /** The 1-based index of the straight-line read of {@code ops}, or 0 for the loop. */\n")
+        .append("  private static int layoutOf(int[] ops) {\n")
+        .append("    candidates:\n")
+        .append("    for (int k = 0; k < LAYOUTS.length; k++) {\n")
+        .append("      int[] layout = LAYOUTS[k];\n")
+        .append("      if (layout.length != ops.length) {\n")
+        .append("        continue;\n")
+        .append("      }\n")
+        .append("      for (int i = 0; i < layout.length; i++) {\n")
+        .append("        if (layout[i] != Math.max(ops[i], 0)) {\n")
+        .append("          continue candidates;\n")
+        .append("        }\n")
+        .append("      }\n")
+        .append("      return k + 1;\n")
+        .append("    }\n")
+        .append("    return 0;\n")
+        .append("  }\n\n");
+    for (int k = 0; k < layoutOps.size(); k++) {
+      int[] ops = layoutOps.get(k);
+      sb.append("  private void readLayout")
+          .append(k + 1)
+          .append("(\n      RecordingStream stream, MetadataField[] fields, int[] ops, Plan p,\n")
+          .append("      ConstantPools constantPools) throws IOException {\n");
+      for (int i = 0; i < ops.length; i++) {
+        if (ops[i] == 0) {
+          sb.append("    if (ops[")
+              .append(i)
+              .append("] == SKIP_REFERENCE) {\n")
+              .append("      stream.readVarint();\n")
+              .append("    } else {\n")
+              .append("      TypeSkipper.skip(fields[")
+              .append(i)
+              .append("], stream);\n")
+              .append("    }\n");
+          continue;
+        }
+        sb.append("    {\n      MetadataField metaField = fields[")
+            .append(i)
+            .append("];\n")
+            .append("      do {\n")
+            .append(caseBody(fields, ops[i]))
+            .append("      } while (false);\n    }\n");
+      }
+      sb.append("  }\n\n");
+    }
+    return sb.toString();
+  }
+
+  /** In read(): runs the plan's straight-line read when it has one. */
+  private static String buildLayoutDispatch(List<int[]> layoutOps) {
+    if (layoutOps.isEmpty()) {
+      return "";
+    }
+    StringBuilder sb = new StringBuilder("    switch (p.layout) {\n");
+    for (int k = 1; k <= layoutOps.size(); k++) {
+      sb.append("      case ")
+          .append(k)
+          .append(":\n")
+          .append("        readLayout")
+          .append(k)
+          .append("(stream, fields, ops, p, constantPools);\n")
+          .append("        return;\n");
+    }
+    return sb.append("      default:\n        break;\n    }\n").toString();
+  }
+
+  private static String buildLayoutField(List<int[]> layoutOps) {
+    return layoutOps.isEmpty()
+        ? ""
+        : "    /** Which straight-line read this layout has (readLayout1...), or 0: the loop. */\n"
+            + "    final int layout;\n";
+  }
+
+  private static String buildLayoutAssign(List<int[]> layoutOps) {
+    return layoutOps.isEmpty() ? "" : "      this.layout = layoutOf(ops);\n";
   }
 
   /** Builds readOp, the reads of the accessors in groups; empty when there is no group. */
