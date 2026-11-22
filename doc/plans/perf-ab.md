@@ -356,6 +356,32 @@ QueryPushdownBenchmark runs.
   `--attribution-min-delta`.
 - **Not a calibration:** this is one run, short of the 10 that `perf_ab_calibrate.py` requires.
 
+**The second A/A run on the runner.** That was
+[run 45040909061](https://github.com/btraceio/jafar/actions/runs/45040909061), head `baced18e`,
+also without benchmark-relevant changes. It is the first run with the alternating order, which
+came out B A A B.
+- **Ratios:** all six came out between 0.989 and 1.019, the smallest p was 0.132, and no
+  attribution ran.
+- **Another machine:** it ran on an `AMD EPYC 9V74`, where the first ran on an
+  `Intel(R) Xeon(R) 6975P-C`.
+  - Absolute times differed by up to 19% between the two machines: `countByDecoding` round
+    medians were about 400 ms on the Xeon and 471–485 ms on the EPYC.
+  - Each run's A/A ratios stayed within 2.8%. The machine's speed cancels out of a same-job ratio,
+    which is the premise of section 2.
+- **Worst |ratio − 1| over both runs:**
+
+  | Benchmark | Worst \|ratio − 1\| |
+  |---|---|
+  | `typeFilterInParser` | 0.028 |
+  | `countEventsFromHeaders` | 0.020 |
+  | `ceilingSkipEveryEvent` | 0.019 |
+  | `headersWithStartTime` | 0.017 |
+  | `decodeAllFilterInHandler` | 0.011 |
+  | `countByDecoding` | 0.005 |
+
+  If 10 runs look alike, minimum effects of about 1.5–4.5% follow. #250's measured effects
+  (−18 to −25% on `headersWithStartTime`) are far above that.
+
 **What a calibration does not promise.** The thresholds are the worst of about 10 noise draws,
 times 1.5. A later A/A run can still exceed them, so the false-positive rate is low but not
 measured. A benchmark whose noise is close to the effects that matter (section 2:
