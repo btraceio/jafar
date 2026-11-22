@@ -204,14 +204,60 @@ the move, because the code goes from the consumer (`jfr-mcp`) down into `shell-c
   - It treats the artifact as untrusted data: a PR controls what its benchmark prints, so
     benchmark names and frame names are escaped before they go into markdown.
 
+### 3.6 Step 3 as implemented (2026-11-22)
+
+- `.github/workflows/perf-ab.yml` is a thin wrapper around `scripts/perf_ab_run.sh`, which runs
+  the same way locally. Inputs reach the script through the environment only.
+- The JFR profiler writes each fork's recording to
+  `<dir>/<benchmark>-<Mode>-<param>-<value>/profile.jfr`; the driver gives every profiled
+  benchmark its own `dir`, so each holds exactly one recording. The forked JVM's arguments include
+  `-XX:FlightRecorderOptions=stackdepth=2048` (read from `jdk.JVMInformation` in a recording).
+- A `-p` option a benchmark does not declare is ignored by JMH, so one `--params` string serves
+  every benchmark: `headersWithStartTime` declares only `chunks`.
+- **Changed benchmarks are judged per class.** Any change to a benchmark class's source marks all
+  of its methods "benchmark changed, not compared". This is conservative: btraceio/jafar#250 added
+  one method to `QueryPushdownBenchmark`, which disables the comparison of the class's other
+  methods for that PR, although their workloads did not change.
+- **Attribution before calibration.** Until a calibration exists no verdict is `slower` or
+  `faster`, so the driver also attributes an `uncalibrated` benchmark with p < 0.01. With 6 forks
+  per side that p is reachable (2/924 at complete separation).
+- Frame names of JVM-generated classes are normalised in the compare core (section 3.4), so
+  `jfr_compare` gains it too.
+- `jfr-shell` for attribution is built from the driver's own checkout, not from the head worktree:
+  `compare` exists only from btraceio/jafar#252 on, and a head or a dispatched ref may predate it.
+  On a PR the two are the same commit.
+- **End-to-end run, local (4 processors, JDK 21).**
+  - **Inputs:** `--exact-base` with a local commit of `1fe4cff0` plus #250's benchmark sources
+    against #250's pre-squash head `974ba69c`, so only #250's production code differed.
+    Two benchmarks, short settings (`-f 3 -wi 1 -i 2 -w 2s -r 2s`).
+  - **Two runs, same verdicts:**
+
+    | Benchmark | Run 1 | Run 2 |
+    |---|---|---|
+    | `headersWithStartTime` | 0.754 (p 0.0022) | 0.817 (p 0.0022) |
+    | `ceilingSkipEveryEvent` | 0.902 (p 0.0087) | 0.910 (p 0.0152) |
+
+    Run 2 therefore attributed only `headersWithStartTime`.
+  - **Attribution named #250's change:**
+    - `RecordingStream.readVarint` inclusive 38.86% → 25.23%;
+    - `Buffer.nextGetIndex` (the out-of-line `get()` calls of the unrolled decoder) 21.49% → 6.22%;
+    - `peekStartTime` 15.18% → 8.83%.
+  - **The short settings are noisy:** the same pair moved `headersWithStartTime` from 0.754 to
+    0.817 between the two runs. Calibration has to use the workflow's default settings.
+- **A pair that changes the benchmark class is not compared.** #250 against its own base
+  reported `QueryPushdownBenchmark` as "benchmark changed, not compared": #250 added
+  `headersWithStartTime`, which the base lacks (n base = 0). The workflow ran, and no attribution
+  followed.
+
 ## 4. What stays the same
 
 - `nightly-jmh.yml` keeps its trend role: the same commit night to night, absolute scores and
   ratios. The A/B report answers a different question, this PR against its base, and does not
   replace the nightly trend.
 - No Gates.md row, no PR-body statement, no required check.
-- `jfr_compare`'s behaviour over MCP is unchanged by the extraction. Its response-shape tests stay
-  green.
+- `jfr_compare`'s behaviour over MCP is unchanged by the extraction (step 1). Its response-shape
+  tests stay green. Step 3 changes one thing it reports: frame names of JVM-generated classes lose
+  their per-run address and lambda number (section 3.6).
 
 ## 5. Validating the report itself
 

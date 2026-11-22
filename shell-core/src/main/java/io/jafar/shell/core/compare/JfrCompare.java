@@ -19,6 +19,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Compares a candidate recording against a baseline: the logic behind {@code jfr_compare}, with no
@@ -114,6 +116,37 @@ public final class JfrCompare {
     this.analyses = new JfrAnalyses(source);
   }
 
+  /**
+   * A hidden class's address, as in {@code LambdaForm$MH/0x00007f2e141a1000}: assigned per JVM run.
+   */
+  private static final Pattern HIDDEN_CLASS_ADDRESS = Pattern.compile("/0x[0-9a-fA-F]+");
+
+  /** A lambda class's sequence number, as in {@code Foo$$Lambda$14}: assigned per JVM run. */
+  private static final Pattern LAMBDA_INDEX = Pattern.compile("\\$\\$Lambda\\$\\d+");
+
+  /**
+   * {@code frame} without the parts the JVM assigns per run: a hidden class's {@code /0x...}
+   * address and a lambda class's {@code $$Lambda$<n>} number. Two recordings come from two JVMs, so
+   * with those parts the same frame has a different name on each side and every such frame reads as
+   * gone from one and new in the other. Lambdas of one class that differ only in those parts become
+   * one frame: across two JVMs they cannot be told apart anyway.
+   */
+  static String stableName(String frame) {
+    if (frame.indexOf("/0x") < 0 && frame.indexOf("$$Lambda$") < 0) {
+      return frame;
+    }
+    String name = HIDDEN_CLASS_ADDRESS.matcher(frame).replaceAll("");
+    return LAMBDA_INDEX.matcher(name).replaceAll(Matcher.quoteReplacement("$$Lambda"));
+  }
+
+  private static List<String> stableNames(List<String> frames) {
+    List<String> names = new ArrayList<>(frames.size());
+    for (String frame : frames) {
+      names.add(stableName(frame));
+    }
+    return names;
+  }
+
   /** Profiles both recordings and compares them. */
   public CompareResult compare(
       AnalysisTarget baseline, AnalysisTarget candidate, CompareOptions options) throws Exception {
@@ -166,7 +199,7 @@ public final class JfrCompare {
                   && Boolean.TRUE.equals(stackTrace.get("truncated"))) {
                 truncated.increment();
               }
-              List<String> frames = analyses.extractFrames(event, "bottom-up", null);
+              List<String> frames = stableNames(analyses.extractFrames(event, "bottom-up", null));
               if (!frames.isEmpty()) {
                 leafFrames.merge(frames.get(0), 1L, Long::sum);
                 // Once per sample: a recursive method is on the stack, not on it twice as often.
@@ -175,7 +208,7 @@ public final class JfrCompare {
                 }
               }
             } else {
-              List<String> frames = analyses.extractFrames(event, "bottom-up", 1);
+              List<String> frames = stableNames(analyses.extractFrames(event, "bottom-up", 1));
               if (!frames.isEmpty()) {
                 leafFrames.merge(frames.get(0), 1L, Long::sum);
               }

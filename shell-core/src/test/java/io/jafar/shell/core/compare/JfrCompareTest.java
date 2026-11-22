@@ -251,6 +251,43 @@ class JfrCompareTest {
     }
   }
 
+  @Test
+  void framesOfGeneratedClassesKeepOneNameAcrossJvms() {
+    // The same work in two JVM runs: the hidden classes got different addresses and the lambda a
+    // different sequence number, so without normalising every such frame looks gone and new.
+    CompareResult result =
+        compare(
+            samples(
+                Map.of(
+                    List.of(
+                        "m.Work.leaf",
+                        "java.lang.invoke.LambdaForm$MH/0x00007f2e141a1000.invoke",
+                        "m.Main$$Lambda$14/0x0000000800c01234.run"),
+                    100L)),
+            samples(
+                Map.of(
+                    List.of(
+                        "m.Work.leaf",
+                        "java.lang.invoke.LambdaForm$MH/0x00007fb3aa0c4400.invoke",
+                        "m.Main$$Lambda$27/0x0000000800d05678.run"),
+                    100L)),
+            SELF_AND_INCLUSIVE);
+
+    assertEquals(List.of(), result.inclusiveFrames(), "the same frames, renamed per JVM");
+    assertEquals(
+        100L,
+        result.baseline().inclusiveFrameCounts().get("java.lang.invoke.LambdaForm$MH.invoke"));
+    assertEquals(100L, result.candidate().inclusiveFrameCounts().get("m.Main$$Lambda.run"));
+  }
+
+  @Test
+  void stableNamesLeaveOrdinaryFramesAlone() {
+    assertEquals("m.Foo.bar", JfrCompare.stableName("m.Foo.bar"));
+    assertEquals("m.Foo$Inner.bar", JfrCompare.stableName("m.Foo$Inner.bar"));
+    assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda/0x0000000801234.run"));
+    assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda$3/0x00000008abcd.run"));
+  }
+
   // ---------------------------------------------------------------------------------------------
 
   private static CompareResult compare(
