@@ -159,6 +159,28 @@ that matched no event rather than returning nothing. The general point stands fo
 **a path that resolves to null must be distinguishable from a value that is null.** Validate against
 the first row, as `applySortBy` does, or count what you consumed, as `aggregateGroupBy` does.
 
+### An event's thread is not always `eventThread`
+
+`jdk.ExecutionSample` and `jdk.NativeMethodSample` carry the sampled thread in `sampledThread` and
+have no `eventThread`; `jdk.JavaMonitorEnter` and `datadog.ExecutionSample` carry `eventThread`.
+`JfrAnalyses.extractThreadId` read only `eventThread`, got `null` for every sample and returned
+`"unknown"`, so `jfr_tsa` counted one thread for any recording of JDK samples and called it healthy
+(#222). The test recording it ran on was a Datadog one, whose samples do have `eventThread`, so it
+passed. The thread now comes from `sampledThread` when present, else `eventThread`.
+
+The same assumption sat in two more places. `decorateByTime` defaulted to `eventThread/javaThreadId`
+on both sides, so the documented "samples during monitor waits" query decorated nothing - and its
+test built `jdk.ExecutionSample` maps with an `eventThread`, a shape the real event never has.
+Stack profiles read `eventThread` first, so the same sample got another thread's name there than in
+`jfr_tsa`. All three now ask `EventThreads` (`shell-core`, `io.jafar.shell.jfrpath`); attribute an
+event to a thread through it, not by naming a field.
+
+The default made it silent: a literal `"unknown"` is a valid thread name to everything downstream.
+When code reads a field of more than one event type, check each type's metadata
+(`jfr metadata --events <type>`), build synthetic events in the real shape, and test on a recording
+of the type users have, not the one at hand. `JfrAnalysesThreadAttributionTest` records its own
+`jdk.ExecutionSample` for this reason.
+
 ### A type id is not a type
 
 A metadata class id names a type **within one chunk**. Chunks written by different producers — a

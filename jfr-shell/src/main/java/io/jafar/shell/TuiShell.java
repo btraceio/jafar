@@ -109,11 +109,9 @@ public final class TuiShell implements AutoCloseable {
   /** Pre-open a file if the path exists. */
   public void openIfPresent(Path filePath) {
     if (filePath == null || !Files.exists(filePath)) return;
-    try {
-      components.dispatcher.dispatch("open " + filePath);
-    } catch (Exception ignore) {
-      // best-effort auto-open: failures are reported by the open command itself
-    }
+    // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233).
+    // A failure is reported by open itself.
+    components.dispatcher.open(filePath, null);
   }
 
   /** Enter full-screen mode and run the draw/event loop until exit. */

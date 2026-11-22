@@ -6,6 +6,7 @@ import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.core.FlameNode;
 import io.jafar.shell.core.LazyQueryValue;
+import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -740,6 +741,20 @@ public class CommandDispatcher {
   }
 
   /**
+   * The transcript's line that opens {@code recording}: {@code open} with the path in a form that
+   * reads back (quoted when it has spaces, #233), or, for the rare path no form of {@code open} can
+   * express, a comment saying so - a broken {@code open} line would run every later query with no
+   * session.
+   */
+  static String transcriptOpenLine(String recording) {
+    try {
+      return "open " + OpenArguments.quote(recording);
+    } catch (IllegalArgumentException e) {
+      return "# open cannot express this recording's path; open it by hand: " + recording;
+    }
+  }
+
+  /**
    * Writes an investigation's queries to a {@code .jfrs} script beside the recording's directory.
    *
    * <p>An investigation driven by a model is not reproducible; the script it ran is. This is the
@@ -766,7 +781,8 @@ public class CommandDispatcher {
       sb.append("# what it actually ran, and re-running them is how you check it.\n");
       var current = sessions.current();
       if (current.isPresent()) {
-        sb.append("open ").append(current.get().session.getFilePath()).append('\n');
+        sb.append(transcriptOpenLine(String.valueOf(current.get().session.getFilePath())))
+            .append('\n');
       }
       for (String query : queries) {
         sb.append(query).append('\n');
@@ -955,7 +971,8 @@ public class CommandDispatcher {
           llmCommands().llm(args);
           return true;
         case "open":
-          cmdOpen(args);
+          // The unsplit rest of the line: the split above breaks a path at its spaces (#233)
+          cmdOpen(line.trim().substring(parts[0].length()));
           return true;
         case "sessions":
           cmdSessions();
@@ -1089,16 +1106,24 @@ public class CommandDispatcher {
     }
   }
 
-  private void cmdOpen(List<String> args) throws Exception {
-    if (args.isEmpty()) {
+  /**
+   * @param rest the line after {@code open}, unsplit: a path may contain spaces, quoted or not (see
+   *     {@link OpenArguments})
+   */
+  private void cmdOpen(String rest) throws Exception {
+    if (rest.isBlank()) {
       io.error("Usage: open <path> [--alias NAME]");
       return;
     }
-    String pathStr = args.get(0);
-    String alias = null;
-    if (args.size() >= 3 && "--alias".equals(args.get(1))) {
-      alias = args.get(2);
+    OpenArguments parsed;
+    try {
+      parsed = OpenArguments.parse(rest);
+    } catch (IllegalArgumentException e) {
+      io.error(e.getMessage()); // a usage message, not a runtime failure: no "Error: " prefix
+      return;
     }
+    String pathStr = parsed.path();
+    String alias = parsed.alias();
 
     // Expand ~ to user home directory
     if (pathStr.startsWith("~/")) {
@@ -1108,6 +1133,43 @@ public class CommandDispatcher {
     }
 
     Path path = Paths.get(pathStr);
+    // Before #233 open read only the first word and ignored the rest ("open rec.jfr # main").
+    // When the whole unquoted text names no file but its first word does, keep doing that, and
+    // say so rather than open something the line did not plainly name.
+    if (!parsed.quoted() && !Files.exists(path)) {
+      String[] words = pathStr.split("\\s+", 2);
+      if (words.length == 2 && Files.exists(Paths.get(words[0]))) {
+        io.println(
+            "Note: no file '"
+                + pathStr
+                + "'; opening '"
+                + words[0]
+                + "' and ignoring '"
+                + words[1]
+                + "'. Quote a path that contains spaces.");
+        path = Paths.get(words[0]);
+      }
+    }
+    openSession(path, alias);
+  }
+
+  /**
+   * Opens a recording as {@code open} does, from a path that is already parsed. A path rebuilt into
+   * an {@code open} line is split again at its spaces (#233), so callers holding a {@link Path} use
+   * this. A failure is reported as {@link #dispatch} reports one.
+   *
+   * @param path the recording
+   * @param alias the session alias, or {@code null}
+   */
+  public void open(Path path, String alias) {
+    try {
+      openSession(path, alias);
+    } catch (Exception e) {
+      io.error("Error: " + e.getMessage());
+    }
+  }
+
+  private void openSession(Path path, String alias) throws Exception {
     SessionManager.SessionRef<? extends Session> ref = sessions.open(path, alias);
     if (verbose) {
       io.println(

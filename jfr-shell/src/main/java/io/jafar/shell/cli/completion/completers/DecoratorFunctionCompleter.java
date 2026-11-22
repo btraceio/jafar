@@ -77,12 +77,18 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
       String funcName, String partial, List<Candidate> candidates) {
     if (funcName.equalsIgnoreCase("decorateByTime")) {
       addIfMatches("fields=", partial, "Fields to include from decorator events", candidates);
+      // The defaults are EventThreads': sampledThread for samples, else eventThread
       addIfMatches(
-          "threadPath=", partial, "Path to thread in primary events (default: thread)", candidates);
+          "threadPath=",
+          partial,
+          "Thread id path in primary events (default: the event's own thread -"
+              + " sampledThread for samples, else eventThread)",
+          candidates);
       addIfMatches(
           "decoratorThreadPath=",
           partial,
-          "Path to thread in decorator events (default: sampledThread)",
+          "Thread id path in decorator events (default: the event's own thread -"
+              + " sampledThread for samples, else eventThread)",
           candidates);
     } else if (funcName.equalsIgnoreCase("decorateByKey")) {
       addIfMatches("key=", partial, "Key expression for primary events", candidates);

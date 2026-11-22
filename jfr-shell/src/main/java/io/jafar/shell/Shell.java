@@ -196,11 +196,9 @@ public final class Shell implements AutoCloseable {
       terminal.flush();
       return;
     }
-    try {
-      dispatcher.dispatch("open " + jfrPath.toString());
-    } catch (Exception ignore) {
-      // best-effort reopen: failures are reported by the open command itself
-    }
+    // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233).
+    // A failure is reported by open itself.
+    dispatcher.open(jfrPath, null);
   }
 
   private void printBanner() {
@@ -448,7 +446,9 @@ public final class Shell implements AutoCloseable {
     w.println("JFR Shell Commands:");
     w.println();
     w.println("Session Management:");
-    w.println("  open <path> [--alias NAME]     Open a recording as a new session");
+    w.println(
+        "  open <path> [--alias NAME]     Open a recording as a new session (\"quote\" a path");
+    w.println("                                 if it contains ' --alias')");
     w.println("  connect [<pid>] [--alias NAME]  List local JVMs / attach a live JFR session");
     w.println("  tail [filter] [--limit N]      Stream events from a live session");
     w.println("  sessions                       List all sessions");

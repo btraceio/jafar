@@ -4,6 +4,7 @@ import io.jafar.parser.api.Values;
 import io.jafar.shell.core.findings.Finding;
 import io.jafar.shell.core.findings.Findings;
 import io.jafar.shell.core.findings.JfrFindings;
+import io.jafar.shell.jfrpath.EventThreads;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import java.util.ArrayList;
@@ -2053,16 +2054,14 @@ public final class JfrAnalyses {
     return state != null ? String.valueOf(unwrapValue(state)) : "UNKNOWN";
   }
 
+  /** See {@link EventThreads}: {@code sampledThread} for samples, else {@code eventThread}. */
   String extractThreadId(Map<String, Object> event) {
-    Object tid = Values.get(event, "eventThread", "javaThreadId");
+    Object tid = EventThreads.id(event);
     return tid != null ? String.valueOf(tid) : "unknown";
   }
 
   String extractThreadName(Map<String, Object> event) {
-    Object name = Values.get(event, "eventThread", "javaName");
-    if (name == null) {
-      name = Values.get(event, "eventThread", "osName");
-    }
+    Object name = EventThreads.name(event);
     return name != null ? String.valueOf(name) : "unknown";
   }
 

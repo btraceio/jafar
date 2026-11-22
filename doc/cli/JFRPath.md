@@ -593,8 +593,10 @@ Decorate events with information from time-overlapping events on the same thread
 **Parameters**:
 - `decoratorEventType` - Event type to use as decorator (quoted string)
 - `fields` - Comma-separated list of fields to extract from decorator
-- `threadPath` - Optional: path to thread ID in primary event (default: `eventThread/javaThreadId`)
-- `decoratorThreadPath` - Optional: path to thread ID in decorator (default: `eventThread/javaThreadId`)
+- `threadPath` - Optional: path to thread ID in primary event (default: the event's own thread's
+  `javaThreadId` — `sampledThread` for `jdk.ExecutionSample` and `jdk.NativeMethodSample`, which
+  have no `eventThread`, else `eventThread`)
+- `decoratorThreadPath` - Optional: path to thread ID in decorator (default: the same rule)
 
 **Overlap Logic**: Events overlap if their time ranges intersect:
 ```
@@ -1312,7 +1314,7 @@ constants/jdk.types.StackTrace | crossref()
 
 In the interactive shell, use these commands:
 
-- `open <path> [--alias NAME]` - Open a recording
+- `open <path> [--alias NAME]` - Open a recording (a path may contain spaces, or be quoted)
 - `sessions` - List all sessions
 - `use <id|alias>` (or `session`) - Switch session
 - `close [<id|alias>|--all]` - Close session(s)

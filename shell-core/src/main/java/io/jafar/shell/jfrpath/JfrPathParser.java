@@ -1123,12 +1123,29 @@ public final class JfrPathParser {
       fields.add(field);
       skipWs();
       if (peek() == ',') {
+        int comma = pos;
         pos++; // ,
         skipWs();
         if (peek() == ')' || peek() == ',') break; // trailing comma or end of params
+        // 'fields=a, threadPath=...': the next named parameter, not a field. Leave the comma for
+        // the caller's parameter loop; read as a field, it failed with "Expected ')'".
+        if (atNamedParameter()) {
+          pos = comma;
+          break;
+        }
       } else break;
     }
     return fields;
+  }
+
+  /** Whether the input at {@code pos} is {@code name=}, a named parameter. */
+  private boolean atNamedParameter() {
+    int p = pos;
+    while (p < input.length()
+        && (Character.isLetterOrDigit(input.charAt(p)) || input.charAt(p) == '_')) {
+      p++;
+    }
+    return p > pos && p < input.length() && input.charAt(p) == '=';
   }
 
   private JfrPath.KeyExpr parseKeyExpr() {

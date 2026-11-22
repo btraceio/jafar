@@ -585,4 +585,129 @@ class JfrPathDecoratorTest {
     assertTrue(op2.primaryKey instanceof JfrPath.PathKeyExpr);
     assertTrue(op2.decoratorKey instanceof JfrPath.PathKeyExpr);
   }
+
+  /**
+   * Without threadPath/decoratorThreadPath the op's public fields are empty, never null: code that
+   * reads them (String.join, toArray) must not fail. Empty means "each event's own thread".
+   */
+  @Test
+  void omittedThreadPathsAreEmptyNotNull() {
+    JfrPath.DecorateByTimeOp op =
+        (JfrPath.DecorateByTimeOp)
+            JfrPathParser.parse(
+                    "events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait,"
+                        + " fields=monitorClass)")
+                .pipeline
+                .get(0);
+    assertEquals(List.of(), op.threadPathPrimary);
+    assertEquals(List.of(), op.threadPathDecorator);
+    assertEquals(List.of(), new JfrPath.DecorateByTimeOp("t", null, null, null).threadPathPrimary);
+  }
+
+  /**
+   * A named parameter after {@code fields=} was read as one more field, and the parse failed with
+   * "Expected ')'" - for the tutorial's own example with explicit thread paths.
+   */
+  @Test
+  void namedParametersMayFollowTheFieldList() {
+    JfrPath.DecorateByTimeOp byTime =
+        (JfrPath.DecorateByTimeOp)
+            JfrPathParser.parse(
+                    "events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait,"
+                        + " fields=monitorClass, threadPath=sampledThread/javaThreadId,"
+                        + " decoratorThreadPath=eventThread/javaThreadId)")
+                .pipeline
+                .get(0);
+    assertEquals(List.of("monitorClass"), byTime.decoratorFields);
+    assertEquals(List.of("sampledThread", "javaThreadId"), byTime.threadPathPrimary);
+    assertEquals(List.of("eventThread", "javaThreadId"), byTime.threadPathDecorator);
+
+    JfrPath.DecorateByKeyOp byKey =
+        (JfrPath.DecorateByKeyOp)
+            JfrPathParser.parse(
+                    "events/jdk.ExecutionSample | decorateByKey(RequestStart, fields=requestId,"
+                        + " endpoint, key=sampledThread/javaThreadId,"
+                        + " decoratorKey=thread/javaThreadId)")
+                .pipeline
+                .get(0);
+    assertEquals(List.of("requestId", "endpoint"), byKey.decoratorFields);
+    assertEquals(
+        List.of("sampledThread", "javaThreadId"), ((JfrPath.PathKeyExpr) byKey.primaryKey).path);
+  }
+
+  /**
+   * Real event shapes: a sample carries its thread in {@code sampledThread} and has no {@code
+   * eventThread}; a monitor event carries {@code eventThread}. The default thread paths were {@code
+   * eventThread/javaThreadId} on both sides, found no thread on any sample and decorated nothing.
+   */
+  @Test
+  void decorateByTimeMatchesASamplesSampledThreadByDefault() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) -> {
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "jdk.JavaMonitorEnter",
+                      Map.of(
+                          "eventThread",
+                          Map.of("javaThreadId", 1L),
+                          "startTime",
+                          1000L,
+                          "duration",
+                          1000L,
+                          "monitorClass",
+                          "MyLock")));
+              // same thread, inside the wait
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "jdk.ExecutionSample",
+                      Map.of(
+                          "sampledThread",
+                          Map.of("javaThreadId", 1L),
+                          "startTime",
+                          1500L,
+                          "stackTrace",
+                          "onThread1")));
+              // another thread, same time
+              consumer.accept(
+                  new JfrPathEvaluator.Event(
+                      "jdk.ExecutionSample",
+                      Map.of(
+                          "sampledThread",
+                          Map.of("javaThreadId", 2L),
+                          "startTime",
+                          1500L,
+                          "stackTrace",
+                          "onThread2")));
+            };
+    var eval = new JfrPathEvaluator(src);
+
+    List<Map<String, Object>> byDefault =
+        eval.evaluate(
+            session,
+            JfrPathParser.parse(
+                "events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorEnter,"
+                    + " fields=monitorClass)"));
+    assertEquals(2, byDefault.size());
+    for (Map<String, Object> row : byDefault) {
+      Object expected = "onThread1".equals(row.get("stackTrace")) ? "MyLock" : null;
+      assertEquals(expected, row.get("$decorator.monitorClass"), "row " + row.get("stackTrace"));
+    }
+
+    // the paths the default now resolves to, spelled out, give the same rows
+    List<Map<String, Object>> explicit =
+        eval.evaluate(
+            session,
+            JfrPathParser.parse(
+                "events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorEnter,"
+                    + " fields=monitorClass, threadPath=sampledThread/javaThreadId,"
+                    + " decoratorThreadPath=eventThread/javaThreadId)"));
+    for (int i = 0; i < byDefault.size(); i++) {
+      assertEquals(
+          byDefault.get(i).get("$decorator.monitorClass"),
+          explicit.get(i).get("$decorator.monitorClass"));
+    }
+  }
 }
