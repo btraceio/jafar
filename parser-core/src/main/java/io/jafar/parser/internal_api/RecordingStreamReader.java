@@ -138,58 +138,29 @@ public abstract class RecordingStreamReader {
       return readVarintSeq();
     }
 
+    /**
+     * One {@code buffer.get()} call site for bytes 1 to 8, and one for the ninth, keep this method
+     * small enough for the JIT to inline at its hot call sites, along with the reads in it. An
+     * unrolled version (354 bytes of bytecode) was not inlined, and in its compiled body the reads
+     * of bytes 2 to 9 stayed calls, their sites being cold when it was compiled, so every
+     * multi-byte varint paid them. Reading the 8 bytes at the varint's start at once and decoding
+     * them without branches measured slower than this loop on JDK 21, both for every varint and for
+     * those whose first byte has the continuation bit set.
+     */
     private long readVarintSeq() {
-      byte b0 = buffer.get();
-      remaining--;
-      long ret = (b0 & 0x7FL);
-      if (b0 >= 0) {
-        return ret;
+      long ret = 0;
+      for (int shift = 0; shift < 56; shift += 7) {
+        byte b = buffer.get();
+        remaining--;
+        ret |= (b & 0x7FL) << shift;
+        if (b >= 0) {
+          return ret;
+        }
       }
-      int b1 = buffer.get();
+      // the ninth byte carries the top 8 bits whole
+      byte b8 = buffer.get();
       remaining--;
-      ret += (b1 & 0x7FL) << 7;
-      if (b1 >= 0) {
-        return ret;
-      }
-      int b2 = buffer.get();
-      remaining--;
-      ret += (b2 & 0x7FL) << 14;
-      if (b2 >= 0) {
-        return ret;
-      }
-      int b3 = buffer.get();
-      remaining--;
-      ret += (b3 & 0x7FL) << 21;
-      if (b3 >= 0) {
-        return ret;
-      }
-      int b4 = buffer.get();
-      remaining--;
-      ret += (b4 & 0x7FL) << 28;
-      if (b4 >= 0) {
-        return ret;
-      }
-      int b5 = buffer.get();
-      remaining--;
-      ret += (b5 & 0x7FL) << 35;
-      if (b5 >= 0) {
-        return ret;
-      }
-      int b6 = buffer.get();
-      remaining--;
-      ret += (b6 & 0x7FL) << 42;
-      if (b6 >= 0) {
-        return ret;
-      }
-      int b7 = buffer.get();
-      remaining--;
-      ret += (b7 & 0x7FL) << 49;
-      if (b7 >= 0) {
-        return ret;
-      }
-      int b8 = buffer.get();
-      remaining--;
-      return ret + (((long) (b8 & 0XFF)) << 56);
+      return ret | ((b8 & 0xFFL) << 56);
     }
 
     @Override

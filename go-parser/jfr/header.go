@@ -63,8 +63,9 @@ func (c *chunkParser) peekStartTime(r *reader, ct *ClassType) int64 {
 func (p *Parser) CountEvents(filter func(*ClassType) bool) (map[string]int64, error) {
 	counts := make(map[string]int64)
 	err := p.ParseWith(Options{
-		TypeFilter:   func(*ClassType) bool { return false },
-		HeaderFilter: filter,
+		TypeFilter:             func(*ClassType) bool { return false },
+		HeaderFilter:           filter,
+		headerWithoutStartTime: true,
 		OnEventHeader: func(h EventHeader) error {
 			counts[h.Type.Name]++
 			return nil

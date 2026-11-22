@@ -143,6 +143,10 @@ type Options struct {
 	// for.
 	HeaderFilter func(*ClassType) bool
 
+	// headerWithoutStartTime makes every EventHeader carry NoStartTime without
+	// reading the payload. CountEvents sets it: a count needs no start time.
+	headerWithoutStartTime bool
+
 	// ReuseValues lets the parser recycle the maps, arrays and constant pool
 	// references that make up an event, per event type, so that after the first
 	// event of a type decoding it allocates almost nothing.
@@ -597,7 +601,11 @@ func (c *chunkParser) readEvent(r *reader, typeID int64, size int64, fn EventFun
 		return c.recoverable(fmt.Errorf("event at %d: type %d is not declared in the chunk metadata", r.position(), typeID))
 	}
 	if c.opts.OnEventHeader != nil && (c.opts.HeaderFilter == nil || c.opts.HeaderFilter(class)) {
-		header := EventHeader{Type: class, Size: size, StartTime: c.peekStartTime(r, class), Chunk: c.info}
+		startTime := int64(NoStartTime)
+		if !c.opts.headerWithoutStartTime {
+			startTime = c.peekStartTime(r, class)
+		}
+		header := EventHeader{Type: class, Size: size, StartTime: startTime, Chunk: c.info}
 		if err := c.opts.OnEventHeader(header); err != nil {
 			return &handlerError{err}
 		}

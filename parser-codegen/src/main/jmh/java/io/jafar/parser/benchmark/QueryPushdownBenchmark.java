@@ -331,10 +331,46 @@ public class QueryPushdownBenchmark {
     bh.consume(counts);
   }
 
-  /** Both counting benchmarks measure the generated reader, the default of jafar-parser. */
+  /**
+   * Every bench event's header with its start time ({@code handleHeaders}): the start time is read
+   * from each payload without decoding the event. Compare with {@link #countEventsFromHeaders},
+   * which reads no payload at all.
+   */
+  @Benchmark
+  public void headersWithStartTime(RecordingState recording, Blackhole bh) throws Exception {
+    LongAdder withStartTime = new LongAdder();
+    LongAdder withoutStartTime = new LongAdder();
+    try (UntypedJafarParser parser =
+        ParsingContext.create().newUntypedParser(recording.recording)) {
+      requireGeneratedReader(parser);
+      parser.handleHeaders(
+          TypeFilter.named(
+              PushdownRecording.COMMON, PushdownRecording.SAMPLED, PushdownRecording.RARE),
+          (type, size, startTime, ctl) -> {
+            if (startTime == UntypedJafarParser.EventHeaderHandler.NO_START_TIME) {
+              withoutStartTime.increment();
+            } else {
+              withStartTime.increment();
+            }
+          });
+      parser.run();
+    }
+    requireEqual("headers without a start time", 0, withoutStartTime.sum());
+    requireEqual(
+        "headers with a start time",
+        (long) recording.chunks
+            * (PushdownRecording.COMMON_PER_CHUNK
+                + PushdownRecording.SAMPLED_PER_CHUNK
+                + PushdownRecording.RARE_PER_CHUNK),
+        withStartTime.sum());
+    bh.consume(withStartTime);
+  }
+
+  /** The counting and header benchmarks measure the generated reader, jafar-parser's default. */
   private static void requireGeneratedReader(UntypedJafarParser parser) {
     if (!((UntypedJafarParserImpl) parser).usesGeneratedReader()) {
-      throw new IllegalStateException("the counting benchmarks expect the generated reader");
+      throw new IllegalStateException(
+          "the counting and header benchmarks expect the generated reader");
     }
   }
 

@@ -36,8 +36,11 @@ public interface UntypedEventStreamFactory {
     /**
      * {@link #select(ParserContext, long, MetadataClass)} with the event's size and the parse's
      * control. Called with the chunk's {@code RecordingStream} at the start of the event's payload;
-     * an implementation may read from it and must leave it at that position. The default calls
-     * {@link #select(ParserContext, long, MetadataClass)}.
+     * an implementation may read from it. When it returns a selection it must leave the stream at
+     * that position, for the event is decoded from there; when it returns {@code null} it may leave
+     * the stream anywhere within the event, and the stream is put back at the payload's start
+     * before the chunk parser listener sees the event. The default calls {@link
+     * #select(ParserContext, long, MetadataClass)}.
      *
      * @param size the event's size in bytes, header included
      */

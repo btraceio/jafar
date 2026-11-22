@@ -183,24 +183,32 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   public HandlerRegistration<?> handleHeaders(TypeFilter filter, EventHeaderHandler handler) {
     Objects.requireNonNull(filter, "filter");
     Objects.requireNonNull(handler, "handler");
-    EventHandler registered = new HeaderHandler(filter, handler);
+    return addHeaderHandler(new HeaderHandler(filter, handler, true));
+  }
+
+  private HandlerRegistration<?> addHeaderHandler(HeaderHandler registered) {
     return new HandlerRegistrationImpl<>(registered, handlers.add(registered));
   }
 
   @Override
   public SortedMap<String, Long> countEvents(TypeFilter filter) throws IOException {
+    Objects.requireNonNull(filter, "filter");
     ConcurrentHashMap<String, LongAdder> counts = new ConcurrentHashMap<>();
+    // Counting needs no start time: without one, no event's payload is read at all.
     HandlerRegistration<?> registration =
-        handleHeaders(
-            filter,
-            (type, size, startTime, ctl) -> {
-              // get() first: on JDK 8 computeIfAbsent locks its bin even when the key is present.
-              LongAdder count = counts.get(type.getName());
-              if (count == null) {
-                count = counts.computeIfAbsent(type.getName(), k -> new LongAdder());
-              }
-              count.increment();
-            });
+        addHeaderHandler(
+            new HeaderHandler(
+                filter,
+                (type, size, startTime, ctl) -> {
+                  // get() first: on JDK 8 computeIfAbsent locks its bin even when the key is
+                  // present.
+                  LongAdder count = counts.get(type.getName());
+                  if (count == null) {
+                    count = counts.computeIfAbsent(type.getName(), k -> new LongAdder());
+                  }
+                  count.increment();
+                },
+                false));
     try {
       run();
     } finally {
@@ -222,9 +230,16 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     final TypeFilter filter;
     final EventHeaderHandler handler;
 
-    HeaderHandler(TypeFilter filter, EventHeaderHandler handler) {
+    /**
+     * Whether {@link #handler} uses the start time. When no handler that wants a type does, its
+     * events' headers carry {@link EventHeaderHandler#NO_START_TIME} and no payload is read.
+     */
+    final boolean startTime;
+
+    HeaderHandler(TypeFilter filter, EventHeaderHandler handler, boolean startTime) {
       this.filter = filter;
       this.handler = handler;
+      this.startTime = startTime;
     }
 
     @Override
@@ -241,12 +256,14 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
         return false;
       }
       HeaderHandler other = (HeaderHandler) o;
-      return filter.equals(other.filter) && handler.equals(other.handler);
+      return startTime == other.startTime
+          && filter.equals(other.filter)
+          && handler.equals(other.handler);
     }
 
     @Override
     public int hashCode() {
-      return 31 * filter.hashCode() + handler.hashCode();
+      return 31 * (31 * filter.hashCode() + handler.hashCode()) + Boolean.hashCode(startTime);
     }
   }
 
@@ -415,6 +432,20 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   private static final class ChunkSelection {
     EventHandler[] registered;
     LongObjectHashMap<TypeTargets> byTypeId = new LongObjectHashMap<>();
+
+    /**
+     * The chunk's stream and timing, which a header's start time needs: looked up in the chunk's
+     * context once, not for every event.
+     */
+    final RecordingStream stream;
+
+    final Control.ChunkInfo chunkInfo;
+
+    ChunkSelection(ParserContext context) {
+      this.stream = context.get(RecordingStream.class);
+      Control.ChunkInfo info = context.get(Control.ChunkInfo.class);
+      this.chunkInfo = info != null ? info : Control.ChunkInfo.NONE;
+    }
   }
 
   private static final class TypeTargets {
@@ -438,11 +469,15 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
      */
     final int startTimeKind;
 
-    TypeTargets(MetadataClass type, EventHandler[] handlers, EventHeaderHandler[] headers) {
+    TypeTargets(
+        MetadataClass type,
+        EventHandler[] handlers,
+        EventHeaderHandler[] headers,
+        boolean startTimeWanted) {
       this.type = type;
       this.handlers = handlers;
       this.headers = headers;
-      this.beforeStartTime = headers.length > 0 ? fieldsBeforeStartTime(type) : null;
+      this.beforeStartTime = startTimeWanted ? fieldsBeforeStartTime(type) : null;
       this.startTimeKind =
           beforeStartTime != null ? TemporalNormalizer.kindOf(type, "startTime") : 0;
     }
@@ -495,35 +530,42 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
    */
   private EventHandler[] targetsFor(ParserContext context, long typeId, MetadataClass type) {
     EventHandler[] registered = handlers.snapshot();
-    TypeTargets targets = targets(context, typeId, type, registered);
-    if (targets == null) {
+    ChunkSelection selection = selection(context, registered);
+    if (selection == null) {
       // No filter in play: every handler gets every event, and with no handler at all the event
       // is still decoded, as before filters existed (a parser listener may rely on decode errors).
       return registered;
     }
-    return targets.handlers.length == 0 ? null : targets.handlers;
+    EventHandler[] targets = targets(selection, typeId, type, registered).handlers;
+    return targets.length == 0 ? null : targets;
   }
 
   /**
    * {@link #targetsFor}, after calling the header handlers that want the event. Called with the
-   * chunk's stream at the start of the event's payload, and leaves it there.
+   * chunk's stream at the start of the event's payload; leaves it there when the event is to be
+   * decoded, and may leave it further into the event otherwise.
    */
   private EventHandler[] select(
       ParserContext context, long typeId, MetadataClass type, long size, Control ctl) {
     EventHandler[] registered = handlers.snapshot();
-    TypeTargets targets = targets(context, typeId, type, registered);
-    if (targets == null) {
+    ChunkSelection selection = selection(context, registered);
+    if (selection == null) {
       return registered;
     }
+    TypeTargets targets = targets(selection, typeId, type, registered);
     EventHeaderHandler[] headers = targets.headers;
     if (headers.length > 0) {
       long startTime = EventHeaderHandler.NO_START_TIME;
       if (targets.beforeStartTime != null) {
-        long raw = peekStartTime(context, targets.beforeStartTime);
+        // With no value handler to decode the event, select returns null and nothing reads the
+        // payload after the header: the event stream puts the stream back for a parser listener,
+        // and the chunk parser seeks to the next event's absolute position whatever this leaves.
+        boolean restore = targets.handlers.length > 0;
+        long raw = peekStartTime(selection.stream, targets.beforeStartTime, restore);
         startTime =
             raw == EventHeaderHandler.NO_START_TIME
                 ? raw
-                : TemporalNormalizer.normalizeKind(targets.startTimeKind, raw, ctl.chunkInfo());
+                : TemporalNormalizer.normalizeKind(targets.startTimeKind, raw, selection.chunkInfo);
       }
       for (int i = 0; i < headers.length; i++) {
         headers[i].onEvent(type, size, startTime, ctl);
@@ -538,31 +580,34 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
   }
 
   /**
-   * Skips the fields before the event's {@code startTime}, reads it, and puts the stream back at
-   * the start of the payload. A payload that cannot hold it (a corrupted event; the event is not
-   * decoded, so nothing else would report it) yields {@link EventHeaderHandler#NO_START_TIME}.
+   * Skips the fields before the event's {@code startTime} and reads it; with {@code restore}, puts
+   * the stream back at the start of the payload. A payload that cannot hold it (a corrupted event;
+   * the event is not decoded, so nothing else would report it) yields {@link
+   * EventHeaderHandler#NO_START_TIME}, and the stream is always put back.
    */
-  private static long peekStartTime(ParserContext context, TypeSkipper[] before) {
-    RecordingStream stream = context.get(RecordingStream.class);
+  private static long peekStartTime(RecordingStream stream, TypeSkipper[] before, boolean restore) {
     long position = stream.position();
     try {
       for (int i = 0; i < before.length; i++) {
         before[i].skip(stream);
       }
-      return stream.readVarint();
+      long startTime = stream.readVarint();
+      if (restore) {
+        stream.position(position);
+      }
+      return startTime;
     } catch (IOException | RuntimeException e) {
-      return EventHeaderHandler.NO_START_TIME;
-    } finally {
       stream.position(position);
+      return EventHeaderHandler.NO_START_TIME;
     }
   }
 
   /**
-   * The cached targets of {@code type} in this chunk for the {@code registered} handlers, or {@code
-   * null} when no registered handler has a filter, so that every handler wants every event.
+   * The chunk's selection, emptied when the {@code registered} handlers are not those it was made
+   * for, or {@code null} when no registered handler has a filter, so that every handler wants every
+   * event.
    */
-  private static TypeTargets targets(
-      ParserContext context, long typeId, MetadataClass type, EventHandler[] registered) {
+  private static ChunkSelection selection(ParserContext context, EventHandler[] registered) {
     boolean filtered = false;
     for (int i = 0; i < registered.length; i++) {
       if (registered[i] instanceof FilteredHandler || registered[i] instanceof HeaderHandler) {
@@ -575,20 +620,43 @@ public final class UntypedJafarParserImpl implements UntypedJafarParser {
     }
     ChunkSelection selection = context.get(ChunkSelection.class);
     if (selection == null) {
-      selection = new ChunkSelection();
+      selection = new ChunkSelection(context);
       context.put(ChunkSelection.class, selection);
     }
     if (selection.registered != registered) {
       selection.registered = registered;
       selection.byTypeId = new LongObjectHashMap<>();
     }
+    return selection;
+  }
+
+  /** The cached targets of {@code type} in the chunk {@code selection} is of. */
+  private static TypeTargets targets(
+      ChunkSelection selection, long typeId, MetadataClass type, EventHandler[] registered) {
     TypeTargets targets = selection.byTypeId.get(typeId);
     if (targets == null || targets.type != type) {
       targets =
-          new TypeTargets(type, accepting(registered, type), headersAccepting(registered, type));
+          new TypeTargets(
+              type,
+              accepting(registered, type),
+              headersAccepting(registered, type),
+              startTimeWanted(registered, type));
       selection.byTypeId.put(typeId, targets);
     }
     return targets;
+  }
+
+  /** Whether a header handler of {@code registered} that accepts {@code type} uses start times. */
+  private static boolean startTimeWanted(EventHandler[] registered, MetadataClass type) {
+    for (int i = 0; i < registered.length; i++) {
+      if (registered[i] instanceof HeaderHandler) {
+        HeaderHandler header = (HeaderHandler) registered[i];
+        if (header.startTime && header.filter.test(type)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** The header handlers of {@code registered} that accept {@code type}, each once. */
