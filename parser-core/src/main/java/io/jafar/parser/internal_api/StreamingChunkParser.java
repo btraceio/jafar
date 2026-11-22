@@ -131,7 +131,9 @@ public final class StreamingChunkParser implements AutoCloseable {
    * </ol>
    *
    * <p>Note: Unlike {@link #parse(Path, ChunkParserListener)}, this method processes chunks
-   * sequentially as it reads from the stream.
+   * sequentially as it reads from the stream, one chunk in memory at a time. The recording ends
+   * where the stream ends before a chunk's first byte; a stream that ends inside a chunk fails the
+   * parse.
    *
    * @param inputStream the InputStream containing the JFR recording
    * @param listener the parser listener
@@ -141,76 +143,96 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (closed) {
       throw new IOException("Parser is closed");
     }
+    ParserContext recordingContext = contextFactory.newContext();
     try {
-      listener.onRecordingStart(null);
-
-      // Check if stream has any data
-      if (inputStream.available() == 0) {
-        return;
-      }
-
-      // Read the first 4 bytes and validate the JFR magic (FLR\0, LE-assembled = 0x00524C46)
-      byte[] magicBytes = new byte[4];
-      for (int i = 0; i < 4; i++) {
-        int b = inputStream.read();
-        if (b == -1) throw new IOException("Unexpected EOF while reading JFR magic");
-        magicBytes[i] = (byte) b;
-      }
-      int magic =
-          (magicBytes[0] & 0xFF)
-              | ((magicBytes[1] & 0xFF) << 8)
-              | ((magicBytes[2] & 0xFF) << 16)
-              | ((magicBytes[3] & 0xFF) << 24);
-      if (magic != 0x00524C46) {
-        throw new IOException("Invalid JFR Magic Number: 0x" + Integer.toHexString(magic));
-      }
-
-      // Read 64 more bytes to reach ChunkHeader's full 68-byte extent
-      byte[] restHeader = new byte[64];
-      int read = 0;
-      while (read < 64) {
-        int b = inputStream.read();
-        if (b == -1) throw new IOException("Unexpected EOF while reading chunk header");
-        restHeader[read++] = (byte) b;
-      }
+      listener.onRecordingStart(recordingContext);
+      int chunkCounter = 1;
       byte[] headerBytes = new byte[68];
-      System.arraycopy(magicBytes, 0, headerBytes, 0, 4);
-      System.arraycopy(restHeader, 0, headerBytes, 4, 64);
+      while (true) {
+        // The end of the stream before a chunk's first byte ends the recording; anywhere else in
+        // the chunk it is an error. (available() cannot tell: a pipe or socket returns 0 while it
+        // waits for data.)
+        int first = inputStream.read();
+        if (first == -1) {
+          return;
+        }
+        headerBytes[0] = (byte) first;
+        if (readFully(inputStream, headerBytes, 1, 3) < 3) {
+          throw new IOException("Unexpected EOF while reading JFR magic of chunk " + chunkCounter);
+        }
+        // Validate the JFR magic (FLR\0, LE-assembled = 0x00524C46)
+        int magic =
+            (headerBytes[0] & 0xFF)
+                | ((headerBytes[1] & 0xFF) << 8)
+                | ((headerBytes[2] & 0xFF) << 16)
+                | ((headerBytes[3] & 0xFF) << 24);
+        if (magic != 0x00524C46) {
+          throw new IOException(
+              "Invalid JFR Magic Number in chunk "
+                  + chunkCounter
+                  + ": 0x"
+                  + Integer.toHexString(magic));
+        }
+        // The rest of ChunkHeader's 68-byte extent
+        if (readFully(inputStream, headerBytes, 4, 64) < 64) {
+          throw new IOException("Unexpected EOF while reading the header of chunk " + chunkCounter);
+        }
 
-      // Parse the header; use wrap() so nativeOrder=false matches the file-mapped path
-      RecordingStream headerStream =
-          new RecordingStream(
-              new BufferedRecordingStreamReader(CustomByteBuffer.wrap(headerBytes)),
-              contextFactory.newContext());
-      ChunkHeader parsedHeader = new ChunkHeader(headerStream, 1);
-      int headerSize = (int) headerStream.position();
+        // Parse the header; use wrap() so nativeOrder=false matches the file-mapped path
+        RecordingStream headerStream =
+            new RecordingStream(
+                new BufferedRecordingStreamReader(CustomByteBuffer.wrap(headerBytes)),
+                contextFactory.newContext(recordingContext, chunkCounter));
+        ChunkHeader parsedHeader = new ChunkHeader(headerStream, chunkCounter);
+        int headerSize = (int) headerStream.position();
 
-      // Build chunkData = header bytes + payload, then hand it to processChunk
-      int totalSize = parsedHeader.size;
-      int payloadSize = totalSize - headerSize;
-      if (payloadSize < 0) {
-        throw new IOException("Chunk size " + totalSize + " is smaller than header " + headerSize);
-      }
-      byte[] chunkData = new byte[totalSize];
-      System.arraycopy(headerBytes, 0, chunkData, 0, headerSize);
-      read = 0;
-      while (read < payloadSize) {
-        int got = inputStream.read(chunkData, headerSize + read, payloadSize - read);
-        if (got == -1) break;
-        read += got;
-      }
-      if (read < payloadSize) {
-        throw new IOException("Unexpected end of stream while reading chunk");
-      }
+        // Build chunkData = header bytes + payload, then hand it to processChunk
+        int totalSize = parsedHeader.size;
+        int payloadSize = totalSize - headerSize;
+        if (payloadSize < 0) {
+          throw new IOException(
+              "Chunk "
+                  + chunkCounter
+                  + " size "
+                  + totalSize
+                  + " is smaller than its header "
+                  + headerSize);
+        }
+        byte[] chunkData = new byte[totalSize];
+        System.arraycopy(headerBytes, 0, chunkData, 0, headerSize);
+        if (readFully(inputStream, chunkData, headerSize, payloadSize) < payloadSize) {
+          throw new IOException("Unexpected end of stream while reading chunk " + chunkCounter);
+        }
 
-      RecordingStream chunkStream =
-          new RecordingStream(
-              new BufferedRecordingStreamReader(CustomByteBuffer.wrap(chunkData)),
-              contextFactory.newContext());
-      processChunk(chunkStream, parsedHeader, listener, headerSize);
+        RecordingStream chunkStream =
+            new RecordingStream(
+                new BufferedRecordingStreamReader(CustomByteBuffer.wrap(chunkData)),
+                contextFactory.newContext(recordingContext, chunkCounter));
+        processChunk(chunkStream, parsedHeader, listener, headerSize);
+        chunkCounter++;
+      }
     } finally {
-      listener.onRecordingEnd(null);
+      listener.onRecordingEnd(recordingContext);
     }
+  }
+
+  /**
+   * Reads up to {@code length} bytes into {@code buffer} at {@code offset}, stopping early only at
+   * the end of the stream.
+   *
+   * @return the number of bytes read
+   */
+  private static int readFully(InputStream in, byte[] buffer, int offset, int length)
+      throws IOException {
+    int read = 0;
+    while (read < length) {
+      int got = in.read(buffer, offset + read, length - read);
+      if (got == -1) {
+        break;
+      }
+      read += got;
+    }
+    return read;
   }
 
   private void processChunk(

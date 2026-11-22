@@ -6,9 +6,20 @@ import io.jafar.parser.api.ParserContext;
 import io.jafar.parser.impl.UntypedParserContextFactory;
 import io.jafar.parser.internal_api.metadata.MetadataEvent;
 import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
 import org.junit.jupiter.api.Test;
 
 class StreamingChunkParserIoTest {
@@ -74,6 +85,94 @@ class StreamingChunkParserIoTest {
 
     assertEquals(1, listener.onRecordingStartCount);
     assertEquals(0, listener.onChunkStartCount);
+  }
+
+  /** Real Datadog profiler recording: 67,657 events in 2 chunks. */
+  private static final Path TCK = Paths.get("../jfr-shell-tck/src/main/resources/tck-test.jfr");
+
+  /** Event counts by chunk index, and the context's chunk index, from one parse. */
+  private static final class ChunkCounts implements ChunkParserListener {
+    final Map<Integer, LongAdder> events = new ConcurrentHashMap<>();
+    final Set<String> mismatchedIndexes = ConcurrentHashMap.newKeySet();
+
+    @Override
+    public boolean onChunkStart(ParserContext context, int chunkIndex, ChunkHeader header) {
+      if (context.getChunkIndex() != chunkIndex || header.order != chunkIndex) {
+        mismatchedIndexes.add(
+            chunkIndex + ": context " + context.getChunkIndex() + ", header " + header.order);
+      }
+      events.put(chunkIndex, new LongAdder());
+      return true;
+    }
+
+    @Override
+    public boolean onEvent(
+        ParserContext context, long typeId, long position, long size, long payloadSize) {
+      events.get(context.getChunkIndex()).increment();
+      return true;
+    }
+
+    Map<Integer, Long> counts() {
+      Map<Integer, Long> out = new TreeMap<>();
+      events.forEach((chunk, count) -> out.put(chunk, count.sum()));
+      return out;
+    }
+  }
+
+  private static ChunkCounts parse(InputStream in) throws Exception {
+    ChunkCounts counts = new ChunkCounts();
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(new UntypedParserContextFactory())) {
+      parser.parse(in, counts);
+    }
+    return counts;
+  }
+
+  /**
+   * Every chunk of a recording read from a stream, each with the events the file-mapped parse reads
+   * from it. The stream path used to read the first chunk only (40,058 of tck-test.jfr's 67,657
+   * events) and number every chunk 1.
+   */
+  @Test
+  void streamReadsEveryChunkLikeThePath() throws Exception {
+    ChunkCounts path = new ChunkCounts();
+    try (StreamingChunkParser parser =
+        new StreamingChunkParser(new UntypedParserContextFactory())) {
+      parser.parse(TCK, path);
+    }
+    assertEquals(2, path.counts().size(), "tck-test.jfr has 2 chunks");
+
+    ChunkCounts stream = parse(new ByteArrayInputStream(Files.readAllBytes(TCK)));
+
+    assertEquals(path.counts(), stream.counts());
+    assertEquals(Set.of(), path.mismatchedIndexes);
+    assertEquals(Set.of(), stream.mismatchedIndexes);
+  }
+
+  /**
+   * {@code available()} is only an estimate: a pipe or socket returns 0 while it waits for data.
+   * The stream used to be taken as empty when it did, and nothing was parsed.
+   */
+  @Test
+  void streamThatReportsNothingAvailableIsStillRead() throws Exception {
+    InputStream unavailable =
+        new FilterInputStream(new ByteArrayInputStream(Files.readAllBytes(TCK))) {
+          @Override
+          public int available() {
+            return 0;
+          }
+        };
+    assertEquals(67_657L, parse(unavailable).counts().values().stream().mapToLong(c -> c).sum());
+  }
+
+  /** A stream that ends inside a chunk fails the parse rather than ending the recording there. */
+  @Test
+  void streamThatEndsInsideAChunkFails() throws Exception {
+    byte[] bytes = Files.readAllBytes(TCK);
+    long firstChunkSize = ByteBuffer.wrap(bytes).getLong(8); // big-endian, after magic and version
+    byte[] cut = Arrays.copyOf(bytes, (int) firstChunkSize + 1000);
+    IOException e = assertThrows(IOException.class, () -> parse(new ByteArrayInputStream(cut)));
+    assertTrue(e.getMessage().contains("chunk 2"), e.getMessage());
   }
 
   private static class TestListener implements ChunkParserListener {

@@ -125,6 +125,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The build failed to configure on Gradle 9.9** (#228) with `Could not get unknown property
   'sourceSets' for project ':parser-core' of type ...DefaultProjectDependency`. Three build files
   read `project(':parser-core').sourceSets` inside `dependencies {}`; they now resolve it outside
+- **`StreamingChunkParser.parse(InputStream)` failed on JDK 13 and later, and read only the first
+  chunk on every JDK.** The Java 13 and 21 versions of `CustomByteBuffer` in the multi-release jar
+  had no `wrap(byte[])`, so the call threw `NoSuchMethodError`; the tests, which run against the
+  plain classes, never saw it. `MultiReleaseOverlayTest` now fails when a versioned class lacks a
+  public or protected member of the class it replaces. On JDK 8, where it ran, the method
+  returned after the first chunk (40,058 of `tck-test.jfr`'s 67,657 events), numbered every chunk
+  1, and parsed nothing from a stream whose `available()` was 0, as a pipe's is while it waits
+  for data. It now reads every chunk until the stream ends, and a stream that ends inside a chunk
+  fails the parse
 - **`jfr2pprof` lost samples, wrote malformed profiles or crashed on recordings of more than one
   chunk.** The parser calls the converter's handler from one thread per chunk at the same time, and
   the converter added samples to an unsynchronized builder. A 32-chunk recording converted to a

@@ -2,6 +2,7 @@ package io.jafar.utils;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
@@ -9,6 +10,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 public interface CustomByteBuffer {
+  /**
+   * Wraps a byte array in a CustomByteBuffer with the same byte-order semantics as a memory-mapped
+   * JFR file: the returned buffer has {@link #isNativeOrder()} == false so that multi-byte reads in
+   * {@link io.jafar.parser.internal_api.RecordingStreamReader} apply the same byte-reversal that
+   * file-backed buffers use.
+   *
+   * @param bytes the byte array to wrap
+   * @return a custom byte buffer wrapping the array
+   */
+  static CustomByteBuffer wrap(byte[] bytes) {
+    return new ByteBufferWrapper(ByteBuffer.wrap(bytes));
+  }
+
   static CustomByteBuffer map(Path channel) throws IOException {
     return map(channel, Integer.MAX_VALUE);
   }
@@ -70,10 +84,15 @@ public interface CustomByteBuffer {
   void close() throws IOException;
 
   class ByteBufferWrapper implements CustomByteBuffer {
-    private final MappedByteBuffer delegate;
+    private final ByteBuffer delegate;
     private final boolean nativeOrder;
 
     public ByteBufferWrapper(MappedByteBuffer delegate) {
+      this((ByteBuffer) delegate);
+    }
+
+    /** Wraps any byte buffer, a heap one from {@link CustomByteBuffer#wrap(byte[])} included. */
+    public ByteBufferWrapper(ByteBuffer delegate) {
       this.delegate = delegate;
       this.nativeOrder = delegate.order() == ByteOrder.nativeOrder();
       delegate.order(ByteOrder.nativeOrder());

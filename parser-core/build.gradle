@@ -142,6 +142,17 @@ tasks.named('compileTestJava').configure { JavaCompile t ->
 def j21LauncherProvider = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
 tasks.named('test') {
     javaLauncher.set(j21LauncherProvider)
+    // MultiReleaseOverlayTest compares each META-INF/versions/<n> class with the main class it
+    // replaces; the tests otherwise see only the main classes, never an overlay.
+    def overlayDirs = ['java9', 'java13', 'java21'].collect {
+        layout.buildDirectory.dir("classes/java/$it").get().asFile
+    }
+    dependsOn tasks.named('compileJava9'), tasks.named('compileJava13'), tasks.named('compileJava21')
+    inputs.files(overlayDirs).withPropertyName('multiReleaseOverlays')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty 'jafar.classes.main',
+        sourceSets.main.java.destinationDirectory.get().asFile.absolutePath
+    systemProperty 'jafar.classes.overlays', overlayDirs*.absolutePath.join(',')
     // SharedFixturesTest compares go-parser/jfr/testdata with NodePoolFixture. Without these
     // inputs an edited or deleted fixture, or JAFAR_WRITE_FIXTURES=1, leaves the task UP-TO-DATE
     // and the drift check never runs.
