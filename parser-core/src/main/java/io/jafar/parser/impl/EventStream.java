@@ -117,9 +117,16 @@ public abstract class EventStream implements ChunkParserListener {
     if (selection == null) {
       // The listener still sees the event; StreamingChunkParser repositions past its payload. A
       // header handler may have aborted (in select): then nothing more of this chunk is read.
-      return !ctl.isAborted()
-          && (delegate == null
-              || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize));
+      if (ctl.isAborted()) {
+        return false;
+      }
+      if (delegate == null) {
+        return true;
+      }
+      // select may have read into the payload: the listener gets the stream at its start, as
+      // it would without select
+      context.get(RecordingStream.class).position(eventStartPos + rawSize - payloadSize);
+      return delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
     }
     Map<String, Object> value;
     try {
@@ -233,8 +240,11 @@ public abstract class EventStream implements ChunkParserListener {
   /**
    * {@link #select(ParserContext, long, MetadataClass)} with the event's size and the parse's
    * control, called with the chunk's {@code RecordingStream} at the start of the event's payload.
-   * An override may read from the stream to look at the payload, and must leave it at that
-   * position. The default calls {@link #select(ParserContext, long, MetadataClass)}.
+   * An override may read from the stream to look at the payload. When it returns a selection it
+   * must leave the stream at that position, for the event is decoded from there; when it returns
+   * {@code null} it may leave the stream anywhere within the event, and the stream is put back at
+   * the payload's start before the chunk parser listener sees the event. The default calls {@link
+   * #select(ParserContext, long, MetadataClass)}.
    *
    * @param size the event's size in bytes, header included
    * @param ctl the control object for this parsing session

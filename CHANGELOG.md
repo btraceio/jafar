@@ -16,17 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handlers can share a parse. While a header handler is registered, a start-time range skips no
   chunk
 - **`UntypedJafarParser.countEvents()` and `countEvents(TypeFilter)`** - event counts per type
-  name, read from the headers. On `QueryPushdownBenchmark`'s 124.8 MB, 32-chunk recording: 127 ms,
-  against 493 ms when every event is decoded and counted in a handler
+  name, read from the headers; no event's payload is read, not even its `startTime`. On
+  `QueryPushdownBenchmark`'s 124.8 MB, 32-chunk recording: 91 ms, against 451-477 ms when every
+  event is decoded and counted in a handler
 - **Go parser: `Options.OnEventHeader`, `Options.HeaderFilter` and `Parser.CountEvents`** - the same
   header delivery, with the same `startTime` rule (`jfr.NoStartTime`). On the same recording
-  `CountEvents` took 201-219 ms, decoding every event 1,883-2,032 ms
+  `CountEvents`, which reads no `startTime` either, took 140-161 ms in 23 of 24 runs (one 206 ms),
+  decoding every event 1,883-2,032 ms
 - **The TUI events browser and `TypeDiscovery.getTypeCounts` count from headers** instead of
   decoding every event
 - **`EventStream`, `EventStreamGenerated` and `UntypedEventStreamFactory.Sink` have a
   `select(context, typeId, type, size, ctl)` hook** next to the three-argument one, which it calls
-  by default. It is called with the chunk's stream at the start of the event's payload; an
-  override may read from the stream and must leave it at that position
+  by default. It is called with the chunk's stream at the start of the event's payload, and an
+  override may read from it. One that returns a selection must leave the stream there, since the
+  event is decoded from there; one that returns `null` may leave it anywhere within the event, and
+  the stream is put back at the payload's start before the chunk parser listener sees the event
 - **`UntypedJafarParser.handle(TypeFilter, EventHandler)`** - registers a handler for the event
   types a filter accepts. An event is decoded only if some registered handler wants its type, so
   the others cost their header and nothing more. The filter is asked once per chunk and type. An
@@ -440,6 +444,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vars --info` show `<hidden, ends in "TAIL">`. The stored value is unchanged
 
 ### Changed
+- **Varints are decoded by a loop the JIT inlines, and a header's `startTime` costs less.** The
+  unrolled decoder (354 bytes of bytecode) was too large to inline, and in its compiled body the
+  reads of bytes 2 to 9 stayed calls, so every multi-byte varint, a `startTime` among them, paid
+  up to eight calls. Header handlers also look up the chunk's stream and timing once per chunk
+  instead of once per event, and no longer put the stream back after reading `startTime` when
+  nothing decodes the event. On `QueryPushdownBenchmark` (JDK 21, 2 rounds of 2 forks each):
+  `handleHeaders` with start times 116 → 90-92 ms, `countEvents` 119-129 → 91 ms, decoding with
+  the generated reader 436-453 → 378-388 ms; the skip-only and type-filtered paths did not change
+  measurably. Reading the 8 bytes at a varint's start at once and decoding them without branches
+  was measured too and was slower than the loop
 - **`chunks/<n>` and `chunk <n> show` address a chunk by the `index` `chunks` lists** (1-based,
   in file order), which is also what tab completion offers and what `chunks --range` filters on.
   They took a 0-based position, so `chunks/1` showed the second chunk and the last chunk could

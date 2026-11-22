@@ -12,6 +12,7 @@ import io.jafar.parser.api.ParsingContext;
 import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.UntypedJafarParser.EventHeaderHandler;
 import io.jafar.parser.internal_api.ChunkParserListener;
+import io.jafar.parser.internal_api.RecordingStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -482,6 +483,57 @@ class UntypedHeaderHandlerTest {
     expected.put(StartTimeShapesFixture.UNTIMED, List.of(StartTimeShapesFixture.ticks(6)));
     expected.put(StartTimeShapesFixture.UNDECLARED_BEFORE, List.of(none));
     assertEquals(expected, new TreeMap<>(byType));
+  }
+
+  /**
+   * With no value handler, the header's start-time read does not put the stream back, since nothing
+   * reads the payload after it. A parser listener could, so with one the stream is back at the
+   * payload's start when the listener sees each event, as before header handlers existed.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void parserListenerSeesTheStreamAtThePayloadAfterAHeader(boolean generated) throws Exception {
+    List<String> misplaced = Collections.synchronizedList(new ArrayList<>());
+    LongAdder events = new LongAdder();
+    ChunkParserListener positions =
+        new ChunkParserListener() {
+          @Override
+          public boolean onEvent(
+              ParserContext context, long typeId, long start, long rawSize, long payloadSize) {
+            events.increment();
+            long payload = start + rawSize - payloadSize;
+            long at = context.get(RecordingStream.class).position();
+            if (at != payload) {
+              misplaced.add("type " + typeId + " at " + at + ", payload at " + payload);
+            }
+            return true;
+          }
+        };
+    LongAdder headers = new LongAdder();
+    try (UntypedJafarParser base = open(SHAPES, generated);
+        UntypedJafarParser parser = base.withParserListener(positions)) {
+      parser.handleHeaders(type -> true, (type, size, startTime, ctl) -> headers.increment());
+      parser.run();
+    }
+    assertEquals(StartTimeShapesFixture.EVENTS.length, headers.sum());
+    assertEquals(StartTimeShapesFixture.EVENTS.length, events.sum());
+    assertEquals(List.of(), misplaced);
+  }
+
+  /**
+   * {@code countEvents} reads no start time, so its count does not depend on whether one can be
+   * read: every event of {@code start-time-shapes.jfr} is counted, the broken ones included.
+   */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void countEventsCountsEveryStartTimeShape(boolean generated) throws Exception {
+    Map<String, Long> expected = new TreeMap<>();
+    for (String type : StartTimeShapesFixture.EVENTS) {
+      expected.merge(type, 1L, Long::sum);
+    }
+    try (UntypedJafarParser parser = open(SHAPES, generated)) {
+      assertEquals(expected, parser.countEvents());
+    }
   }
 
   /**
