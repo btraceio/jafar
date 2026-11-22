@@ -170,10 +170,37 @@ public final class MetadataClass extends AbstractMetadataElement {
           if (getContext() instanceof TypedParserContext) {
             targetClass = ((TypedParserContext) getContext()).getClassTargetType(getName());
           }
+          if (targetClass != null && !visibleToParser(targetClass)) {
+            // An interface from a loader the parser's cannot see (a plugin's, a deployment's): the
+            // JVM-wide cache would hold the generated class, the interface and its loader for good.
+            // Generated per metadata class instead, and dropped with the parse.
+            return factory.create(MetadataClass.this);
+          }
           return cache.computeIfAbsent(
               new TypedParserContext.DeserializerKey(MetadataClass.this, targetClass),
               k -> factory.create(MetadataClass.this));
         });
+  }
+
+  /**
+   * Whether the parser's class loader resolves a class to that same class; computed once per class,
+   * not per metadata class of every chunk.
+   */
+  private static final ClassValue<Boolean> VISIBLE_TO_PARSER =
+      new ClassValue<Boolean>() {
+        @Override
+        protected Boolean computeValue(Class<?> type) {
+          try {
+            return Class.forName(type.getName(), false, MetadataClass.class.getClassLoader())
+                == type;
+          } catch (ClassNotFoundException | LinkageError e) {
+            return false;
+          }
+        }
+      };
+
+  private static boolean visibleToParser(Class<?> type) {
+    return VISIBLE_TO_PARSER.get(type);
   }
 
   /**

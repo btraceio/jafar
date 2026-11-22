@@ -14,6 +14,7 @@ import io.jafar.parser.internal_api.metadata.MetadataField;
 import java.io.PrintStream;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
@@ -31,6 +32,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import org.objectweb.asm.ClassVisitor;
@@ -1827,11 +1829,20 @@ final class CodeGenerator {
       // Define the class using the best available strategy for the current JDK
       Class<?> implClz;
       try {
-        ClassDefiner definer = ClassDefiners.best();
-        if (log.isDebugEnabled()) {
-          log.debug("Generating typed class using definer: {}", definer.name());
+        if (target != null && !visibleToParser(target)) {
+          // The class implements the interface, so its loader must see it: CodeGenerator's
+          // loader does not (a plugin's or a deployment's child loader), see BridgeLoader.
+          if (log.isDebugEnabled()) {
+            log.debug("Generating typed class for {} in a bridge class loader", target.getName());
+          }
+          implClz = BridgeLoader.of(target.getClassLoader()).define(clzName, classData);
+        } else {
+          ClassDefiner definer = ClassDefiners.best();
+          if (log.isDebugEnabled()) {
+            log.debug("Generating typed class using definer: {}", definer.name());
+          }
+          implClz = definer.define(classData, CodeGenerator.class);
         }
-        implClz = definer.define(classData, CodeGenerator.class);
       } catch (Throwable t) {
         throw new Exception(t);
       }
@@ -1952,6 +1963,94 @@ final class CodeGenerator {
       }
     }
     return false;
+  }
+
+  /** Whether {@code CodeGenerator}'s class loader resolves {@code type} to that same class. */
+  private static boolean visibleToParser(Class<?> type) {
+    try {
+      return Class.forName(type.getName(), false, CodeGenerator.class.getClassLoader()) == type;
+    } catch (ClassNotFoundException | LinkageError e) {
+      return false;
+    }
+  }
+
+  /**
+   * Defines a runtime class implementing an interface {@code CodeGenerator}'s loader cannot see, or
+   * sees as another class. The parser's classes (and the JDK's) resolve through its parent, {@code
+   * CodeGenerator}'s loader, to the ones the generated code was written against; everything else,
+   * the interface and the types it returns, through the interface's loader first. Generated code
+   * uses only public members of the parser, so a class defined here needs no access to its package.
+   *
+   * <p>One per interface loader, held weakly both ways: the classes defined here keep it alive, and
+   * it does not keep the interface's loader alive once they are gone. Their deserializers stay out
+   * of the JVM-wide handler cache ({@code MetadataClass.bindDeserializer}), which would.
+   */
+  static final class BridgeLoader extends ClassLoader {
+    private static final Map<ClassLoader, WeakReference<BridgeLoader>> BRIDGES =
+        new WeakHashMap<>();
+
+    static {
+      registerAsParallelCapable();
+    }
+
+    private final ClassLoader interfaceLoader;
+
+    private BridgeLoader(ClassLoader interfaceLoader) {
+      super(CodeGenerator.class.getClassLoader());
+      this.interfaceLoader = interfaceLoader;
+    }
+
+    static BridgeLoader of(ClassLoader interfaceLoader) {
+      synchronized (BRIDGES) {
+        WeakReference<BridgeLoader> ref = BRIDGES.get(interfaceLoader);
+        BridgeLoader bridge = ref == null ? null : ref.get();
+        if (bridge == null) {
+          bridge = new BridgeLoader(interfaceLoader);
+          BRIDGES.put(interfaceLoader, new WeakReference<>(bridge));
+        }
+        return bridge;
+      }
+    }
+
+    /**
+     * The interface's loader first, so a child-first loader's own copy of the interface (and of the
+     * types it returns) is the one implemented, even when the parser's loader has another copy; the
+     * parent first only for the JDK and the parser's own packages, which the generated code was
+     * written against.
+     */
+    @Override
+    protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+      synchronized (getClassLoadingLock(name)) {
+        Class<?> c = findLoadedClass(name);
+        if (c == null) {
+          ClassLoader first = parserOrPlatform(name) ? getParent() : interfaceLoader;
+          ClassLoader second = first == interfaceLoader ? getParent() : interfaceLoader;
+          try {
+            c = first.loadClass(name);
+          } catch (ClassNotFoundException e) {
+            c = second.loadClass(name);
+          }
+        }
+        if (resolve) {
+          resolveClass(c);
+        }
+        return c;
+      }
+    }
+
+    private static boolean parserOrPlatform(String name) {
+      return name.startsWith("java.")
+          || name.startsWith("javax.")
+          || name.startsWith("jdk.")
+          || name.startsWith("sun.")
+          || name.startsWith("io.jafar.parser.api.")
+          || name.startsWith("io.jafar.parser.impl.")
+          || name.startsWith("io.jafar.parser.internal_api.");
+    }
+
+    Class<?> define(String name, byte[] bytes) {
+      return defineClass(name, bytes, 0, bytes.length);
+    }
   }
 
   private static Set<String> collectUsedAttributes(

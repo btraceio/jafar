@@ -107,12 +107,16 @@ Beyond the gates, the conventions the codebase already follows:
     instance after `reset()`, so an event must not be kept past its handler call. The runtime
     class is a new object per event. Pool entries are new objects on both sides.
   - A runtime-generated class is defined with `CodeGenerator` as its lookup host, so it lives in
-    `parser-codegen`'s class loader and can implement only interfaces that loader sees; an
-    interface in a child loader fails with `NoClassDefFoundError`. A build-time handler is
-    compiled with its interface and has no such limit, but not if `parser-codegen` is on the class
-    path too: `MutableMetadataLookup.bindDeserializers` then generates a runtime deserializer for
-    every bound type, including one a build-time factory serves, and that generation fails the
-    parse for an interface in a child loader.
+    `parser-codegen`'s class loader, unless that loader cannot see the interface or sees another
+    copy of it (a plugin's or a deployment's loader, child-first or not). Then it is defined in a
+    `CodeGenerator.BridgeLoader`: the JDK's and the parser's own packages resolve through
+    `parser-codegen`'s loader, everything else, the interface first, through the interface's
+    loader (`TypedChildClassLoaderTest`, and `TypedChildFirst8Test` on JDK 8). Such a class's
+    deserializer is kept per metadata class, not in the JVM-wide `GlobalHandlerCache`, which would
+    hold the interface and its loader for as long as the JVM runs; so it is generated again for
+    each parse. Build-time handlers in a child loader also work with `parser-codegen` on the class
+    path (`ChildLoaderFactoryTest`): `MutableMetadataLookup.bindDeserializers` still generates a
+    runtime deserializer for every bound type, factory-served ones included, which costs time.
   - Several accessors for one JFR field (`@JfrField` naming the same field twice), pooled or
     inline, are generated at runtime when they declare the field's one generated type (an inline
     primitive may be widened), next to any number of `raw = true` indices on a pooled scalar field
