@@ -251,6 +251,64 @@ class JfrCompareTest {
     }
   }
 
+  @Test
+  void framesOfGeneratedClassesKeepOneNameAcrossJvms() {
+    // The same work in two JVM runs: the hidden classes got different addresses and the lambda a
+    // different sequence number, so without normalising every such frame looks gone and new.
+    CompareResult result =
+        compare(
+            samples(
+                Map.of(
+                    List.of(
+                        "m.Work.leaf",
+                        "java.lang.invoke.LambdaForm$MH/0x00007f2e141a1000.invoke",
+                        "m.Main$$Lambda$14/0x0000000800c01234.run"),
+                    100L)),
+            samples(
+                Map.of(
+                    List.of(
+                        "m.Work.leaf",
+                        "java.lang.invoke.LambdaForm$MH/0x00007fb3aa0c4400.invoke",
+                        "m.Main$$Lambda$27/0x0000000800d05678.run"),
+                    100L)),
+            SELF_AND_INCLUSIVE);
+
+    assertEquals(List.of(), result.inclusiveFrames(), "the same frames, renamed per JVM");
+    assertEquals(
+        100L,
+        result.baseline().inclusiveFrameCounts().get("java.lang.invoke.LambdaForm$MH.invoke"));
+    assertEquals(100L, result.candidate().inclusiveFrameCounts().get("m.Main$$Lambda.run"));
+  }
+
+  @Test
+  void stableNamesLeaveOrdinaryFramesAlone() {
+    assertEquals("m.Foo.bar", JfrCompare.stableName("m.Foo.bar"));
+    assertEquals("m.Foo$Inner.bar", JfrCompare.stableName("m.Foo$Inner.bar"));
+    assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda/0x0000000801234.run"));
+    assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda$3/0x00000008abcd.run"));
+    // javac's per-compilation numbers: accessors (Java 8 targets) and lambda bodies.
+    assertEquals("m.Foo.access$", JfrCompare.stableName("m.Foo.access$300"));
+    assertEquals("m/x/Outer.access$", JfrCompare.stableName("m/x/Outer.access$400"));
+    assertEquals("m.Foo.lambda$main$", JfrCompare.stableName("m.Foo.lambda$main$0"));
+    assertEquals("m.Foo.lambda$static$", JfrCompare.stableName("m.Foo.lambda$static$12"));
+    // Not javac's: left as they are.
+    assertEquals("m.Foo.access", JfrCompare.stableName("m.Foo.access"));
+    assertEquals("m.Foo$1.run", JfrCompare.stableName("m.Foo$1.run"));
+    assertEquals("m.Foo.value$1x", JfrCompare.stableName("m.Foo.value$1x"));
+  }
+
+  @Test
+  void accessorsRenumberedBetweenBuildsAreOneFrame() {
+    // Seen in a perf-ab run: the same accessor was access$400 in the base build and access$300
+    // in the head build, and read as -53 and +57 points.
+    CompareResult result =
+        compare(
+            samples(Map.of(List.of("m.Work.leaf", "m.Parser.access$400", "m.Main.run"), 100L)),
+            samples(Map.of(List.of("m.Work.leaf", "m.Parser.access$300", "m.Main.run"), 100L)),
+            SELF_AND_INCLUSIVE);
+    assertEquals(List.of(), result.inclusiveFrames(), "the same accessor, renumbered by javac");
+  }
+
   // ---------------------------------------------------------------------------------------------
 
   private static CompareResult compare(
