@@ -49,8 +49,12 @@ on:
       - 'perf/**'
 
 concurrency:
-  group: perf-ab-${{ github.event.pull_request.number || github.ref }}
-  # A newer push to the same PR makes the running comparison obsolete.
+  # A newer push to the same PR, or to the same perf/* branch, makes the running comparison
+  # obsolete. A dispatch never does: each dispatched run gets a group of its own (its run id),
+  # so the A/A runs of a calibration (doc/plans/perf-ab.md, section 3.8) can run side by side
+  # instead of each new one cancelling the last, as they did when every dispatch on main
+  # shared the group of github.ref.
+  group: perf-ab-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # The job runs the PR's own code, so it gets no write access and no secrets.

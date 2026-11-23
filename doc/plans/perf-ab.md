@@ -311,7 +311,10 @@ accepts the output and calls a 20% slowdown `slower`. With the margin removed, f
 1. Dispatch `perf-ab.yml` at least 10 times with `base_ref` = `head_ref` = the same commit of
    `main`, leaving `merge_base` unset (exact base), and default benchmarks and JMH options.
    Calibrating with other JMH options would calibrate other noise. Separate dispatches land on
-   separate runner machines, which is the variation a later PR run will meet.
+   separate runner machines, which is the variation a later PR run will meet (the first three
+   runs on runners had three CPU models). Each dispatched run has its own concurrency group, so
+   all 10 can be dispatched at once and run side by side; before that change, every dispatch on
+   `main` shared the group of `github.ref` and cancelled the one before.
 2. Download each run's artifact: `gh run download <run-id> -n perf-ab -D aa/<run-id>`.
 3. Run `scripts/perf_ab_calibrate.py aa/* --out scripts/perf-ab-calibration.json --json-summary
    calibration-summary.json`.
