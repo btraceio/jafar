@@ -373,10 +373,26 @@ objects | groupBy(class, agg=max)          # Max shallow size by class
 
 **Aggregation operations:**
 - `count` - Count items in group (default)
-- `sum` - Sum first numeric field
-- `avg` - Average of first numeric field
-- `min` - Minimum of first numeric field
-- `max` - Maximum of first numeric field
+- `sum` - Sum of the value
+- `avg` - Average of the value
+- `min` - Minimum of the value
+- `max` - Maximum of the value
+
+Without `value=`, `sum`/`avg`/`min`/`max` aggregate `shallowSize` on `objects`, and otherwise the
+first numeric column that is not an identifier (`id`, `objectId`); the result column is named after
+the aggregation (`sum`, `avg`, ...). With `value=<memory field>` (`shallow`, `retained`, ...) the
+result column is named after that field, so sort it by that name:
+`groupBy(class, agg=sum, value=retained) | top(10, retained)`. A group with no numeric value has
+`null` for `avg`/`min`/`max`.
+
+`class` is an alias for `className`. Group fields are plain column names; a path such as
+`class/name` is not accepted (object rows have no nested fields).
+
+The output rows contain only the group key and the aggregate. An operator after `groupBy` that
+names any other column fails: `objects | groupBy(class) | stats(shallow)` reports
+`stats: field 'shallow' is not present in its input rows (available: class, count)`. Use
+`objects/java.lang.String | stats(shallow)` for one class, or
+`groupBy(class, agg=sum, value=shallow)` per class.
 
 ### `count`
 Count total results.
@@ -407,6 +423,11 @@ Output:
 |--------|-----------|-----|--------|--------|
 | 238750 | 9072500   | 38  | 38     | 38.0   |
 ```
+
+With no numeric value (an empty input, or a field that is null on every row) `count` is `0` and
+`min`/`max` are `null`. `stats`, `sum`, `top` and `sortBy` fail with
+`field '<name>' is not present in its input rows (available: ...)` when no input row carries the
+field, instead of returning an empty or unsorted result.
 
 ### `sortBy(field [asc|desc], ...)`
 Sort results by one or more fields. Aliases: `sort`, `orderBy`, `order`.
@@ -647,7 +668,7 @@ objects/java.util.HashMap[retained > 1MB] | threadOwner() | select(id, class, re
 objects[retained > 1MB] | threadOwner() | filter(ownerThread = "shared") | top(20)
 
 # Per-thread breakdown of large byte arrays
-objects/byte[] | threadOwner() | groupBy(ownerThread, agg=sum, value=retained) | sortBy(value desc)
+objects/byte[] | threadOwner() | groupBy(ownerThread, agg=sum, value=retained) | sortBy(retained desc)
 ```
 
 ### `dominatedSize()`

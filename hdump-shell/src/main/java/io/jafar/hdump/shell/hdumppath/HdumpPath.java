@@ -11,7 +11,7 @@ import java.util.List;
  * <pre>
  * # Object queries
  * objects/java.lang.String[shallow > 100] | top(10, shallow)
- * objects/instanceof/java.util.Map | groupBy(class) | stats(shallow)
+ * objects/instanceof/java.util.AbstractMap | groupBy(class, agg=sum, value=shallow)
  *
  * # Class queries
  * classes/java.util.HashMap | select(name, instanceCount, shallowSize)

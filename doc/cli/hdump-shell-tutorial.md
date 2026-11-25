@@ -321,7 +321,7 @@ Retained size shows how much memory would be freed if an object were garbage col
 hdump> objects | top(10, retained)
 
 # Classes by total retained memory
-hdump> objects | groupBy(class) | top(10, retained)
+hdump> objects | groupBy(class, agg=sum, value=retained) | top(10, retained)
 
 # Large retained objects of specific type
 hdump> objects/java.util.HashMap[retained > 10MB] | top(10, retained)

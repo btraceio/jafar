@@ -244,7 +244,7 @@ public final class HeapReportGenerator {
               "Inspect with: objects/" + ClassNameUtil.toHumanReadable(topClass.getName()),
               "objects/"
                   + ClassNameUtil.toHumanReadable(topClass.getName())
-                  + " | groupBy(class) | stats(shallow)"));
+                  + " | stats(shallow)"));
     }
 
     return findings;

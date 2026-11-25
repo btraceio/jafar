@@ -126,6 +126,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **HdumpPath: `groupBy(class, agg=sum)` summed object ids, and operators over a missing column
+  returned results that read as measurements (#226).** Without `value=`, `sum`/`avg`/`min`/`max`
+  took the first numeric column of an object row, which is `id`: on a heap with three `Foo` objects
+  (ids 1000-1002) the "sum of shallow sizes" was 3003. They now aggregate `shallowSize`, as the
+  documentation says, and never an identifier. `stats()` with no numeric value returned
+  `min: Infinity, max: -Infinity`; `min`/`max` are now `null`. `stats`, `sum`, `top` and `sortBy`
+  over a field no input row carries now fail with the available columns instead of returning
+  `count: 0` or an unsorted list: `hdump_report`'s suggested
+  `objects/<class> | groupBy(class) | stats(shallow)` had reported `count: 0` for a class with
+  419 012 instances, because group rows carry only the key and the count. The suggestion is now
+  `objects/<class> | stats(shallow)`. `groupBy(class)` itself did group correctly
 - **`jfr_compare` and `jfr-shell compare` treated a JVM-generated frame as a different frame in
   each recording.** Hidden classes carry a per-run address (`LambdaForm$MH/0x00007f2e141a1000`) and
   lambda classes a per-run number (`Foo$$Lambda$14`), so every such frame read as gone from one

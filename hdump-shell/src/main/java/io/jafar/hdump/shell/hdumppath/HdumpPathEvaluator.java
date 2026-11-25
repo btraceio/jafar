@@ -66,6 +66,69 @@ public final class HdumpPathEvaluator {
     }
   }
 
+  /**
+   * Fails loudly when {@code field} is absent from every input row. An operator over a column that
+   * does not exist would otherwise return an empty aggregate or an unsorted list that reads like a
+   * measurement (issue #226: {@code groupBy(class) | stats(shallow)} reported {@code count: 0}
+   * because group rows carry only the key and the aggregate).
+   */
+  private static void requireField(List<Map<String, Object>> rows, String field, String opName) {
+    if (rows.isEmpty()) {
+      return;
+    }
+    for (Map<String, Object> row : rows) {
+      if (getField(row, field) != null) {
+        return;
+      }
+    }
+    throw new IllegalArgumentException(
+        opName
+            + ": field '"
+            + field
+            + "' is not present in its input rows (available: "
+            + String.join(", ", rows.get(0).keySet())
+            + ")");
+  }
+
+  /**
+   * The column a {@code groupBy} aggregates when it has no {@code value=}: {@code shallowSize}
+   * where the rows carry it (objects), otherwise the first numeric column that is not an
+   * identifier. Never {@code id}: summing object ids is meaningless, and it is what {@code
+   * groupBy(class, agg=sum)} used to return.
+   */
+  static String defaultAggregationField(Map<String, Object> row) {
+    if (row.get(ObjectFields.SHALLOW_SIZE) instanceof Number) {
+      return ObjectFields.SHALLOW_SIZE;
+    }
+    for (Map.Entry<String, Object> e : row.entrySet()) {
+      String k = e.getKey();
+      if (e.getValue() instanceof Number
+          && !ObjectFields.ID.equals(k)
+          && !GcRootFields.OBJECT_ID.equals(k)) {
+        return k;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Builds the single {@code stats(field)} result row. Shared by the in-memory and the streaming
+   * paths so both name the columns the same way. With no numeric value, {@code min}/{@code max} are
+   * {@code null} rather than {@code ±Infinity}.
+   */
+  private static Map<String, Object> statsRow(
+      String field, long count, double sum, double min, double max) {
+    Map<String, Object> row = new LinkedHashMap<>();
+    // For stats, use field name as prefix if it's a memory field
+    boolean isMemory = isMemoryFieldName(field);
+    row.put("count", count);
+    row.put(isMemory ? field + "_sum" : "sum", sum);
+    row.put(isMemory ? field + "_min" : "min", count > 0 ? min : null);
+    row.put(isMemory ? field + "_max" : "max", count > 0 ? max : null);
+    row.put(isMemory ? field + "_avg" : "avg", count > 0 ? sum / count : 0.0);
+    return row;
+  }
+
   /** Gets a value from a map, resolving field aliases. */
   static Object getField(Map<String, Object> map, String field) {
     Object v = map.get(field);
@@ -465,15 +528,18 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> evaluateObjectsStreamingStatsFromStream(
       Stream<HeapObject> stream, long totalObjects, StatsOp op) {
     double[] sum = {0.0};
-    double[] min = {Double.MAX_VALUE};
+    double[] min = {Double.POSITIVE_INFINITY};
     double[] max = {Double.NEGATIVE_INFINITY};
     long[] count = {0};
-    long[] counter = {0};
+    Map<String, Object>[] firstRow = new Map[1];
 
     stream.forEach(
         obj -> {
           Map<String, Object> map = objectToMap(obj);
-          Object value = map.get(op.field());
+          if (firstRow[0] == null) {
+            firstRow[0] = map;
+          }
+          Object value = getField(map, op.field());
           if (value instanceof Number num) {
             double d = num.doubleValue();
             sum[0] += d;
@@ -481,25 +547,21 @@ public final class HdumpPathEvaluator {
             max[0] = Math.max(max[0], d);
             count[0]++;
           }
-
-          counter[0]++;
         });
 
-    Map<String, Object> result = new LinkedHashMap<>();
-    result.put("count", count[0]);
-    result.put("sum", sum[0]);
-    result.put("avg", count[0] > 0 ? sum[0] / count[0] : 0.0);
-    result.put("min", min[0]);
-    result.put("max", max[0]);
-    return List.of(result);
+    if (count[0] == 0 && firstRow[0] != null) {
+      requireField(List.of(firstRow[0]), op.field(), "stats");
+    }
+    return List.of(statsRow(op.field(), count[0], sum[0], min[0], max[0]));
   }
 
   /** Helper class to accumulate aggregation results for a group. */
   private static class GroupAccumulator {
     private final List<Object> key;
     private long count = 0;
+    private long numericCount = 0;
     private double sum = 0.0;
-    private double min = Double.MAX_VALUE;
+    private double min = Double.POSITIVE_INFINITY;
     private double max = Double.NEGATIVE_INFINITY;
 
     GroupAccumulator(List<Object> key, GroupByOp op) {
@@ -514,9 +576,9 @@ public final class HdumpPathEvaluator {
       if (op.valueExpr() != null) {
         value = op.valueExpr().evaluate(row);
       } else if (op.aggregation() != AggOp.COUNT) {
-        // For non-COUNT aggregations, need a value field
-        // Use first group field as default
-        value = getField(row, op.groupFields().get(0));
+        // Same default as the in-memory path: shallowSize, never an id
+        String field = defaultAggregationField(row);
+        value = field != null ? row.get(field) : null;
       } else {
         value = null;
       }
@@ -526,6 +588,7 @@ public final class HdumpPathEvaluator {
         sum += d;
         min = Math.min(min, d);
         max = Math.max(max, d);
+        numericCount++;
       }
     }
 
@@ -545,9 +608,9 @@ public final class HdumpPathEvaluator {
       switch (op.aggregation()) {
         case COUNT -> result.put(aggColumnName, count);
         case SUM -> result.put(aggColumnName, sum);
-        case AVG -> result.put(aggColumnName, count > 0 ? sum / count : 0.0);
-        case MIN -> result.put(aggColumnName, min);
-        case MAX -> result.put(aggColumnName, max);
+        case AVG -> result.put(aggColumnName, numericCount > 0 ? sum / numericCount : null);
+        case MIN -> result.put(aggColumnName, numericCount > 0 ? min : null);
+        case MAX -> result.put(aggColumnName, numericCount > 0 ? max : null);
       }
 
       return result;
@@ -557,9 +620,9 @@ public final class HdumpPathEvaluator {
       return switch (aggOp) {
         case COUNT -> count;
         case SUM -> sum;
-        case AVG -> count > 0 ? sum / count : 0.0;
-        case MIN -> min;
-        case MAX -> max;
+        case AVG -> numericCount > 0 ? sum / numericCount : Double.NEGATIVE_INFINITY;
+        case MIN -> numericCount > 0 ? min : Double.NEGATIVE_INFINITY;
+        case MAX -> numericCount > 0 ? max : Double.NEGATIVE_INFINITY;
       };
     }
   }
@@ -1685,12 +1748,13 @@ public final class HdumpPathEvaluator {
                 + "To aggregate retained sizes by class, use: "
                 + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
       }
+      requireField(results, op.orderBy(), "top");
 
       // Create comparator that compares actual values with null-safe handling
       Comparator<Map<String, Object>> cmp =
           (m1, m2) -> {
-            Object v1 = m1.get(op.orderBy());
-            Object v2 = m2.get(op.orderBy());
+            Object v1 = getField(m1, op.orderBy());
+            Object v2 = getField(m2, op.orderBy());
             return compareValues(v1, v2);
           };
 
@@ -1731,7 +1795,7 @@ public final class HdumpPathEvaluator {
                     row -> {
                       List<Object> key = new ArrayList<>();
                       for (String field : op.groupFields()) {
-                        key.add(row.get(field));
+                        key.add(getField(row, field));
                       }
                       return key;
                     }));
@@ -1766,8 +1830,9 @@ public final class HdumpPathEvaluator {
               applyAggregation(row, op.aggregation(), values, fieldName);
             }
           } else {
-            // Fall back to first numeric field
-            String valueField = findFirstNumericField(group);
+            // No value=: shallowSize for objects, else the first non-id numeric column.
+            // The column keeps the aggregation's name (sum/avg/min/max), as in streaming.
+            String valueField = group.isEmpty() ? null : defaultAggregationField(group.get(0));
             if (valueField != null) {
               double[] values =
                   group.stream()
@@ -1776,7 +1841,7 @@ public final class HdumpPathEvaluator {
                       .mapToDouble(v -> ((Number) v).doubleValue())
                       .toArray();
               if (values.length > 0) {
-                applyAggregation(row, op.aggregation(), values, valueField);
+                applyAggregation(row, op.aggregation(), values, null);
               }
             }
           }
@@ -1805,16 +1870,6 @@ public final class HdumpPathEvaluator {
       case MIN -> "min";
       case MAX -> "max";
     };
-  }
-
-  private static String findFirstNumericField(List<Map<String, Object>> rows) {
-    if (rows.isEmpty()) return null;
-    for (Map.Entry<String, Object> entry : rows.get(0).entrySet()) {
-      if (entry.getValue() instanceof Number) {
-        return entry.getKey();
-      }
-    }
-    return null;
   }
 
   private static void applyAggregation(
@@ -1982,9 +2037,10 @@ public final class HdumpPathEvaluator {
   }
 
   private static List<Map<String, Object>> applySum(List<Map<String, Object>> results, SumOp op) {
+    requireField(results, op.field(), "sum");
     double sum =
         results.stream()
-            .map(m -> m.get(op.field()))
+            .map(m -> getField(m, op.field()))
             .filter(v -> v instanceof Number)
             .mapToDouble(v -> ((Number) v).doubleValue())
             .sum();
@@ -1998,22 +2054,15 @@ public final class HdumpPathEvaluator {
 
   private static List<Map<String, Object>> applyStats(
       List<Map<String, Object>> results, StatsOp op) {
+    requireField(results, op.field(), "stats");
     DoubleSummaryStatistics stats =
         results.stream()
-            .map(m -> m.get(op.field()))
+            .map(m -> getField(m, op.field()))
             .filter(v -> v instanceof Number)
             .mapToDouble(v -> ((Number) v).doubleValue())
             .summaryStatistics();
-
-    Map<String, Object> row = new LinkedHashMap<>();
-    // For stats, use field name as prefix if it's a memory field
-    boolean isMemory = isMemoryFieldName(op.field());
-    row.put("count", stats.getCount());
-    row.put(isMemory ? op.field() + "_sum" : "sum", stats.getSum());
-    row.put(isMemory ? op.field() + "_min" : "min", stats.getMin());
-    row.put(isMemory ? op.field() + "_max" : "max", stats.getMax());
-    row.put(isMemory ? op.field() + "_avg" : "avg", stats.getAverage());
-    return List.of(row);
+    return List.of(
+        statsRow(op.field(), stats.getCount(), stats.getSum(), stats.getMin(), stats.getMax()));
   }
 
   private static List<Map<String, Object>> applySortBy(
@@ -2034,6 +2083,7 @@ public final class HdumpPathEvaluator {
                 + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
       }
 
+      requireField(results, sf.field(), "sortBy");
       Comparator<Map<String, Object>> fieldCmp =
           (m1, m2) -> compareValues(getField(m1, sf.field()), getField(m2, sf.field()));
       if (sf.descending()) {
