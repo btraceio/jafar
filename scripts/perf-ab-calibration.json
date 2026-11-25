@@ -1,0 +1,29 @@
+{
+  "benchmarks": {
+    "QueryPushdownBenchmark.ceilingSkipEveryEvent[chunks=32]": {
+      "min_effect": 0.04,
+      "noise_bound": 0.135
+    },
+    "QueryPushdownBenchmark.countByDecoding[chunks=32]": {
+      "min_effect": 0.05,
+      "noise_bound": 0.335
+    },
+    "QueryPushdownBenchmark.countEventsFromHeaders[chunks=32]": {
+      "min_effect": 0.045,
+      "noise_bound": 0.305
+    },
+    "QueryPushdownBenchmark.decodeAllFilterInHandler[chunks=32,generatedReader=true,targetType=bench.Sampled]": {
+      "min_effect": 0.045,
+      "noise_bound": 0.3
+    },
+    "QueryPushdownBenchmark.headersWithStartTime[chunks=32]": {
+      "min_effect": 0.05,
+      "noise_bound": 0.21
+    },
+    "QueryPushdownBenchmark.typeFilterInParser[chunks=32,generatedReader=true,targetType=bench.Sampled]": {
+      "min_effect": 0.05,
+      "noise_bound": 0.125
+    }
+  },
+  "version": 1
+}

@@ -385,6 +385,36 @@ came out B A A B.
   If 10 runs look alike, minimum effects of about 1.5–4.5% follow. #250's measured effects
   (−18 to −25% on `headersWithStartTime`) are far above that.
 
+**The calibration (2026-11-25).** Ten A/A runs were dispatched at once on `main` at `f1d80dfa`,
+the #254 merge. All ten ran side by side without cancelling each other, which confirmed #254 on
+GitHub, and all succeeded: runs 45705755402, 45705789463, 45705794627, 45705801185, 45705807938,
+45705815616, 45705822167, 45705825903, 45705829049 and 45705833399.
+- **Machines:** EPYC 7763 ×5, EPYC 9V45 ×3, EPYC 9V74 ×2, all AMD. No Intel runner came up this
+  time; the first PR run had a Xeon 6975P-C.
+- **Orders:** A B B A ×3, B A A B ×7.
+- **No false positives:** none of the 60 tests (6 benchmarks × 10 runs) reached p < 0.01, so no
+  run attributed.
+- **`scripts/perf_ab_calibrate.py`** produced `scripts/perf-ab-calibration.json`:
+
+  | Benchmark | Worst \|ratio − 1\| | `min_effect` | Worst spread | `noise_bound` |
+  |---|---|---|---|---|
+  | `ceilingSkipEveryEvent` | 0.0234 | 0.040 | 0.0894 | 0.135 |
+  | `countByDecoding` | 0.0312 | 0.050 | 0.2230 | 0.335 |
+  | `countEventsFromHeaders` | 0.0293 | 0.045 | 0.2033 | 0.305 |
+  | `decodeAllFilterInHandler` | 0.0287 | 0.045 | 0.1985 | 0.300 |
+  | `headersWithStartTime` | 0.0320 | 0.050 | 0.1377 | 0.210 |
+  | `typeFilterInParser` | 0.0318 | 0.050 | 0.0815 | 0.125 |
+
+- **Checked against earlier data:**
+  - With this file, the first runner A/A run reads "no change detected" in every row, including
+    `countEventsFromHeaders` at 0.980 with p = 0.0087.
+  - #250's local A/B (`headersWithStartTime` 0.817, p 0.0022) reads `faster`. It is also flagged
+    noisy, because the local short-settings run spreads more than the runner's bound.
+- **`perf_ab_run.sh` picks the file up by default,** so PR runs give `slower`/`faster` verdicts
+  from now on.
+- **Recalibrate** when `QueryPushdownBenchmark`, the default JMH options or the runner image
+  change.
+
 **What a calibration does not promise.** The thresholds are the worst of about 10 noise draws,
 times 1.5. A later A/A run can still exceed them, so the false-positive rate is low but not
 measured. A benchmark whose noise is close to the effects that matter (section 2:
