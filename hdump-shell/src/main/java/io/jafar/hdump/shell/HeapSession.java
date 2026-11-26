@@ -398,14 +398,9 @@ public final class HeapSession implements Session {
     stats.put("classes", dump.getClassCount());
     stats.put("objects", dump.getObjectCount());
     stats.put("gcRoots", dump.getGcRootCount());
-    long totalSize = dump.getTotalHeapSize();
-    if (totalSize == 0) {
-      totalSize =
-          dump.getClasses().stream()
-              .mapToLong(c -> (long) c.getInstanceCount() * c.getInstanceSize())
-              .sum();
-    }
-    stats.put("totalHeapSize", formatSize(totalSize));
+    // Both parsing modes set the total; the instanceCount * instanceSize fallback this had left out
+    // headers and arrays (removed from HeapReportGenerator for the same reason)
+    stats.put("totalHeapSize", formatSize(dump.getTotalHeapSize()));
     stats.put("dominatorsComputed", dump.hasDominators());
     return stats;
   }

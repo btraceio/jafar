@@ -1769,6 +1769,14 @@ public final class HeapDumpImpl implements HeapDump {
     return idSize * 2 + 8 + dataSize;
   }
 
+  /** True for the primitive array class names {@code [Z [C [F [D [B [S [I [J}. */
+  static boolean isPrimitiveArrayClassName(String name) {
+    return name != null
+        && name.length() == 2
+        && name.charAt(0) == '['
+        && "ZCFDBSIJ".indexOf(name.charAt(1)) >= 0;
+  }
+
   /**
    * The class for primitive arrays of {@code elemType} ({@code [B}, {@code [I}, ...), created if
    * absent.
@@ -1913,6 +1921,14 @@ public final class HeapDumpImpl implements HeapDump {
    */
   @Override
   public Stream<HeapObject> getObjectsOfClassFast(HeapClass cls) {
+    // Primitive arrays are not in the class-instances index (pass 2 files them under class id -1),
+    // so the index lists only a primitive-array class's own class object: scan for them. Objects
+    // of [B etc. share this HeapClass instance (primitiveArrayClass returns the one in
+    // classesByName, which is the CLASS_DUMP's when the dump has one).
+    if (isPrimitiveArrayClassName(cls.getName())) {
+      return getObjects().filter(o -> o.getHeapClass() == cls);
+    }
+
     // Look up 32-bit class ID from 64-bit address
     long classAddress = cls.getId();
     int classId32 = classAddressToId32 != null ? classAddressToId32.get(classAddress) : -1;

@@ -272,17 +272,11 @@ public final class HdumpPathEvaluator {
               ? List.of()
               : streamingPipeline.subList(rowOpCount + 1, streamingPipeline.size());
 
+      // groupBy | top(N) used a bounded accumulator that trimmed groups every 10K rows (approximate
+      // totals for evicted groups) and ranked by the aggregate before top()'s field: it now
+      // accumulates every group (one per key, not per object) and top() runs on the result.
       List<Map<String, Object>> results;
-      if (rowOps.isEmpty()
-          && head instanceof GroupByOp groupByOp
-          && !rest.isEmpty()
-          && rest.get(0) instanceof TopOp topOp) {
-        // groupBy | top(N): bounded accumulation
-        results =
-            evaluateObjectsStreamingGroupByTop(
-                dump, session, streamingQuery, groupByOp, topOp, List.of());
-        rest = rest.subList(1, rest.size());
-      } else if (isStreamable(head)) {
+      if (isStreamable(head)) {
         results = evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, rowOps, head);
       } else {
         // Nothing here consumes a stream: run every op on 100 objects of the stream
@@ -416,96 +410,6 @@ public final class HdumpPathEvaluator {
     return results;
   }
 
-  /**
-   * Optimized streaming evaluation for "groupBy | top(N)" pattern. Uses bounded priority queue to
-   * avoid materializing all groups.
-   */
-  private static List<Map<String, Object>> evaluateObjectsStreamingGroupByTop(
-      HeapDump dump,
-      HeapSession session,
-      Query query,
-      GroupByOp groupByOp,
-      TopOp topOp,
-      List<PipelineOp> remainingOps) {
-
-    // Build filtered stream
-    Stream<HeapObject> stream = dump.getObjects();
-    String filterDesc = "";
-
-    // Filter by type pattern
-    if (query.typePattern() != null) {
-      String pattern = normalizeClassName(query.typePattern());
-      filterDesc = " matching " + query.typePattern();
-
-      if (query.instanceof_()) {
-        Set<String> matchingClasses = findMatchingClasses(dump, pattern, true);
-        stream =
-            stream.filter(
-                obj -> {
-                  HeapClass cls = obj.getHeapClass();
-                  return cls != null && matchingClasses.contains(cls.getName());
-                });
-      } else {
-        if (pattern.contains("*")) {
-          Pattern regex = globToRegex(pattern);
-          stream =
-              stream.filter(
-                  obj -> {
-                    HeapClass cls = obj.getHeapClass();
-                    return cls != null && regex.matcher(cls.getName()).matches();
-                  });
-        } else {
-          stream =
-              stream.filter(
-                  obj -> {
-                    HeapClass cls = obj.getHeapClass();
-                    return cls != null && pattern.equals(cls.getName());
-                  });
-        }
-      }
-    }
-
-    // Apply predicates
-    if (!query.predicates().isEmpty()) {
-      stream = stream.filter(obj -> matchesAllPredicates(objectToMap(obj), query.predicates()));
-      if (!filterDesc.isEmpty()) {
-        filterDesc += " with predicates";
-      } else {
-        filterDesc = " with predicates";
-      }
-    }
-
-    // Use bounded accumulation with priority queue
-    int bufferSize = Math.max(topOp.n() * 5, 1000); // Keep 5x top N (min 1000)
-    BoundedGroupAccumulator accumulator =
-        new BoundedGroupAccumulator(groupByOp, bufferSize, topOp.n());
-
-    long[] counter = {0};
-
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
-          accumulator.accumulate(map, groupByOp);
-
-          counter[0]++;
-        });
-
-    // Get final top N results
-    List<Map<String, Object>> results = accumulator.getTopN(topOp.n());
-
-    // Apply sorting from TopOp
-    if (topOp.orderBy() != null) {
-      results.sort(nullsLastBy(m -> getField(m, topOp.orderBy()), topOp.descending()));
-    }
-
-    // Apply remaining pipeline operations
-    for (PipelineOp op : remainingOps) {
-      results = applyPipelineOp(session, results, op);
-    }
-
-    return results;
-  }
-
   /** Streaming evaluation from a filtered stream for count operations. */
   private static List<Map<String, Object>> evaluateObjectsStreamingCountFromStream(
       Stream<HeapObject> stream, long totalObjects) {
@@ -525,21 +429,28 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> evaluateObjectsStreamingSumFromStream(
       Stream<Map<String, Object>> rows, long totalObjects, SumOp op) {
     double[] sum = {0.0};
-    long[] counter = {0};
+    boolean[] fieldSeen = {false};
+    Map<String, Object>[] firstRow = new Map[1];
 
     rows.forEach(
         map -> {
-          Object value = map.get(op.field());
+          if (firstRow[0] == null) {
+            firstRow[0] = map;
+          }
+          Object value = getField(map, op.field());
+          if (value != null) {
+            fieldSeen[0] = true;
+          }
           if (value instanceof Number num) {
             sum[0] += num.doubleValue();
           }
-
-          counter[0]++;
         });
 
-    Map<String, Object> result = new LinkedHashMap<>();
-    result.put("sum", sum[0]);
-    return List.of(result);
+    // Same check and column name as applySum
+    if (firstRow[0] != null && !fieldSeen[0]) {
+      requireField(List.of(firstRow[0]), op.field(), "sum");
+    }
+    return List.of(sumRow(op.field(), sum[0]));
   }
 
   /** Streaming evaluation from a filtered stream for stats operations. */
@@ -631,85 +542,6 @@ public final class HdumpPathEvaluator {
       }
 
       return result;
-    }
-
-    double getAggregationValue(AggOp aggOp) {
-      return switch (aggOp) {
-        case COUNT -> count;
-        case SUM -> sum;
-        case AVG -> numericCount > 0 ? sum / numericCount : Double.NEGATIVE_INFINITY;
-        case MIN -> numericCount > 0 ? min : Double.NEGATIVE_INFINITY;
-        case MAX -> numericCount > 0 ? max : Double.NEGATIVE_INFINITY;
-      };
-    }
-  }
-
-  /**
-   * Bounded accumulator for groupBy + top(N) optimization. Keeps only the top groups by
-   * periodically trimming to buffer size.
-   */
-  private static class BoundedGroupAccumulator {
-    private final Map<List<Object>, GroupAccumulator> groups;
-    private final int bufferSize;
-    private final GroupByOp op;
-    private long totalAccumulated = 0;
-
-    BoundedGroupAccumulator(GroupByOp op, int bufferSize, int targetSize) {
-      this.op = op;
-      this.bufferSize = bufferSize;
-      this.groups = new LinkedHashMap<>();
-    }
-
-    void accumulate(Map<String, Object> row, GroupByOp op) {
-      // Extract group key
-      List<Object> key = new ArrayList<>();
-      for (String field : op.groupFields()) {
-        key.add(getField(row, field));
-      }
-
-      // Get or create accumulator
-      GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(k, op));
-      acc.accumulate(row, op);
-
-      totalAccumulated++;
-
-      // Periodically trim to buffer size (every 10K objects)
-      if (totalAccumulated % 10000 == 0 && groups.size() > bufferSize) {
-        trimToBufferSize();
-      }
-    }
-
-    private void trimToBufferSize() {
-      // Sort groups by aggregation value and keep only top bufferSize
-      List<Map.Entry<List<Object>, GroupAccumulator>> entries = new ArrayList<>(groups.entrySet());
-      entries.sort(
-          (e1, e2) -> {
-            double v1 = e1.getValue().getAggregationValue(op.aggregation());
-            double v2 = e2.getValue().getAggregationValue(op.aggregation());
-            return Double.compare(v2, v1); // Descending
-          });
-
-      // Keep only top bufferSize
-      groups.clear();
-      for (int i = 0; i < Math.min(bufferSize, entries.size()); i++) {
-        groups.put(entries.get(i).getKey(), entries.get(i).getValue());
-      }
-    }
-
-    int size() {
-      return groups.size();
-    }
-
-    List<Map<String, Object>> getTopN(int n) {
-      String aggField = getAggregationColumnName(op);
-      // Final sort and return top N
-      List<Map<String, Object>> results =
-          groups.values().stream()
-              .map(acc -> acc.toResultMap(op))
-              .sorted(nullsLastBy(m -> m.get(aggField), true)) // descending, nulls last
-              .limit(n)
-              .collect(Collectors.toList());
-      return results;
     }
   }
 
@@ -1834,6 +1666,8 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> applyGroupBy(
       List<Map<String, Object>> results, GroupByOp op) {
     // Group by the specified fields
+    // Groups in first-seen order, as the streaming path keeps them (a plain groupingBy HashMap
+    // made ties after groupBy | top come out in hash order, differently on the two paths)
     Map<List<Object>, List<Map<String, Object>>> groups =
         results.stream()
             .collect(
@@ -1844,7 +1678,9 @@ public final class HdumpPathEvaluator {
                         key.add(getField(row, field));
                       }
                       return key;
-                    }));
+                    },
+                    LinkedHashMap::new,
+                    Collectors.toList()));
 
     // Apply aggregation
     List<Map<String, Object>> aggregated = new ArrayList<>();
@@ -2090,12 +1926,14 @@ public final class HdumpPathEvaluator {
             .filter(v -> v instanceof Number)
             .mapToDouble(v -> ((Number) v).doubleValue())
             .sum();
+    return List.of(sumRow(op.field(), sum));
+  }
 
+  /** The {@code sum(field)} result row, for both paths: named after a memory field, else "sum". */
+  private static Map<String, Object> sumRow(String field, double sum) {
     Map<String, Object> row = new LinkedHashMap<>();
-    // Use field name if it's a memory field, otherwise use "sum"
-    String columnName = isMemoryFieldName(op.field()) ? op.field() : "sum";
-    row.put(columnName, sum);
-    return List.of(row);
+    row.put(isMemoryFieldName(field) ? field : "sum", sum);
+    return row;
   }
 
   private static List<Map<String, Object>> applyStats(

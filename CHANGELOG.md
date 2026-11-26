@@ -155,8 +155,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   groupBy sorts also put nulls first when descending. A pipeline whose leading `waste()`,
   `cacheStats()` or `filter()` steps reach `top`, `groupBy`, `count`, `sum` or `stats` is now
   streamed object by object; it used to run on 100 objects of the stream. Steps after a streamed
-  aggregation get the session resolver, so `join(session=...)` works there; streamed `top()` fails
-  on a missing field and keeps ties in order, as the in-memory `top()` does. `doc/hdumppath.md`
+  aggregation get the session resolver, so `join(session=...)` works there; streamed `top()` and
+  `sum()` fail on a missing field (and name columns, and order ties) as the in-memory ones do.
+  `groupBy(...) | top(n)` no longer uses a bounded accumulator that dropped groups every 10K rows
+  (approximate totals) and ranked by the aggregate before `top()`'s field; it keeps every group,
+  as the in-memory path does, and both now list groups in first-seen order. Streaming a primitive
+  array type (`objects/byte[]`) in INDEXED mode found nothing, as the class-instances index holds
+  no primitive arrays; those classes are now scanned. `doc/hdumppath.md`
   now documents what is streamed and what is capped at 100 objects
 - **`cacheStats()` never reported `isLruMode = true`.** The reader decodes a boolean field as
   `Boolean` and the check tested for `Number`; LinkedHashMap subclasses (the usual LRU cache) were

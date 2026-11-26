@@ -54,6 +54,11 @@ class StreamingPathTest {
             .addClass(5, "java/util/Map", 1)
             .addClass(6, "[Ljava/util/HashMap$Node;", 1)
             .addClass(7, "com/example/Plain", 1)
+            // A real dump has a CLASS_DUMP for [B, so INDEXED mode gives it a class-instances
+            // index entry that lists only the class object itself
+            .addClass(8, "[B", 1)
+            .addPrimitiveArray(104, 8, 10)
+            .addPrimitiveArray(105, 8, 20)
             .addInstance(100, 3, fieldData().ref(102).i32(3).bytes())
             .addInstance(101, 4, fieldData().ref(103).i32(1).bytes())
             .addObjectArray(102, 6, new long[16])
@@ -93,7 +98,7 @@ class StreamingPathTest {
     // Was the smallest values, ascending: the bounded heap evicted the best row
     List<Map<String, Object>> top = run("objects | top(2, arrayLength)");
     assertEquals(64, top.get(0).get("arrayLength"));
-    assertEquals(16, top.get(1).get("arrayLength"));
+    assertEquals(20, top.get(1).get("arrayLength"));
   }
 
   @Test
@@ -124,7 +129,7 @@ class StreamingPathTest {
   @Test
   void wasteThenCountAndGroupByStreamEveryObject() {
     // Were capped at 100 objects: waste() | count said 100
-    assertEquals(154L, ((Number) run("objects | waste() | count").get(0).get("count")).longValue());
+    assertEquals(156L, ((Number) run("objects | waste() | count").get(0).get("count")).longValue());
     List<Map<String, Object>> groups =
         run(
             "objects/instanceof/java.util.HashMap | waste() | groupBy(class, agg=sum,"
@@ -179,6 +184,68 @@ class StreamingPathTest {
           HdumpPathEvaluator.evaluate(
               indexed, HdumpPathParser.parse("objects/instanceof/java.util.HashMap | count"));
       assertEquals(2L, ((Number) rows.get(0).get("count")).longValue());
+    }
+  }
+
+  /** Numbers compared as doubles: the paths may box a count as Integer or Long. */
+  private static List<Map<String, Object>> normalized(List<Map<String, Object>> rows) {
+    return rows.stream()
+        .map(
+            r -> {
+              Map<String, Object> m = new java.util.TreeMap<>();
+              r.forEach((k, v) -> m.put(k, v instanceof Number n ? n.doubleValue() : v));
+              return m;
+            })
+        .toList();
+  }
+
+  private static List<Map<String, Object>> inMemory(String q) {
+    long t = HdumpPathEvaluator.streamingThreshold;
+    HdumpPathEvaluator.streamingThreshold = Long.MAX_VALUE;
+    try {
+      return run(q);
+    } finally {
+      HdumpPathEvaluator.streamingThreshold = t;
+    }
+  }
+
+  @Test
+  void streamedGroupByAgreesWithTheInMemoryPath() {
+    for (String q :
+        List.of(
+            "objects | groupBy(class) | top(3, class)",
+            "objects | groupBy(class) | top(2, count)",
+            "objects | groupBy(class, agg=sum, value=shallow) | sortBy(class)",
+            "objects | groupBy(class) | sortBy(class)")) {
+      // groupBy | top(3, class) used to rank by the aggregate first: different rows
+      assertEquals(normalized(inMemory(q)), normalized(run(q)), q);
+    }
+  }
+
+  @Test
+  void streamedSumChecksTheFieldAndNamesTheColumnLikeTheInMemoryPath() {
+    // Was {sum=0.0} streamed, an error in memory
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> run("objects/instanceof/java.util.HashMap | waste() | sum(nosuchfield)"));
+    // Was {sum=...} streamed, {shallow=...} in memory
+    assertEquals(
+        normalized(inMemory("objects | waste() | sum(shallow)")),
+        normalized(run("objects | waste() | sum(shallow)")));
+  }
+
+  @Test
+  void indexedStreamingFindsPrimitiveArrays(@TempDir Path dir) throws IOException {
+    // The class-instances index has no primitive arrays; streaming [B through it found nothing
+    Path copy = dir.resolve("copy.hprof");
+    java.nio.file.Files.copy(session.getFilePath(), copy);
+    try (HeapSession indexed = HeapSession.open(copy, ParserOptions.INDEXED)) {
+      for (String q : List.of("objects/[B | count", "objects/byte[] | count")) {
+        List<Map<String, Object>> rows =
+            HdumpPathEvaluator.evaluate(indexed, HdumpPathParser.parse(q));
+        assertEquals(2L, ((Number) rows.get(0).get("count")).longValue(), q);
+      }
+      assertEquals(2, indexed.getHeapDump().getClassByName("[B").get().getInstanceCount());
     }
   }
 }

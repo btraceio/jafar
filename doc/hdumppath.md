@@ -1011,13 +1011,15 @@ objects | select(class, shallow) | abs(shallow)
 Above 5,000,000 objects an `objects` query streams instead of building every row in memory. Type
 patterns, predicates and leading `filter(...)` steps are applied while streaming. Then:
 
-- **Streamed exactly:** `waste()`, `cacheStats()` and `filter(...)` (each looks at one row) run per
-  object, followed by one of `top(n, field)`, `groupBy(...)`, `count`, `sum(field)` or
-  `stats(field)`, computed over every selected object. What comes after that step runs on its
-  result. Example: `objects/instanceof/java.util.HashMap | waste() | top(20, wastedBytes)`.
-- **Capped at 100 objects:** any other pipeline, for example one ending in `sortBy(...)`,
-  `select(...)` or `head(n)`, or no pipeline at all, runs on 100 objects of the stream, and only a
-  warning in the log says so. Put an aggregation such as `top(n, field)` before those steps:
+- **Streamed exactly:** leading `waste()`, `cacheStats()` and `filter(...)` steps (each looks at
+  one row) run per object; the first other step must be one of `top(n, field)`, `groupBy(...)`,
+  `count`, `sum(field)` or `stats(field)`, and is computed over every selected object, with the
+  same result as on a smaller heap (`groupBy` keeps one entry per group). Every step after it runs
+  on its result. Example: `objects/instanceof/java.util.HashMap | waste() | top(20, wastedBytes)`.
+- **Capped at 100 objects:** when the first step that is not `waste()`, `cacheStats()` or
+  `filter(...)` is anything else (`sortBy(...)`, `select(...)`, `head(n)`, ...), or there are no
+  steps at all, the whole pipeline runs on 100 objects of the stream, and only a warning in the log
+  says so. Put an aggregation such as `top(n, field)` first:
   `... | waste() | top(100, wastedBytes) | select(class, wastedBytes)`.
 
 ## Tips and Best Practices
