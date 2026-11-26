@@ -75,6 +75,8 @@ tasks.named('test') {
     javaLauncher.set(j21LauncherProvider)
     // The allocation tests need their own JVM args and the budget file; they run in allocationTest
     exclude 'io/jafar/parser/alloc/**'
+    // The work-budget tests need the counting agent and the budget file; they run in workTest
+    exclude 'io/jafar/parser/work/**'
     useJUnitPlatform()
     reports {
         junitXml.required.set(true)
@@ -181,9 +183,56 @@ tasks.register('allocationTest8', Test) {
     }
 }
 
+// --- Work budget gate (doc/plans/work-budgets.md) --------------------------------------------
+// The generated-reader and typed twin of parser-core's workTest (see parser-core/build.gradle for
+// the rationale): same agent, same budget file, no pins.
+configurations {
+    workAgent {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+
+dependencies {
+    workAgent project(path: ':test-support', configuration: 'workAgentElements')
+}
+
+def workBudgetsFile = rootProject.file('gradle/work-budgets.properties')
+
+tasks.register('workTest', Test) {
+    description = 'Asserts the generated-reader and typed parse entry points do exactly the work recorded in gradle/work-budgets.properties.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/jafar/parser/work/**'
+    javaLauncher.set(j21LauncherProvider)
+    useJUnitPlatform()
+    jvmArgs '-Xmx2g'
+    def agent = configurations.workAgent
+    inputs.files(agent).withPropertyName('workAgent')
+    jvmArgumentProviders.add({ ["-javaagent:${agent.singleFile.absolutePath}".toString()] } as CommandLineArgumentProvider)
+    systemProperty 'jafar.work.budgets', workBudgetsFile.absolutePath
+    def update = providers.gradleProperty('jafar.work.update').isPresent()
+    inputs.property('workUpdate', update)
+    if (update) {
+        systemProperty 'jafar.work.update', 'true'
+        outputs.upToDateWhen { false }
+    }
+    inputs.file(workBudgetsFile).withPropertyName('workBudgets')
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr')).withPropertyName('tckRecording')
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/workTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/workTest"))
+    }
+}
+
 tasks.named('check') {
     // `build` runs the JDK 21 allocation cell; allocationTest8 runs in the CI JDK 8 cell
     dependsOn tasks.named('allocationTest')
+    // the work counts do not depend on the JDK: one cell, in the JDK 21 `build`
+    dependsOn tasks.named('workTest')
 }
 
 // JMH benchmark compilation

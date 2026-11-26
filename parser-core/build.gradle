@@ -162,6 +162,8 @@ tasks.named('test') {
     inputs.property('writeSharedFixtures', providers.environmentVariable('JAFAR_WRITE_FIXTURES').orElse(''))
     // The allocation tests need their own JVM args and the budget file; they run in allocationTest
     exclude 'io/jafar/parser/alloc/**'
+    // The work-budget tests need the counting agent and the budget file; they run in workTest
+    exclude 'io/jafar/parser/work/**'
     // The Java/Go differential needs the Go toolchain on PATH, which `test` (and therefore
     // `build`) must not assume: the class runs only in its own differentialTest task, excluded
     // here (see that task's comment for why it is not in `check` either).
@@ -349,9 +351,63 @@ tasks.register('differentialTest', Test) {
     }
 }
 
+// --- Work budget gate (doc/plans/work-budgets.md) --------------------------------------------
+// The work tests count what one parse does — chunks read, events decoded, varints read, values
+// skipped, constant-pool entries indexed and decoded — with the work-budget agent from
+// test-support, which inserts a counter call into the parser methods WorkProbes names. The counts
+// do not depend on time, on the JIT or on the chunk pool's size, so this task pins nothing: the
+// processor-count matrix flag (-Pjafar.activeProcessorCount) reaches it like any test task, which
+// is how the counts were shown not to depend on the pool size. -Pjafar.work.update rewrites the
+// budget lines from the measurement instead of comparing.
+configurations {
+    workAgent {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+
+dependencies {
+    workAgent project(path: ':test-support', configuration: 'workAgentElements')
+}
+
+def workBudgetsFile = rootProject.file('gradle/work-budgets.properties')
+
+tasks.register('workTest', Test) {
+    description = 'Asserts the untyped parse entry points do exactly the work recorded in gradle/work-budgets.properties.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/jafar/parser/work/**'
+    javaLauncher.set(j21LauncherProvider)
+    useJUnitPlatform()
+    jvmArgs '-Xmx2g'
+    def agent = configurations.workAgent
+    inputs.files(agent).withPropertyName('workAgent')
+    jvmArgumentProviders.add({ ["-javaagent:${agent.singleFile.absolutePath}".toString()] } as CommandLineArgumentProvider)
+    systemProperty 'jafar.work.budgets', workBudgetsFile.absolutePath
+    def update = providers.gradleProperty('jafar.work.update').isPresent()
+    inputs.property('workUpdate', update)
+    if (update) {
+        systemProperty 'jafar.work.update', 'true'
+        outputs.upToDateWhen { false }
+    }
+    // A budget change re-runs the gate, and so does a fixture change.
+    inputs.file(workBudgetsFile).withPropertyName('workBudgets')
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr')).withPropertyName('tckRecording')
+    inputs.file(rootProject.file('parser-core/src/test/resources/test-ap.jfr')).withPropertyName('testApRecording')
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/workTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/workTest"))
+    }
+}
+
 tasks.named('check') {
     // `build` runs the JDK 21 allocation cell; allocationTest8 runs in the CI JDK 8 cell
     dependsOn tasks.named('allocationTest')
+    // the work counts do not depend on the JDK: one cell, in the JDK 21 `build`
+    dependsOn tasks.named('workTest')
 }
 
 dependencies {

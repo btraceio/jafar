@@ -1,7 +1,7 @@
 # Performance A/B report for pull requests (`perf-ab`)
 
 Status: proposal, 2026-11-22. Nothing here is built. Section 9 records the decisions taken on
-2026-11-22 and the one still open; section 10 lists what is not verified.
+2026-11-22, and Q5, decided on 2026-11-26; section 10 lists what is not verified.
 
 Origin: idea 3 of the 2026-11 brainstorm ("agent-native profiler analyst"). Most of that idea has
 shipped: the `Finding` contract, `jfr_compare`, the MCP prompts and the `jafar-perf` plugin
@@ -517,10 +517,10 @@ Taken on 2026-11-22:
   run beyond runner minutes. An agent can still read the published artifact (`report.json` and the
   recordings) through `jfr-mcp` on a developer's machine, outside CI.
 
-Still open:
-
-- **Q5. Work counters.** Add deterministic counters as a separate ratchet gate (section 8)?
-  Proposed: a separate design doc if wanted.
+- **Q5. Work counters: yes, as a separate ratchet gate** (decided 2026-11-26). Deterministic
+  counts of the work a parse does — events decoded, varints read, chunks read and more — counted by
+  a test-only agent and budgeted exactly in `gradle/work-budgets.properties`, with a `Work-Budget:`
+  statement for a raise. Design and evidence: [work-budgets.md](work-budgets.md).
 
 ## 10. What is not verified
 
