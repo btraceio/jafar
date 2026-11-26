@@ -1,7 +1,7 @@
 # Cross-format profile compare (JFR, pprof, OTLP)
 
-Status: proposal, 2026-11-26. Nothing here is built. Section 7 lists the decisions for the
-maintainer; section 8 lists what was not verified.
+Status: design accepted, 2026-11-26. Nothing here is built yet. Every decision in section 7 was
+taken as recommended; section 8 lists what was not verified.
 
 Origin: idea 2 of the 2026-11 brainstorm. PR #252 moved the comparison into
 `shell-core/src/main/java/io/jafar/shell/core/compare/`. `RecordingProfile` already looks
@@ -284,7 +284,10 @@ The tests:
    unchanged: the existing `JfrCompareHandlerTest` and `JfrCompareThinDataTest` stay green, and
    their failure sets are compared by name (R6).
 
-## 7. Open decisions
+## 7. Decisions
+
+**Decided 2026-11-26 with the maintainer: every recommendation below, D1 to D8, as written.**
+
 
 1. **D1. Naming.** Options: (a) keep `RecordingProfile` and add `ProfileCompare` next to
    `JfrCompare`; (b) rename to `SampledProfile`/`ProfileCompare` with deprecated aliases.
