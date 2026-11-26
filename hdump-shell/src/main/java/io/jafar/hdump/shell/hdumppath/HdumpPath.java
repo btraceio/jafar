@@ -11,7 +11,7 @@ import java.util.List;
  * <pre>
  * # Object queries
  * objects/java.lang.String[shallow > 100] | top(10, shallow)
- * objects/instanceof/java.util.Map | groupBy(class) | stats(shallow)
+ * objects/instanceof/java.util.AbstractMap | groupBy(class, agg=sum, value=shallow)
  *
  * # Class queries
  * classes/java.util.HashMap | select(name, instanceCount, shallowSize)
@@ -564,7 +564,7 @@ public final class HdumpPath {
    * <pre>
    * objects/java.util.LinkedHashMap | cacheStats()
    * objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
-   * objects/instanceof/java.util.Map | cacheStats() | top(10, costPerEntry)
+   * objects/instanceof/java.util.AbstractMap | cacheStats() | top(10, costPerEntry)
    * </pre>
    */
   public record CacheStatsOp() implements PipelineOp {}

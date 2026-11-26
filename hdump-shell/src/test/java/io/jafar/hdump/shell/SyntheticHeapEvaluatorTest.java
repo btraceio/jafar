@@ -101,6 +101,87 @@ class SyntheticHeapEvaluatorTest {
     assertEquals(2L, ((Number) result.get(1).get("count")).longValue());
   }
 
+  // --- #226: aggregates over the wrong or a missing column ---
+
+  @Test
+  void groupBySumWithoutValueAggregatesShallowSizeNotId() {
+    double fooShallow =
+        ((Number)
+                HdumpPathEvaluator.evaluate(
+                        session, HdumpPathParser.parse("objects/com.example.Foo | sum(shallow)"))
+                    .get(0)
+                    .get("shallow"))
+            .doubleValue();
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session, HdumpPathParser.parse("objects/com.example.Foo | groupBy(class, agg=sum)"));
+    assertEquals(1, result.size());
+    // Was 3003.0: the sum of the object ids 1000 + 1001 + 1002
+    assertEquals(fooShallow, ((Number) result.get(0).get("sum")).doubleValue());
+  }
+
+  @Test
+  void groupByMaxWithoutValueIsShallowSize() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session, HdumpPathParser.parse("objects/com.example.Foo | groupBy(class, agg=max)"));
+    // Was 1002.0, the largest id
+    assertTrue(((Number) result.get(0).get("max")).doubleValue() < 1000);
+  }
+
+  @Test
+  void statsOnEmptyInputHasNullMinMaxNotInfinity() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session, HdumpPathParser.parse("objects/com.example.Absent | stats(shallow)"));
+    Map<String, Object> row = result.get(0);
+    assertEquals(0L, ((Number) row.get("count")).longValue());
+    assertTrue(row.containsKey("shallow_min"));
+    assertNull(row.get("shallow_min"));
+    assertNull(row.get("shallow_max"));
+  }
+
+  @Test
+  void statsAfterGroupByFailsNamingAvailableColumns() {
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                HdumpPathEvaluator.evaluate(
+                    session,
+                    HdumpPathParser.parse(
+                        "objects/com.example.Foo | groupBy(class) | stats(shallow)")));
+    assertTrue(e.getMessage().contains("'shallow'"), e.getMessage());
+    assertTrue(e.getMessage().contains("available: class, count"), e.getMessage());
+  }
+
+  @Test
+  void topAndSortByOnMissingFieldFail() {
+    // Not "retained": that computes dominators on the shared session
+    // (see objectsCountDoesNotTriggerRetainedSizeComputation)
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            HdumpPathEvaluator.evaluate(
+                session, HdumpPathParser.parse("objects | groupBy(class) | top(10, shallow)")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            HdumpPathEvaluator.evaluate(
+                session, HdumpPathParser.parse("objects | groupBy(class) | sortBy(shallow desc)")));
+  }
+
+  @Test
+  void groupByMemoryValueColumnIsSortableByItsName() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session,
+            HdumpPathParser.parse(
+                "objects | groupBy(class, agg=sum, value=shallow) | sortBy(shallow desc)"));
+    assertEquals(2, result.size());
+    assertEquals("com.example.Foo", result.get(0).get("class"));
+  }
+
   @Test
   void classesQuery() {
     List<Map<String, Object>> result =
@@ -285,6 +366,21 @@ class SyntheticHeapEvaluatorTest {
       try (HeapSession s = reportSession()) {
         List<HeapReportGenerator.Finding> findings = HeapReportGenerator.generate(s, null);
         assertFalse(findings.isEmpty(), "report must return at least one finding");
+      }
+    }
+
+    @Test
+    void histogramSuggestedQueryReturnsTheInstances() throws IOException {
+      try (HeapSession s = reportSession()) {
+        HeapReportGenerator.Finding top =
+            HeapReportGenerator.generate(s, null).stream()
+                .filter(f -> f.title().startsWith("Top class by instance count"))
+                .findFirst()
+                .orElseThrow();
+        List<Map<String, Object>> rows =
+            HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse(top.query()));
+        // #226: the suggestion used to be "... | groupBy(class) | stats(shallow)", count 0
+        assertEquals((long) top.affectedObjects(), ((Number) rows.get(0).get("count")).longValue());
       }
     }
 
