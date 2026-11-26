@@ -164,7 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sortBy=value` on the aggregate column (in memory it sorted by a column that did not exist for
   `value=shallow`), groups without a value last, and `count` always a long, always named `count`.
   Without `value=`, each group aggregates one column (never an identifier such as a GC root's
-  `threadSerial`, nor a column `join` added such as `baseline.shallowSize`), so rows without it
+  `threadSerial`, nor a column a heap-to-heap `join` adds such as `baseline.shallowSize`), so rows without it
   are skipped instead of mixed in. Streaming a primitive
   array type (`objects/byte[]`) in INDEXED mode found nothing, as the class-instances index holds
   no primitive arrays; those classes are now scanned. `doc/hdumppath.md`

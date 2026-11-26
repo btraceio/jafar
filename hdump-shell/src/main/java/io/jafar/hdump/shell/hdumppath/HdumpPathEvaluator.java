@@ -118,11 +118,13 @@ public final class HdumpPathEvaluator {
           GcRootFields.FRAME_NUMBER);
 
   /**
-   * Columns never aggregated by default: identifiers, and every column {@code join} adds ({@code
-   * baseline.*}, {@code *Delta}), which describe the other dump, not this row. After a join, an
-   * unresolved GC root (no {@code shallowSize}) offered {@code baseline.objectId}, or in a two-dump
-   * diff {@code baseline.shallowSize}, and its group summed that. Name such a column with {@code
-   * value=} to aggregate it.
+   * Columns never aggregated by default: identifiers, and the columns a heap-to-heap {@code join}
+   * adds ({@code baseline.*}, {@code *Delta}), which describe the other dump, not this row. After a
+   * join, an unresolved GC root (no {@code shallowSize}) offered {@code baseline.objectId}, or in a
+   * two-dump diff {@code baseline.shallowSize}, and its group summed that. The check is by name, so
+   * any column ending in {@code Delta} is skipped too. A {@code *Delta} column can be aggregated
+   * with {@code value=}; a {@code baseline.*} one cannot be named in a query (the parser takes no
+   * dotted field names).
    */
   private static boolean isExcludedFromDefault(String column) {
     return IDENTIFIER_COLUMNS.contains(column)
