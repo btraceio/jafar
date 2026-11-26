@@ -1647,8 +1647,6 @@ public final class HeapDumpImpl implements HeapDump {
   /** The slots handed out by {@link #getThreadLocalReader()}; guarded by itself. */
   private final List<ReaderSlot> readerSlots = new ArrayList<>();
 
-  /** Set by {@link #close()}; a closed dump no longer caches views. */
-  private volatile boolean closed;
 
   /** How many threads' views this dump holds; for tests. */
   int readerSlotCount() {
@@ -2042,6 +2040,11 @@ public final class HeapDumpImpl implements HeapDump {
 
   private final Object strongRefsLock = new Object();
   private boolean strongRefsUnavailable; // guarded by strongRefsLock
+
+  /**
+   * Set by {@link #close()}: no strong-refs index is built after it, and {@link
+   * #getThreadLocalReader()} no longer caches views.
+   */
   private volatile boolean closed;
 
   /**
