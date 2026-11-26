@@ -132,8 +132,13 @@ and one unfrozen one, in plain words:
   `getPercentInstance`, `getIntegerInstance`, `getCurrencyInstance`,
   `getCompactNumberInstance`), `new DecimalFormat()`/`(String)`, any
   `java.util.Formatter` constructor without a `Locale`,
-  `DateTimeFormatter.ofPattern(String)` and `new SimpleDateFormat()`/`(String)`
-  (the list is `ArchitectureRules.DEFAULT_LOCALE_MEMBERS`). Pass a `Locale` —
+  `DateTimeFormatter.ofPattern(String)` and `ofLocalized*`,
+  `DateTimeFormatterBuilder.toFormatter()`, `new SimpleDateFormat()`/`(String)`,
+  the no-argument `DateFormat` factories, `DecimalFormatSymbols` and
+  `DateFormatSymbols` without a `Locale`, and `Console`
+  `readLine`/`readPassword(String, ...)` (the list is
+  `ArchitectureRules.DEFAULT_LOCALE_MEMBERS`; the fire test requires every
+  entry to be reported from a fixture). Pass a `Locale` —
   `Locale.ROOT` for anything a program, an agent or a bug report reads. On a
   ru-RU or de-DE host those calls wrote `"47,8%"` next to the JSON number
   `47.8` (issue #224); under ar-EG `%d` wrote Arabic-Indic digits.

@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.tngtech.archunit.ArchConfiguration;
+import com.tngtech.archunit.core.domain.JavaCall;
+import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
@@ -111,20 +114,41 @@ class ArchRuleFireTest {
             DefaultLocaleFormatFixture.class,
             DefaultLocaleFormatFixture.CustomStream.class);
     assertFires(ArchitectureRules.ruleJ(), "j:", DefaultLocaleFormatFixture.class, modules);
-    AssertionError failure =
-        assertThrows(
-            AssertionError.class, () -> ArchitectureRules.ruleJ().check(modules.classes()));
-    // Every branch fires, not only String.format: one fixture method per forbidden form
-    for (java.lang.reflect.Method m : DefaultLocaleFormatFixture.class.getDeclaredMethods()) {
-      if (m.isSynthetic()) {
-        continue;
-      }
-      // a call inside a lambda is reported from its synthetic lambda$<method>$N method
-      String msg = failure.getMessage();
+    String msg =
+        assertThrows(AssertionError.class, () -> ArchitectureRules.ruleJ().check(modules.classes()))
+            .getMessage();
+    // Every listed member must be reported, so a member the fixture does not call fails here
+    for (ArchitectureRules.DefaultLocaleMember m : ArchitectureRules.DEFAULT_LOCALE_MEMBERS) {
+      String target =
+          m.owner().getName() + "." + m.name() + "(" + String.join(", ", m.params()) + ")";
+      assertTrue(msg.contains(target), "rule (j) did not report " + target + ": " + msg);
+    }
+    // ...and every call in the fixture's all(), so dropping a member from the list fails here too
+    JavaClass fixture = new ClassFileImporter().importClass(DefaultLocaleFormatFixture.class);
+    JavaMethod all =
+        fixture.getMethod(
+            "all",
+            java.io.PrintWriter.class,
+            java.io.Console.class,
+            java.time.format.DateTimeFormatterBuilder.class,
+            Object.class);
+    List<JavaCall<?>> calls = new java.util.ArrayList<>(all.getCallsFromSelf());
+    assertTrue(calls.size() >= ArchitectureRules.DEFAULT_LOCALE_MEMBERS.size(), calls.toString());
+    for (JavaCall<?> call : calls) {
       assertTrue(
-          msg.contains("DefaultLocaleFormatFixture." + m.getName() + "(")
-              || msg.contains("DefaultLocaleFormatFixture.lambda$" + m.getName() + "$"),
-          "rule (j) did not report " + m.getName() + ": " + msg);
+          msg.contains(call.getDescription()),
+          "rule (j) did not report " + call.getDescription() + ": " + msg);
+    }
+    // ...and each other form: subtype owners, references, a lambda, the Formatter branch
+    for (String expected :
+        List.of(
+            "DefaultLocaleFormatFixture.printStreamSubclassPrintf(",
+            "DefaultLocaleFormatFixture.decimalFormatGetInstance(",
+            "DefaultLocaleFormatFixture.methodReference(",
+            "DefaultLocaleFormatFixture.constructorReference(",
+            "DefaultLocaleFormatFixture.inLambda(",
+            "DefaultLocaleFormatFixture.formatterNoLocale(")) {
+      assertTrue(msg.contains(expected), "rule (j) did not report " + expected + ": " + msg);
     }
   }
 

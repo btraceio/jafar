@@ -43,7 +43,10 @@ final class TimeFormats {
     if (format == null || format.isEmpty()) {
       return DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     }
-    return DateTimeFormatter.ofPattern(format, Locale.ROOT);
+    // A user's pattern: Locale.US keeps the English names it always had on an English machine
+    // ("Tuesday, 13 August 2024"; Locale.ROOT abbreviates MMMM/EEEE and changes era, period and
+    // zone text) and gives the same output on every machine (issue #224)
+    return DateTimeFormatter.ofPattern(format, Locale.US);
   }
 
   /**

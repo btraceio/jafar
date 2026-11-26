@@ -1,20 +1,31 @@
 package io.jafar.arch.fixture;
 
+import java.io.Console;
 import java.io.PrintStream;
+import java.io.PrintWriter;
+import java.text.DateFormat;
+import java.text.DateFormatSymbols;
 import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.text.MessageFormat;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.FormatStyle;
 import java.util.Formatter;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 /**
- * Fire-test violators for rule (j) (see ArchRuleFireTest): one method per form the rule forbids,
- * each formatting with the JVM default locale. Never imported as part of a real module; only the
- * fire test places it there. The method names are what the fire test looks for in the failure.
+ * Fire-test violators for rule (j) (see ArchRuleFireTest): every member of {@code
+ * ArchitectureRules.DEFAULT_LOCALE_MEMBERS} is called here on its declared owner, plus a subtype
+ * owner, a method reference, a constructor reference, a call inside a lambda and the {@code
+ * Formatter} branch. Never imported as part of a real module; only the fire test places it there.
+ * The fire test checks that every listed member is reported, so a member without a call here fails
+ * it.
  */
-@SuppressWarnings("unused")
+@SuppressWarnings({"unused", "ResultOfMethodCallIgnored"})
 public final class DefaultLocaleFormatFixture {
 
   /** A PrintStream subclass: the owner must match with its subtypes. */
@@ -24,12 +35,63 @@ public final class DefaultLocaleFormatFixture {
     }
   }
 
-  public static String stringFormat(double v) {
-    return String.format("%.1f%%", v);
+  /** Only forbidden calls here: the fire test requires every call in this method to be reported. */
+  public static void all(PrintWriter w, Console c, DateTimeFormatterBuilder b, Object v) {
+    String.format("%.1f", v);
+    "%.1f".formatted(v);
+    System.out.printf("%.1f", v);
+    System.out.format("%.1f", v);
+    w.printf("%.1f", v);
+    w.format("%.1f", v);
+    c.printf("%.1f", v);
+    c.format("%.1f", v);
+    c.readLine("%.1f", v);
+    c.readPassword("%.1f", v);
+    MessageFormat.format("{0}", v);
+    new MessageFormat("{0}");
+    NumberFormat.getInstance();
+    NumberFormat.getNumberInstance();
+    NumberFormat.getPercentInstance();
+    NumberFormat.getIntegerInstance();
+    NumberFormat.getCurrencyInstance();
+    NumberFormat.getCompactNumberInstance();
+    new DecimalFormat();
+    new DecimalFormat("0.0");
+    new DecimalFormatSymbols();
+    DecimalFormatSymbols.getInstance();
+    DateFormat.getInstance();
+    DateFormat.getDateInstance();
+    DateFormat.getDateInstance(DateFormat.SHORT);
+    DateFormat.getTimeInstance();
+    DateFormat.getTimeInstance(DateFormat.SHORT);
+    DateFormat.getDateTimeInstance();
+    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
+    new DateFormatSymbols();
+    DateFormatSymbols.getInstance();
+    new SimpleDateFormat();
+    new SimpleDateFormat("dd MMM yyyy");
+    DateTimeFormatter.ofPattern("dd MMM yyyy");
+    DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT);
+    DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT);
+    DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT);
+    DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.SHORT);
+    b.toFormatter();
   }
 
-  public static String stringFormatted(double v) {
-    return "%.1f".formatted(v);
+  public static void printStreamSubclassPrintf(double v) {
+    new CustomStream().printf("%.1f", v);
+  }
+
+  public static NumberFormat decimalFormatGetInstance() {
+    return DecimalFormat.getInstance();
+  }
+
+  public static BiFunction<String, Object[], String> methodReference() {
+    return String::format;
+  }
+
+  public static Supplier<DecimalFormat> constructorReference() {
+    return DecimalFormat::new;
   }
 
   public static String inLambda(double v) {
@@ -37,63 +99,7 @@ public final class DefaultLocaleFormatFixture {
     return f.apply(v);
   }
 
-  public static BiFunction<String, Object[], String> methodReference() {
-    return String::format;
-  }
-
-  public static void printStreamPrintf(double v) {
-    System.out.printf("%.1f", v);
-  }
-
-  public static void printStreamSubclassPrintf(double v) {
-    new CustomStream().printf("%.1f", v);
-  }
-
-  public static void printWriterFormat(java.io.PrintWriter w, double v) {
-    w.format("%.1f", v);
-  }
-
-  public static void consolePrintf(double v) {
-    System.console().printf("%.1f", v);
-  }
-
-  public static String messageFormatStatic(double v) {
-    return MessageFormat.format("{0}", v);
-  }
-
-  public static String messageFormatInstance(double v) {
-    return new MessageFormat("{0}").format(new Object[] {v});
-  }
-
-  public static NumberFormat numberFormatFactory() {
-    return NumberFormat.getPercentInstance();
-  }
-
-  public static NumberFormat decimalFormatGetInstance() {
-    return DecimalFormat.getInstance();
-  }
-
-  public static NumberFormat compactNumberFactory() {
-    return NumberFormat.getCompactNumberInstance();
-  }
-
-  public static DecimalFormat decimalFormatNoArgs() {
-    return new DecimalFormat();
-  }
-
-  public static DecimalFormat decimalFormatPattern() {
-    return new DecimalFormat("0.0");
-  }
-
   public static String formatterNoLocale(double v) {
     return new Formatter().format("%.1f", v).toString();
-  }
-
-  public static DateTimeFormatter dateTimePattern() {
-    return DateTimeFormatter.ofPattern("dd MMM yyyy");
-  }
-
-  public static SimpleDateFormat simpleDateFormat() {
-    return new SimpleDateFormat("dd MMM yyyy");
   }
 }

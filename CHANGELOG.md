@@ -135,8 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON
   numbers written with a dot, so a client parsing the strings failed or misread them. Every
   `String.format`, `formatted` and `printf` in the shipped modules now passes `Locale.ROOT`, and so
-  does every `DateTimeFormatter.ofPattern`: a `timerange(format=...)`/`asDateTime(format=...)`
-  pattern with `MMM` or `EEE` printed "Aug." under de-DE and Cyrillic names under ru-RU. Under a
+  does every fixed `DateTimeFormatter.ofPattern`. A `timerange(format=...)`/`asDateTime(format=...)`
+  pattern is formatted in `Locale.US` on every machine: with `MMM` or `EEE` it printed "Aug." and
+  "Di." under de-DE and Cyrillic names under ru-RU; English output is unchanged. Under a
   locale with non-ASCII digits (ar-EG, fa-IR, ...) jafar-processor's `%d` template generated
   `requireStorage(metadata, metaField, ٠, ...)`, which does not compile; it now writes ASCII
   digits. Arch rule (j) fails the build on a new default-locale call (`doc/agents/Gates.md`)
