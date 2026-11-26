@@ -9,6 +9,7 @@ import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.MinimalHprofBuilder;
 import io.jafar.hdump.shell.MinimalHprofBuilder.Field;
+import io.jafar.shell.core.SessionResolver;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -283,7 +284,8 @@ class StreamingPathTest {
   }
 
   @Test
-  void groupByDefaultFieldIsOnePerGroupAndNeverAnIdentifier(@TempDir Path dir) throws IOException {
+  void groupByDefaultFieldIsNeverAnIdentifierOrAJoinCopyOfOne(@TempDir Path dir)
+      throws IOException {
     // Two JAVA_FRAME roots: the first points at an object that is not in the dump (no shallowSize,
     // only threadSerial/frameNumber), the second at the HashMap. Per-row default fields added the
     // thread serial into the shallow-size sum.
@@ -313,6 +315,19 @@ class StreamingPathTest {
                   s, HdumpPathParser.parse("gcroots/JAVA_FRAME | groupBy(type, agg=sum)"))
               .get(0);
       assertEquals(shallow, ((Number) row.get("sum")).doubleValue(), row.toString());
+
+      // After a join the rows also carry baseline.objectId, objectIdDelta, ...: the unresolved
+      // root (first) offered baseline.objectId and its whole group summed 999999 twice.
+      SessionResolver self =
+          ref -> Optional.of(new io.jafar.shell.core.SessionManager.SessionRef<>(1, "self", s));
+      Map<String, Object> joined =
+          HdumpPathEvaluator.evaluate(
+                  s,
+                  HdumpPathParser.parse(
+                      "gcroots/JAVA_FRAME | join(session=1) | groupBy(type, agg=sum)"),
+                  self)
+              .get(0);
+      assertEquals(shallow, ((Number) joined.get("sum")).doubleValue(), joined.toString());
     }
   }
 

@@ -110,12 +110,32 @@ public final class HdumpPathEvaluator {
             + ")");
   }
 
+  private static final Set<String> IDENTIFIER_COLUMNS =
+      Set.of(
+          ObjectFields.ID,
+          GcRootFields.OBJECT_ID,
+          GcRootFields.THREAD_SERIAL,
+          GcRootFields.FRAME_NUMBER);
+
+  /**
+   * An identifier column, or a copy {@code join} made of one ({@code baseline.objectId}, {@code
+   * objectIdDelta}): after a join, an unresolved GC root's first number was {@code
+   * baseline.objectId}, and its group summed object ids.
+   */
+  private static boolean isIdentifierColumn(String column) {
+    String base = column.startsWith("baseline.") ? column.substring("baseline.".length()) : column;
+    if (base.endsWith("Delta")) {
+      base = base.substring(0, base.length() - "Delta".length());
+    }
+    return IDENTIFIER_COLUMNS.contains(base);
+  }
+
   /**
    * The column a {@code groupBy} aggregates when it has no {@code value=}: {@code shallowSize}
    * where the rows carry it (objects), otherwise the first numeric column that is not an identifier
-   * ({@code id}, {@code objectId}, a GC root's {@code threadSerial} or {@code frameNumber}).
-   * Summing object ids is meaningless, and it is what {@code groupBy(class, agg=sum)} used to
-   * return.
+   * ({@code id}, {@code objectId}, a GC root's {@code threadSerial} or {@code frameNumber}, and
+   * their {@code join} copies, see {@link #isIdentifierColumn}). Summing object ids is meaningless,
+   * and it is what {@code groupBy(class, agg=sum)} used to return.
    */
   static String defaultAggregationField(Map<String, Object> row) {
     if (row.get(ObjectFields.SHALLOW_SIZE) instanceof Number) {
@@ -123,11 +143,7 @@ public final class HdumpPathEvaluator {
     }
     for (Map.Entry<String, Object> e : row.entrySet()) {
       String k = e.getKey();
-      if (e.getValue() instanceof Number
-          && !ObjectFields.ID.equals(k)
-          && !GcRootFields.OBJECT_ID.equals(k)
-          && !GcRootFields.THREAD_SERIAL.equals(k)
-          && !GcRootFields.FRAME_NUMBER.equals(k)) {
+      if (e.getValue() instanceof Number && !isIdentifierColumn(k)) {
         return k;
       }
     }
@@ -496,7 +512,8 @@ public final class HdumpPathEvaluator {
     private double min = Double.POSITIVE_INFINITY;
     private double max = Double.NEGATIVE_INFINITY;
     // Without value=: the field this group aggregates, fixed by the first row that offers one, so
-    // rows with different columns (a GC root whose object is unresolvable) are skipped, not mixed
+    // rows offering a different column are skipped, not mixed in. With the identifier exclusions no
+    // current root produces such rows; this keeps a future column from being summed with another.
     private String defaultField;
 
     GroupAccumulator(List<Object> key, GroupByOp op) {
