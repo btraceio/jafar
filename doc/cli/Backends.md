@@ -62,6 +62,11 @@ API: symbol-backed strings appear as `java.lang.String`, rather than separate ra
 Types unreachable from event field descriptors, raw constant pools, and chunk headers are not
 exposed by this backend. A type's presence in metadata does not mean it emitted events.
 
+Event values use the same untyped model on both backends: a struct is a field map, an array of
+structs (such as `stackTrace.frames`) is an `Object[]` of field maps, and a primitive array stays a
+primitive array. Before #196 the JDK backend and live `tail` passed the JDK API's raw
+`RecordedFrame` objects through, and `tail --format json` printed `"frames":"[Ljava.lang.Object;@…"`.
+
 In the TUI metadata sidebar, `/` filters type names. Clearing or dismissing a filter keeps the
 selected type visible; canceling a search with no matches restores a selection in the full list.
 

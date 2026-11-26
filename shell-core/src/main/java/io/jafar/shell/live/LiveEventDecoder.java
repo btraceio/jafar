@@ -13,7 +13,8 @@ import jdk.jfr.consumer.RecordedObject;
  *
  * <ul>
  *   <li>the {@code jdk} file backend ({@code JdkJfrBackend}), which uses {@link
- *       #decodeFields(RecordedEvent)} verbatim — file-backend output must stay byte-identical;
+ *       #decodeFields(RecordedEvent)} verbatim, so its output shape is a file-backend contract
+ *       (pinned field-for-field by LiveEventDecoderTest);
  *   <li>the live {@code tail} path, which uses {@link #decode(RecordedEvent)}: the same field map
  *       but with {@code startTime} replaced by absolute epoch nanos (matching the {@code timeRange}
  *       decorator contract) and {@code duration} by nanos. Reason: {@code
@@ -84,10 +85,28 @@ public final class LiveEventDecoder {
     return map;
   }
 
-  /** Recursive RecordedObject/list flattening; primitives and strings pass through. */
+  /**
+   * Recursive flattening into the untyped value model the {@code jafar} backend produces ({@code
+   * Values.resolvedDeep}): a {@code RecordedObject} becomes a field map, a {@code List} a list of
+   * converted elements, an object array (the JDK API's struct arrays, e.g. {@code
+   * RecordedStackTrace}'s frames) an {@code Object[]} of converted elements, and a primitive array
+   * stays the primitive array. Strings and boxed primitives pass through. Object arrays used to
+   * pass through as raw {@code Object[]} of {@code RecordedFrame}s (issue #196).
+   */
   public static Object convertValue(Object value) {
     if (value == null) {
       return null;
+    }
+    if (value.getClass().isArray()) {
+      if (value.getClass().getComponentType().isPrimitive()) {
+        return value;
+      }
+      Object[] in = (Object[]) value;
+      Object[] out = new Object[in.length];
+      for (int i = 0; i < in.length; i++) {
+        out[i] = convertValue(in[i]);
+      }
+      return out;
     }
     if (value instanceof RecordedObject ro) {
       Map<String, Object> map = new java.util.LinkedHashMap<>();

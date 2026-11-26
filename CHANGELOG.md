@@ -140,6 +140,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **The JDK backend and live `tail` passed struct arrays through as raw JDK objects (#196).**
+  `stackTrace.frames` was an `Object[]` of `jdk.jfr.consumer.RecordedFrame`, so `tail --format json`
+  printed `"frames":"[Ljava.lang.Object;@44f75083"` and queries saw JDK API objects instead of
+  untyped values. Object arrays are now converted element by element into the model the `jafar`
+  backend produces (an `Object[]` of field maps; primitive arrays unchanged), and `tail`'s JSON
+  writes arrays as JSON arrays
 - **`jfr_compare` and `jfr-shell compare` treated a JVM-generated frame as a different frame in
   each recording.** Hidden classes carry a per-run address (`LambdaForm$MH/0x00007f2e141a1000`) and
   lambda classes a per-run number (`Foo$$Lambda$14`), so every such frame read as gone from one
