@@ -242,10 +242,7 @@ public final class HeapSession implements Session {
     // Inform user about computation
     System.err.println();
     System.err.println("Computing full dominator tree for dominators() operator...");
-    System.err.println(
-        String.format(
-            "Analyzing %,d objects (estimated time: 15-30 seconds for 10M objects)",
-            dump.getObjectCount()));
+    System.err.println(String.format("Analyzing %,d objects", dump.getObjectCount()));
     System.err.println();
 
     final String[] spinner = {"|", "/", "-", "\\"};
