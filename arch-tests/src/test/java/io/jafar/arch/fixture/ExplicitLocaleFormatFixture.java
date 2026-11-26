@@ -16,9 +16,11 @@ import java.util.Locale;
 
 /**
  * Negative fixture for rule (j) (see ArchRuleFireTest): the Locale-taking overload of every API
- * {@link DefaultLocaleFormatFixture} calls without one, where the JDK has one ({@code
- * DateTimeFormatter.ofLocalized*} do not: they take a locale only through {@code withLocale}). Rule
- * (j) must report none of these, so a rule that matches too broadly fails the fire test.
+ * {@link DefaultLocaleFormatFixture} calls without one, where the JDK has one. Four listed groups
+ * have none and are absent: {@code String.formatted}, the static {@code MessageFormat.format},
+ * {@code DateFormat.getInstance()} and {@code DateTimeFormatter.ofLocalized*} (which take a locale
+ * only through {@code withLocale}). Rule (j) must report none of these, so a rule that matches too
+ * broadly fails the fire test.
  */
 @SuppressWarnings({"unused", "ResultOfMethodCallIgnored"})
 public final class ExplicitLocaleFormatFixture {
