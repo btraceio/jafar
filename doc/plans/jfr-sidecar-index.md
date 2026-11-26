@@ -1,6 +1,7 @@
 # JFR sidecar index: persisted per-chunk statistics for a recording
 
-Status: design for review. No production code exists. Step 4 of "JFR as a query engine"; steps 1
+Status: design accepted 2026-11-26; every decision in section 14 was taken as recommended. No
+production code exists yet; phase 0 (section 13) is next. Step 4 of "JFR as a query engine"; steps 1
 and 2 (type filter, time-range chunk pruning) are implemented
 ([jfrpath-predicate-pushdown.md](jfrpath-predicate-pushdown.md), sections 10 and 11). The numbers
 in section 3.3 come from throwaway code that was not committed; every other number is cited.
@@ -333,7 +334,9 @@ the wins section 3.2 shows.
 | 3 | jfr-shell, jfr-mcp, docs | `index`, `index status`; `jfr_open` argument; `doc/cli/JFRPath.md`, changelog | R1: the queries of section 8 typed into the fat jars and timed on the 4.16 GB file against `MultiGbQueries.md` section 2 |
 | 4 | later | incremental extension for grown files; constant-pool sets (4.2) | |
 
-## 14. Open decisions
+## 14. Decisions
+
+**Decided 2026-11-26 with the maintainer: every recommendation below, O1 to O9, as written.**
 
 | # | Question | Recommendation |
 |---|---|---|
