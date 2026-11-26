@@ -24,6 +24,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -157,7 +158,6 @@ public final class HeapDumpImpl implements HeapDump {
     this.path = path;
     this.reader = reader;
     this.options = options;
-    this.threadLocalReader = ThreadLocal.withInitial(reader::createView);
   }
 
   /**
@@ -1606,10 +1606,64 @@ public final class HeapDumpImpl implements HeapDump {
    * interfere — no locking required.
    */
   HprofReader getThreadLocalReader() {
-    return threadLocalReader.get();
+    if (closed) {
+      return reader.createView();
+    }
+    ReaderSlot slot = threadLocalReader.get();
+    if (slot == null) {
+      slot = new ReaderSlot();
+      synchronized (readerSlots) {
+        if (closed) {
+          return reader.createView();
+        }
+        // a dead thread's entry is gone with it; without pruning, a dump open for hours would keep
+        // one slot, and its view, per thread of the server's pool that ever read it
+        readerSlots.removeIf(ReaderSlot::orphaned);
+        readerSlots.add(slot);
+      }
+      threadLocalReader.set(slot);
+    }
+    HprofReader view = slot.view;
+    if (view == null) {
+      view = reader.createView();
+      slot.view = view;
+      // close() sets closed before it empties the slots; one of the two sees the other's write
+      if (closed) {
+        slot.view = null;
+      }
+    }
+    return view;
   }
 
-  private final ThreadLocal<HprofReader> threadLocalReader;
+  /**
+   * Each thread's view of the mapped buffer. A {@code ThreadLocalMap} keeps an entry's value
+   * reachable until its thread exits, and {@link #close()} can remove only the closing thread's
+   * entry, so the entry holds a {@link ReaderSlot} that {@link #close()} empties: otherwise a
+   * thread that read this dump keeps the file mapped, and on Windows undeletable, for as long as it
+   * lives (#227).
+   */
+  private final ThreadLocal<ReaderSlot> threadLocalReader = new ThreadLocal<>();
+
+  /** The slots handed out by {@link #getThreadLocalReader()}; guarded by itself. */
+  private final List<ReaderSlot> readerSlots = new ArrayList<>();
+
+  /** How many threads' views this dump holds; for tests. */
+  int readerSlotCount() {
+    synchronized (readerSlots) {
+      return readerSlots.size();
+    }
+  }
+
+  private static final class ReaderSlot {
+    volatile HprofReader view;
+    final WeakReference<Thread> owner = new WeakReference<>(Thread.currentThread());
+
+    /** Whether the thread this slot belongs to has exited, taking its entry with it. */
+    boolean orphaned() {
+      Thread thread = owner.get();
+      return thread == null || !thread.isAlive();
+    }
+  }
 
   String getString(long id) {
     return strings.get(id);
@@ -1985,6 +2039,11 @@ public final class HeapDumpImpl implements HeapDump {
 
   private final Object strongRefsLock = new Object();
   private boolean strongRefsUnavailable; // guarded by strongRefsLock
+
+  /**
+   * Set by {@link #close()}: no strong-refs index is built after it, and {@link
+   * #getThreadLocalReader()} no longer caches views.
+   */
   private volatile boolean closed;
 
   /**
@@ -2803,7 +2862,15 @@ public final class HeapDumpImpl implements HeapDump {
     // Capture cache size before clearing
     int cachedObjects = getCachedObjectCount();
 
-    // Release this thread's reader view (other threads' views are GC'd with the buffer)
+    // Other threads' entries cannot be removed from here; emptying their slots releases their
+    // views of the mapped buffer (see threadLocalReader).
+    closed = true;
+    synchronized (readerSlots) {
+      for (ReaderSlot slot : readerSlots) {
+        slot.view = null;
+      }
+      readerSlots.clear();
+    }
     threadLocalReader.remove();
 
     reader.close();
