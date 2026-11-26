@@ -142,6 +142,15 @@ public class IndexedBenchmark {
     return check("hybrid", sum);
   }
 
+  /** The full dominator tree (exact retained sizes for every object). */
+  @Benchmark
+  public long fullDominatorTree() {
+    dump.computeFullDominatorTree(null);
+    long sum = 0;
+    for (HeapObject t : targets) sum = sum * 31 + t.getRetainedSize();
+    return check("full", sum);
+  }
+
   /** Paths for 20 entities (one BFS each in INDEXED mode). */
   @Benchmark
   public long pathsToGcRoot20() {

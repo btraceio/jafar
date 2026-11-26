@@ -633,17 +633,67 @@ class DominatorOracleTest {
     int[][] adj = w.strongAdjacency();
 
     long[] shallow;
+    DominatorOracle[] oracleRef = new DominatorOracle[1];
+    List<List<Integer>> memChildren = new ArrayList<>();
     // --- exact dominators + paths on one parse
     try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
       shallow = shallowSizes(dump, w);
       DominatorOracle oracle = new DominatorOracle(adj, w.rootNodes(), shallow);
       checkDominators(dump, w, oracle);
       checkPaths(dump, w, adj);
+      oracleRef[0] = oracle;
+      for (int v = 0; v < w.nodeCount(); v++) {
+        memChildren.add(childNodes(dump, obj(dump, v)));
+      }
+    }
+    // --- the full dominator tree in INDEXED mode (on-disk graph, no objects loaded): with a cache
+    // of one object (every instance evicted: results must live in the dump, not the instances),
+    // and with a cache holding every object, loaded before the tree is computed
+    ParserOptions evicting =
+        ParserOptions.builder()
+            .parsingMode(HeapDumpParser.ParsingMode.INDEXED)
+            .objectCacheSize(1)
+            .build();
+    try (HeapDump dump = HeapDumpParser.parse(file, evicting)) {
+      checkDominators(dump, w, oracleRef[0]);
+      checkChildrenOrder(dump, w, memChildren);
+    }
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.INDEXED)) {
+      dump.getObjects().forEach(HeapObject::getShallowSize); // all cached before the tree
+      checkDominators(dump, w, oracleRef[0]);
+    }
+    // --- reopened: retained.idx holds the exact sizes of reachable objects and the approximate
+    // ones (INDEXED rule: inbound over every field) of unreachable objects
+    long[] approx =
+        DominatorOracle.approximateRetained(w.strongAdjacency(), w.allAdjacency(), shallow);
+    try (HeapDump dump = HeapDumpParser.parse(file, evicting)) {
+      Mismatches mm = new Mismatches("reopened after the full tree");
+      for (int v = 0; v < w.nodeCount(); v++) {
+        long expected = oracleRef[0].reachable[v] ? oracleRef[0].retained[v] : approx[v];
+        mm.check(v, "retainedSize", expected, obj(dump, v).getRetainedSize());
+      }
+      mm.assertNone();
     }
     // --- approximate retained sizes on a fresh parse (full tree also sets retained sizes)
     try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
       checkApproximate(dump, w, adj, shallow);
     }
+  }
+
+  private static List<Integer> childNodes(HeapDump dump, HeapObject o) {
+    List<Integer> out = new ArrayList<>();
+    for (HeapObject c : dump.getDominatedObjects(o)) out.add(nodeOf(c));
+    return out;
+  }
+
+  /** getDominatedObjects in the same order as IN_MEMORY mode gave. */
+  private static void checkChildrenOrder(
+      HeapDump dump, GraphHeapDumpWriter w, List<List<Integer>> expected) {
+    Mismatches mm = new Mismatches("dominated children order (INDEXED vs IN_MEMORY)");
+    for (int v = 0; v < w.nodeCount(); v++) {
+      mm.check(v, "children", expected.get(v), childNodes(dump, obj(dump, v)));
+    }
+    mm.assertNone();
   }
 
   private static void checkDominators(HeapDump dump, GraphHeapDumpWriter w, DominatorOracle o) {

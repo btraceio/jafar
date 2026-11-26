@@ -151,6 +151,11 @@ public interface HeapDump extends Closeable {
    * <p>Optional capability — implementations without full dominator tree support throw {@link
    * UnsupportedOperationException}; check {@link #hasFullDominatorTree()} after computing.
    *
+   * <p>For dumps parsed in INDEXED mode the tree is computed on the on-disk reference index without
+   * loading objects; the exact retained sizes replace the index's {@code retained.idx} (so they are
+   * also what a later open of the dump reads), and dominator relationships are kept per dump, about
+   * 12 bytes per object.
+   *
    * @param progressCallback optional callback for progress updates (may be null)
    */
   default void computeFullDominatorTree(HeapDumpParser.ProgressCallback progressCallback) {

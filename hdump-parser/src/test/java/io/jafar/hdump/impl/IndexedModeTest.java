@@ -115,6 +115,52 @@ class IndexedModeTest {
     return result;
   }
 
+  /**
+   * No writable index files: strongrefs.idx and retained.idx are blocked by non-empty directories
+   * of the same name. The full dominator tree then decodes references from the dump and keeps the
+   * exact sizes in heap — results still independent of the LRU cache.
+   */
+  @Test
+  void fullDominatorTreeWithoutWritableIndexFiles(@TempDir Path dir) throws IOException {
+    GraphHeapDumpWriter w = DominatorOracleTest.randomGraph(new Random(31), 500, 0.45, false, 3);
+    Path file = dir.resolve("graph.hprof");
+    w.write(file, 1 << 24);
+    long[] shallow;
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
+      shallow = new long[w.nodeCount()];
+      for (int v = 0; v < shallow.length; v++) {
+        shallow[v] = dump.getObjectById(w.objectId(v)).orElseThrow().getShallowSize();
+      }
+    }
+    DominatorOracle oracle = new DominatorOracle(w.strongAdjacency(), w.rootNodes(), shallow);
+    ParserOptions evicting =
+        ParserOptions.builder()
+            .parsingMode(HeapDumpParser.ParsingMode.INDEXED)
+            .objectCacheSize(1)
+            .build();
+    try (HeapDump dump = HeapDumpParser.parse(file, evicting)) {} // build the base indexes
+    Path indexDir = dir.resolve("graph.hprof.idx");
+    for (String name :
+        new String[] {IndexFormat.STRONGREFS_INDEX_NAME, IndexFormat.RETAINED_INDEX_NAME}) {
+      Files.createDirectories(indexDir.resolve(name));
+      Files.writeString(indexDir.resolve(name).resolve("blocker"), "x");
+    }
+    try (HeapDump dump = HeapDumpParser.parse(file, evicting)) {
+      HeapDumpImpl impl = (HeapDumpImpl) dump;
+      dump.computeFullDominatorTree(null);
+      assertTrue(impl.strongRefsIndex() == null, "strongrefs.idx must have been unwritable");
+      int mismatches = 0;
+      for (int v = 0; v < w.nodeCount(); v++) {
+        HeapObjectImpl o = (HeapObjectImpl) dump.getObjectById(w.objectId(v)).orElseThrow();
+        HeapObjectImpl d = o.getDominator();
+        int idom = d == null ? -1 : w.nodeOfId(d.getId());
+        if (idom != oracle.idom[v]) mismatches++;
+        if (oracle.reachable[v] && o.getRetainedSize() != oracle.retained[v]) mismatches++;
+      }
+      assertEquals(0, mismatches, "dominators / exact sizes without writable index files");
+    }
+  }
+
   /** An unknown -Djafar.hdump.retained.strategy is ignored (AUTO), not a broken class. */
   @Test
   void unknownStrategyPropertyFallsBackToAuto(@TempDir Path dir) throws IOException {

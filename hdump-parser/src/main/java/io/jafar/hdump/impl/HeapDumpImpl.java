@@ -98,7 +98,16 @@ public final class HeapDumpImpl implements HeapDump {
 
   // Dominator children map: dominator ID -> list of dominated object IDs
   // Built during full dominator tree computation for O(1) lookup
-  private DominatorTreeComputer.Result dominatorChildrenMap;
+  private DominatorTreeComputer.Children dominatorChildrenMap;
+
+  // INDEXED mode, after computeFullDominatorTree: immediate dominator per node (id32 + 1), as a
+  // node (0: none — a GC root or reachable from several roots; -1: not reachable)
+  private volatile int[] indexedIdom;
+
+  // INDEXED mode: exact retained sizes by id32, kept in heap only when the full dominator tree
+  // could not replace retained.idx (read-only index directory, a platform that refuses to replace
+  // a mapped file); null otherwise
+  private volatile long[] heapRetainedSizes;
 
   /** Temporary storage for GC root data during Pass 2 (indexed mode). */
   private static class GcRootData {
@@ -1696,8 +1705,12 @@ public final class HeapDumpImpl implements HeapDump {
         }
       }
 
-      // Load retained size from persistent index if available
-      if (retainedSizeReader != null) {
+      // Load retained size from persistent index if available (or the exact sizes the full
+      // dominator tree kept in heap when retained.idx could not be replaced)
+      long[] heapSizes = heapRetainedSizes;
+      if (heapSizes != null && id32 < heapSizes.length) {
+        obj.setRetainedSize(heapSizes[id32]);
+      } else if (retainedSizeReader != null) {
         try {
           long retainedSize = retainedSizeReader.getRetainedSize(id32);
           obj.setRetainedSize(retainedSize);
@@ -2114,13 +2127,17 @@ public final class HeapDumpImpl implements HeapDump {
    * Package-private for use by HeapObjectImpl.
    */
   long getRetainedSizeFromIndex(long objectId) {
-    if (retainedSizeReader == null || addressToId32 == null) {
+    if ((retainedSizeReader == null && heapRetainedSizes == null) || addressToId32 == null) {
       return -1;
     }
 
     int id32 = addressToId32.get(objectId);
     if (id32 == -1) {
       return -1;
+    }
+    long[] heapSizes = heapRetainedSizes;
+    if (heapSizes != null && id32 < heapSizes.length) {
+      return heapSizes[id32];
     }
 
     try {
@@ -2276,27 +2293,158 @@ public final class HeapDumpImpl implements HeapDump {
    */
   public void computeFullDominatorTree(DominatorTreeComputer.ProgressCallback progressCallback) {
     if (fullDominatorTreeComputed) return;
+    synchronized (this) { // as computeDominators: both write retained.idx in INDEXED mode
+      if (fullDominatorTreeComputed) return;
+      computeFullDominatorTreeLocked(progressCallback);
+    }
+  }
 
-    // Note: For very large heaps in indexed mode, this will stream through all objects
-    // Objects are cached in LRU with bounded memory usage, but performance may be slower
-    // than in-memory mode.For heaps > 50M objects, consider using computeDominators() instead.
-
+  private void computeFullDominatorTreeLocked(
+      DominatorTreeComputer.ProgressCallback progressCallback) {
     LOG.info("Computing full dominator tree for {} objects...", objectCount);
 
-    // In-memory mode: use unbounded map directly
-    // Indexed mode: stream objects into map without intermediate collection (avoid OOM)
-    Long2ObjectMap<HeapObjectImpl> allObjects;
     if (objectIndexReader != null) {
-      allObjects = new Long2ObjectOpenHashMap<>(objectCount);
-      getObjects().forEach(obj -> allObjects.put(obj.getId(), (HeapObjectImpl) obj));
-    } else {
-      allObjects = objectsByIdUnbounded;
+      // Unreachable objects keep an approximate size in retained.idx (it persists across opens;
+      // with -1 there, a later session could never compute it), so make sure there is one.
+      if (retainedSizeReader == null) {
+        try {
+          computeDominators();
+        } catch (RuntimeException e) { // e.g. retained.idx cannot be written: sizes stay in heap
+          LOG.warn(
+              "Approximate retained sizes unavailable ({}); unreachable objects get -1",
+              e.toString());
+        }
+      }
+      // null (no writable index directory): references are decoded from the dump instead
+      computeFullDominatorTreeIndexed(strongRefsIndex(), progressCallback);
+      dominatorsComputed = true;
+      fullDominatorTreeComputed = true;
+      return;
     }
 
     dominatorChildrenMap =
-        DominatorTreeComputer.computeFull(this, allObjects, gcRoots, progressCallback);
+        DominatorTreeComputer.computeFull(this, objectsByIdUnbounded, gcRoots, progressCallback);
     dominatorsComputed = true;
     fullDominatorTreeComputed = true;
+  }
+
+  /**
+   * INDEXED mode: Lengauer-Tarjan over the strong-reference graph by id32 (nodes id32 + 1, class
+   * entries excluded — the object-based path, over getObjects(), never had them as nodes, so GC
+   * roots and references naming a class are dropped as before), without loading objects. Edges come
+   * from strongrefs.idx, or are decoded from the dump when {@code stored} is null.
+   *
+   * <p>Exact retained sizes replace retained.idx, so they survive the LRU cache and a reopen;
+   * unreachable objects keep their approximate size (computed first if there was none), class
+   * entries 0. If retained.idx cannot be replaced, the sizes are kept in heap for this dump instead
+   * (8 bytes per id32), with a warning. Kept in heap either way: the immediate dominator of every
+   * node and the children CSR (about 12 bytes per id32). Transient: what {@link
+   * DominatorTreeComputer#compute} needs (about 70 bytes per id32 plus 4 per reference at its
+   * peak), then 12 bytes per id32 for the results. A caller still holding an evicted instance keeps
+   * its old size; fresh lookups see the new one.
+   */
+  private void computeFullDominatorTreeIndexed(
+      StrongRefsIndex stored, DominatorTreeComputer.ProgressCallback progressCallback) {
+    long startTime = System.currentTimeMillis();
+    IndexedRefs refs = new IndexedRefs(this, stored);
+    final int count = refs.size();
+    final int n = count + 1;
+    java.util.BitSet classEntry = new java.util.BitSet(count);
+    for (int i = 0; i < count; i++) {
+      if (refs.isClassEntry(i)) classEntry.set(i);
+    }
+    int[] roots =
+        DominatorTreeComputer.rootNodes(
+            gcRoots,
+            addr -> {
+              int i = addressToId32.get(addr);
+              return i < 0 || classEntry.get(i) ? -1 : i + 1;
+            },
+            n);
+    DominatorTreeComputer.Tree tree =
+        DominatorTreeComputer.compute(
+            n,
+            roots,
+            (w, out) -> {
+              int k = refs.strongRefs(w - 1);
+              int[] r = refs.refs();
+              for (int j = 0; j < k; j++) {
+                if (!classEntry.get(r[j])) out.add(r[j] + 1);
+              }
+            },
+            v -> refs.shallowSize(v - 1),
+            progressCallback);
+
+    int[] idomByNode = new int[n];
+    java.util.Arrays.fill(idomByNode, -1);
+    long[] sizes = new long[count];
+    for (int i = 0; i < count; i++) {
+      sizes[i] = classEntry.get(i) ? 0 : storedRetainedSize(i);
+    }
+    for (int w = 1; w < tree.reached; w++) {
+      int v = tree.vertex[w];
+      int d = tree.idom[w];
+      idomByNode[v] = d != 0 ? tree.vertex[d] : 0;
+      sizes[v - 1] = tree.retained[w];
+    }
+
+    boolean persisted = false;
+    try {
+      io.jafar.hdump.index.RetainedSizeWriter writer =
+          new io.jafar.hdump.index.RetainedSizeWriter(indexDir, count);
+      try {
+        for (int i = 0; i < count; i++) writer.writeEntry(i, sizes[i]);
+      } finally {
+        writer.close();
+      }
+      io.jafar.hdump.index.RetainedSizeReader old = retainedSizeReader;
+      retainedSizeReader = new io.jafar.hdump.index.RetainedSizeReader(indexDir);
+      if (old != null) old.close();
+      persisted = true;
+    } catch (IOException | RuntimeException e) {
+      LOG.warn(
+          "Could not replace {} with exact retained sizes ({}); keeping them in memory for this"
+              + " session",
+          indexDir.resolve(IndexFormat.RETAINED_INDEX_NAME),
+          e.toString());
+    }
+    heapRetainedSizes = persisted ? null : sizes;
+    for (HeapObjectImpl cached : objectsByIdLru.values()) {
+      int i = addressToId32.get(cached.getId());
+      if (i >= 0) cached.setRetainedSize(sizes[i]);
+      cached.setDominator(null); // the dump's idom array answers from now on
+    }
+    dominatorChildrenMap =
+        new DominatorTreeComputer.IndexedChildren(
+            addressToId32, id32ToAddress, tree.childStart, tree.children);
+    indexedIdom = idomByNode;
+    LOG.info(
+        "Dominator tree computation completed in {}ms ({} reachable objects, indexed)",
+        System.currentTimeMillis() - startTime,
+        tree.reached - 1);
+  }
+
+  /** The size retained.idx holds for {@code id32}, or -1 (none, or a stale shorter file). */
+  private long storedRetainedSize(int id32) {
+    if (retainedSizeReader == null) return -1;
+    try {
+      return retainedSizeReader.getRetainedSize(id32);
+    } catch (IllegalArgumentException e) {
+      return -1;
+    }
+  }
+
+  /**
+   * INDEXED mode after the full dominator tree: the immediate dominator of {@code id} (null for a
+   * GC root, an object reachable from several roots, an unreachable object, or in IN_MEMORY mode).
+   */
+  HeapObjectImpl indexedDominatorOf(long id) {
+    int[] idom = indexedIdom;
+    if (idom == null || closed) return null;
+    int i = addressToId32.get(id);
+    if (i < 0) return null;
+    int d = idom[i + 1];
+    return d > 0 ? getObjectByIdInternal(id32ToAddress.get(d - 1)) : null;
   }
 
   /** Returns whether full dominator tree has been computed. */
@@ -2601,6 +2749,9 @@ public final class HeapDumpImpl implements HeapDump {
     if (retainedSizeReader != null) {
       retainedSizeReader.close();
     }
+    indexedIdom = null;
+    dominatorChildrenMap = null;
+    heapRetainedSizes = null;
     synchronized (strongRefsLock) {
       closed = true;
       if (strongRefsIndex != null) {

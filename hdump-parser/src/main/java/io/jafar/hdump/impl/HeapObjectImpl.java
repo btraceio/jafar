@@ -68,6 +68,9 @@ final class HeapObjectImpl implements HeapObject {
   }
 
   HeapObjectImpl getDominator() {
+    if (dominator == null && dump != null) {
+      return dump.indexedDominatorOf(id); // INDEXED full tree: held by the dump, not the object
+    }
     return dominator;
   }
 

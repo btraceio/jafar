@@ -46,11 +46,52 @@ public final class DominatorTreeComputer {
 
   private DominatorTreeComputer() {}
 
+  /** Immediate dominator-tree children by object id. */
+  interface Children {
+    /** Ids of the objects immediately dominated by {@code dominatorId} (empty if none). */
+    long[] childIds(long dominatorId);
+  }
+
+  /**
+   * INDEXED mode: the children CSR over nodes {@code id32 + 1}; ids map through the dump's
+   * address/id32 maps (no copy of them).
+   */
+  static final class IndexedChildren implements Children {
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap id32;
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap address;
+    private final int[] childStart;
+    private final int[] children;
+
+    IndexedChildren(
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap id32,
+        it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap address,
+        int[] childStart,
+        int[] children) {
+      this.id32 = id32;
+      this.address = address;
+      this.childStart = childStart;
+      this.children = children;
+    }
+
+    @Override
+    public long[] childIds(long dominatorId) {
+      int i = id32.get(dominatorId);
+      if (i < 0) return EMPTY_IDS;
+      int v = i + 1;
+      int from = childStart[v];
+      int to = childStart[v + 1];
+      if (from == to) return EMPTY_IDS;
+      long[] out = new long[to - from];
+      for (int k = from; k < to; k++) out[k - from] = address.get(children[k] - 1);
+      return out;
+    }
+  }
+
   /**
    * Immediate dominator-tree children, by object id. Children are stored per dominator as a
    * contiguous slice of one {@code int[]} (CSR), indexing {@link #ids}.
    */
-  public static final class Result {
+  public static final class Result implements Children {
     private final long[] ids; // node index -> object id (index 0 = virtual root, unused)
     private final Long2IntOpenHashMap indexOf; // object id -> node index
     private final int[] childStart; // node index -> start in children; length nodes + 1
@@ -64,6 +105,7 @@ public final class DominatorTreeComputer {
     }
 
     /** Ids of the objects immediately dominated by {@code dominatorId} (empty if none). */
+    @Override
     public long[] childIds(long dominatorId) {
       int v = indexOf.get(dominatorId);
       if (v <= 0) {
@@ -104,7 +146,7 @@ public final class DominatorTreeComputer {
     LOG.info("Computing full dominator tree for {} objects...", n - 1);
     report(progressCallback, 0.0, "Indexing objects...");
 
-    // ---- 1. Dense node indexes ----------------------------------------------------------------
+    // Dense node indexes
     HeapObjectImpl[] nodes = new HeapObjectImpl[n];
     long[] ids = new long[n];
     Long2IntOpenHashMap indexOf = new Long2IntOpenHashMap(n);
@@ -118,49 +160,108 @@ public final class DominatorTreeComputer {
         i++;
       }
     }
+    int[] roots = rootNodes(gcRoots, indexOf::get, n);
 
-    // ---- 2. DFS preorder from the virtual root; successors recorded in preorder (CSR) ----------
     // References are decoded only for objects the DFS reaches, so unreachable objects do not get
     // their reference arrays decoded and cached.
-    report(progressCallback, 0.1, "Depth-first traversal...");
-    Traversal t = depthFirst(nodes, indexOf, gcRoots);
-    final int reached = t.count;
-    int[] vertex = t.vertex; // preorder -> node
-    int[] parent = t.parent; // preorder -> parent preorder
+    Tree tree =
+        compute(
+            n,
+            roots,
+            (w, out) -> {
+              for (long ref : nodes[w].getStrongOutboundReferenceIds()) {
+                int x = indexOf.get(ref);
+                if (x > 0) out.add(x);
+              }
+            },
+            v -> nodes[v].getShallowSize(),
+            progressCallback);
 
-    // ---- 3. Predecessors in preorder numbering (CSR)
-    // ------------------------------------------------
+    for (int w = tree.reached - 1; w >= 1; w--) {
+      HeapObjectImpl obj = nodes[tree.vertex[w]];
+      obj.setRetainedSize(tree.retained[w]);
+      int d = tree.idom[w];
+      obj.setDominator(d != 0 ? nodes[tree.vertex[d]] : null); // null: root or several roots
+    }
+
+    LOG.info(
+        "Dominator tree computation completed in {}ms ({} reachable objects)",
+        System.currentTimeMillis() - startTime,
+        tree.reached - 1);
+    report(progressCallback, 1.0, "Dominator tree computation complete");
+    return new Result(ids, indexOf, tree.childStart, tree.children);
+  }
+
+  /** Appends the successor nodes of {@code node} (all &gt; 0) to {@code out}, in order. */
+  @FunctionalInterface
+  interface Successors {
+    void append(int node, IntBuffer out);
+  }
+
+  /** The dominator tree over nodes {@code 1..n-1} (node 0 is the virtual root). */
+  static final class Tree {
+    int reached; // reached nodes, virtual root included
+    int[] vertex; // preorder -> node
+    int[] idom; // preorder -> preorder of the immediate dominator (0: the virtual root)
+    long[] retained; // preorder -> retained size
+    int[] childStart; // node -> start in children; length n + 1
+    int[] children; // dominator-tree children (nodes), in preorder within each slice
+  }
+
+  /** The GC root objects as nodes (&gt; 0), deduplicated, in first-seen order. */
+  static int[] rootNodes(
+      List<GcRootImpl> gcRoots, java.util.function.LongToIntFunction nodeOf, int n) {
+    boolean[] isRoot = new boolean[n];
+    int[] out = new int[gcRoots.size()];
+    int k = 0;
+    for (GcRoot root : gcRoots) {
+      int r = nodeOf.applyAsInt(root.getObjectId());
+      if (r > 0 && !isRoot[r]) {
+        isRoot[r] = true;
+        out[k++] = r;
+      }
+    }
+    return java.util.Arrays.copyOf(out, k);
+  }
+
+  /**
+   * DFS from the virtual root (whose successors are {@code roots}), Lengauer-Tarjan, retained sizes
+   * bottom-up and the children CSR — independent of where nodes and edges come from.
+   */
+  static Tree compute(
+      int n,
+      int[] roots,
+      Successors successors,
+      java.util.function.IntUnaryOperator shallow,
+      ProgressCallback progressCallback) {
+    report(progressCallback, 0.1, "Depth-first traversal...");
+    Traversal t = depthFirst(n, roots, successors);
+    final int reached = t.count;
+    int[] vertex = t.vertex;
+    int[] parent = t.parent;
+
     report(progressCallback, 0.4, "Building predecessor graph...");
     int[] predStart = new int[reached + 1];
     int[] pred = buildPredecessors(t.succStart, t.succ, reached, predStart);
     t = null; // successors no longer needed: release before the LT arrays are allocated
 
-    // ---- 4. Lengauer-Tarjan ---------------------------------------------------------------------
     report(progressCallback, 0.5, "Computing immediate dominators...");
     int[] idom = lengauerTarjan(reached, parent, predStart, pred); // preorder numbers
     pred = null;
     predStart = null;
 
-    // ---- 5. Dominators, children, retained sizes
-    // --------------------------------------------------
     report(progressCallback, 0.8, "Computing exact retained sizes...");
     long[] retained = new long[reached];
     for (int w = reached - 1; w >= 1; w--) {
-      HeapObjectImpl obj = nodes[vertex[w]];
-      long r = retained[w] + obj.getShallowSize();
+      long r = retained[w] + shallow.applyAsInt(vertex[w]);
       retained[w] = r;
-      obj.setRetainedSize(r);
       int d = idom[w];
       if (d != 0) {
         retained[d] += r;
-        obj.setDominator(nodes[vertex[d]]);
-      } else {
-        obj.setDominator(null); // GC root, or reachable from several roots
       }
     }
 
     // Children CSR indexed by node (not preorder) so lookups go id -> node -> slice.
-    // Preorder order within each slice.
     int[] childStart = new int[n + 1];
     for (int w = 1; w < reached; w++) {
       int d = idom[w];
@@ -181,12 +282,14 @@ public final class DominatorTreeComputer {
       }
     }
 
-    LOG.info(
-        "Dominator tree computation completed in {}ms ({} reachable objects)",
-        System.currentTimeMillis() - startTime,
-        reached - 1);
-    report(progressCallback, 1.0, "Dominator tree computation complete");
-    return new Result(ids, indexOf, childStart, children);
+    Tree tree = new Tree();
+    tree.reached = reached;
+    tree.vertex = vertex;
+    tree.idom = idom;
+    tree.retained = retained;
+    tree.childStart = childStart;
+    tree.children = children;
+    return tree;
   }
 
   private static void report(ProgressCallback cb, double progress, String message) {
@@ -209,9 +312,7 @@ public final class DominatorTreeComputer {
    * deduplicated, in first-seen order). A node's successor list is decoded when the node is
    * discovered and appended to the CSR, so the CSR rows are in preorder.
    */
-  private static Traversal depthFirst(
-      HeapObjectImpl[] nodes, Long2IntOpenHashMap indexOf, List<GcRootImpl> gcRoots) {
-    int n = nodes.length;
+  private static Traversal depthFirst(int n, int[] roots, Successors successors) {
     int[] dfn = new int[n];
     int[] vertex = new int[n];
     int[] parent = new int[n];
@@ -222,15 +323,9 @@ public final class DominatorTreeComputer {
     int count = 1;
     dfn[0] = 1;
     succStart[0] = 0;
-    boolean[] isRoot = new boolean[n];
-    for (GcRoot root : gcRoots) {
-      int r = indexOf.get(root.getObjectId());
-      if (r > 0 && !isRoot[r]) {
-        isRoot[r] = true;
-        succ.add(r);
-      }
+    for (int r : roots) {
+      succ.add(r);
     }
-    isRoot = null;
     succStart[1] = succ.size;
 
     int[] stackPre = new int[n]; // preorder of the frame's node
@@ -259,12 +354,7 @@ public final class DominatorTreeComputer {
       vertex[b] = w;
       parent[b] = a;
       // Decode w's successors now: its row is the next one in the CSR.
-      for (long ref : nodes[w].getStrongOutboundReferenceIds()) {
-        int x = indexOf.get(ref);
-        if (x > 0) {
-          succ.add(x);
-        }
-      }
+      successors.append(w, succ);
       succStart[b + 1] = succ.size;
       stackPre[sp] = b;
       stackEdge[sp] = succStart[b];
@@ -286,7 +376,7 @@ public final class DominatorTreeComputer {
   }
 
   /** Growable int array. */
-  private static final class IntBuffer {
+  static final class IntBuffer {
     int[] data;
     int size;
 
