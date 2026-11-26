@@ -66,6 +66,33 @@ public final class JfrPathEvaluator {
         throws Exception {
       streamEvents(recording, types, consumer);
     }
+
+    /**
+     * The number of events of each type in {@code types}, or of every type when {@code types} is
+     * {@code null}. A type with no event may be absent from the map.
+     *
+     * <p>The default streams the events and counts them, which decodes each one. A source that can
+     * count events without decoding them should override this: {@code count()} without a filter,
+     * and every analysis that looks for an event type, calls it.
+     */
+    default Map<String, Long> countEvents(Path recording, Collection<String> types)
+        throws Exception {
+      java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> counts =
+          new java.util.concurrent.ConcurrentHashMap<>();
+      Consumer<Event> counter =
+          ev ->
+              counts
+                  .computeIfAbsent(ev.typeName(), k -> new java.util.concurrent.atomic.LongAdder())
+                  .increment();
+      if (types == null) {
+        streamEvents(recording, counter);
+      } else {
+        streamEvents(recording, types, counter);
+      }
+      Map<String, Long> result = new java.util.HashMap<>();
+      counts.forEach((type, n) -> result.put(type, n.sum()));
+      return result;
+    }
   }
 
   /**
@@ -146,11 +173,7 @@ public final class JfrPathEvaluator {
   public Map<String, Long> countAllEventTypes(JFRSession session) throws Exception {
     // ConcurrentHashMap: StreamingChunkParser processes chunks in parallel, so the consumer
     // lambda is called from multiple threads concurrently.
-    java.util.concurrent.ConcurrentHashMap<String, Long> counts =
-        new java.util.concurrent.ConcurrentHashMap<>();
-    source.streamEvents(
-        session.getRecordingPath(), ev -> counts.merge(ev.typeName(), 1L, Long::sum));
-    return counts;
+    return source.countEvents(session.getRecordingPath(), null);
   }
 
   /**
@@ -800,6 +823,23 @@ public final class JfrPathEvaluator {
     public void streamEvents(Path recording, Collection<String> types, Consumer<Event> consumer)
         throws Exception {
       streamEvents(recording, types, TimeRange.all(), consumer);
+    }
+
+    /**
+     * Counts from the event headers, without decoding an event ({@link
+     * UntypedJafarParser#countEvents}). An event whose payload would fail to decode is counted all
+     * the same, where streaming it would have failed the query.
+     */
+    @Override
+    public Map<String, Long> countEvents(Path recording, Collection<String> types)
+        throws Exception {
+      if (!pushdownEnabled()) {
+        return EventSource.super.countEvents(recording, types);
+      }
+      try (UntypedJafarParser p =
+          io.jafar.parser.api.ParsingContext.create().newUntypedParser(recording)) {
+        return types == null ? p.countEvents() : p.countEvents(TypeFilter.named(types));
+      }
     }
 
     @Override
