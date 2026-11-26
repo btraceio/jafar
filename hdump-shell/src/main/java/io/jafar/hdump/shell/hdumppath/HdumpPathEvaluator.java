@@ -711,7 +711,7 @@ public final class HdumpPathEvaluator {
     return switch (head) {
       case TopOp topOp -> selectTop(rows, topOp);
       case GroupByOp groupByOp -> groupRows(rows, groupByOp);
-      case CountOp c -> List.of(new LinkedHashMap<>(Map.of("count", rows.count())));
+      case CountOp ignored -> List.of(new LinkedHashMap<>(Map.of("count", rows.count())));
       case SumOp sumOp -> evaluateObjectsStreamingSumFromStream(rows, dump.getObjectCount(), sumOp);
       case StatsOp statsOp ->
           evaluateObjectsStreamingStatsFromStream(rows, dump.getObjectCount(), statsOp);
