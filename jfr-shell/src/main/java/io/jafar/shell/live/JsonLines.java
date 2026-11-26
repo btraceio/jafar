@@ -48,7 +48,7 @@ final class JsonLines {
         appendValue(sb, e.getValue());
       }
       sb.append('}');
-    } else if (v != null && v.getClass().isArray()) {
+    } else if (v.getClass().isArray()) {
       // Object[] of converted elements or a primitive array (LiveEventDecoder.convertValue): a JSON
       // array, not String.valueOf's "[Ljava.lang.Object;@6f2b958e" (issue #196)
       sb.append('[');

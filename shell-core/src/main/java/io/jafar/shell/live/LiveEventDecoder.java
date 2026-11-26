@@ -13,8 +13,9 @@ import jdk.jfr.consumer.RecordedObject;
  *
  * <ul>
  *   <li>the {@code jdk} file backend ({@code JdkJfrBackend}), which uses {@link
- *       #decodeFields(RecordedEvent)} verbatim, so its output shape is a file-backend contract
- *       (pinned field-for-field by LiveEventDecoderTest);
+ *       #decodeFields(RecordedEvent)} verbatim, so its output shape is part of that backend's
+ *       {@code EventSource} contract (LiveEventDecoderTest pins its keys, thread identity and the
+ *       stack-trace shape);
  *   <li>the live {@code tail} path, which uses {@link #decode(RecordedEvent)}: the same field map
  *       but with {@code startTime} replaced by absolute epoch nanos (matching the {@code timeRange}
  *       decorator contract) and {@code duration} by nanos. Reason: {@code
@@ -86,12 +87,14 @@ public final class LiveEventDecoder {
   }
 
   /**
-   * Recursive flattening into the untyped value model the {@code jafar} backend produces ({@code
+   * Recursive flattening into the containers of the {@code jafar} backend's resolved values ({@code
    * Values.resolvedDeep}): a {@code RecordedObject} becomes a field map, a {@code List} a list of
    * converted elements, an object array (the JDK API's struct arrays, e.g. {@code
    * RecordedStackTrace}'s frames) an {@code Object[]} of converted elements, and a primitive array
-   * stays the primitive array. Strings and boxed primitives pass through. Object arrays used to
-   * pass through as raw {@code Object[]} of {@code RecordedFrame}s (issue #196).
+   * stays the primitive array. Leaf values are the JDK API's own: symbols are {@code String}s (not
+   * {@code {string=...}} maps), simple types are collapsed ({@code "Native"}, not {@code
+   * {description=Native}}), and ints stay {@code Integer}. Object arrays used to pass through as
+   * raw {@code Object[]} of {@code RecordedFrame}s (issue #196).
    */
   public static Object convertValue(Object value) {
     if (value == null) {

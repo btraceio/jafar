@@ -141,8 +141,9 @@ public final class JdkJfrBackend implements JfrBackend {
     }
 
     private static Map<String, Object> convertEvent(RecordedEvent event) {
-      // Shared with the live tail path; must stay byte-identical to the previous inline
-      // implementation (no decorations here — file-backend output shape is a contract).
+      // Shared with the live tail path (no decorations here). Array fields became the untyped
+      // Object[]-of-maps model in #196; shell event queries do not use this source (see
+      // doc/agents/Shells.md, "Event queries do not go through the backend plugin").
       return io.jafar.shell.live.LiveEventDecoder.decodeFields(event);
     }
   }
