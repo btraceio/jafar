@@ -123,8 +123,8 @@ public final class HdumpPathEvaluator {
    * join, an unresolved GC root (no {@code shallowSize}) offered {@code baseline.objectId}, or in a
    * two-dump diff {@code baseline.shallowSize}, and its group summed that. The check is by name, so
    * any column ending in {@code Delta} is skipped too. A {@code *Delta} column can be aggregated
-   * with {@code value=}; a {@code baseline.*} one can only be used in a {@code filter(...)}
-   * comparison (other operators take no dotted field name).
+   * with {@code value=}; a {@code baseline.*} one only in a {@code filter(...)} comparison or,
+   * quoted, a filter function (other operators take no dotted field name).
    */
   private static boolean isExcludedFromDefault(String column) {
     return IDENTIFIER_COLUMNS.contains(column)

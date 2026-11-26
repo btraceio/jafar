@@ -165,12 +165,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `value=shallow`), groups without a value last, and `count` always a long, always named `count`.
   Without `value=`, each group aggregates one column (never an identifier such as a GC root's
   `threadSerial`, nor a column a heap-to-heap `join` adds such as `baseline.shallowSize`), so
-  rows without it are skipped instead of mixed in. `filter(baseline.exists = false)` after a
-  `join`, the documented way to find classes only in the new dump, matched nothing: a dotted
-  filter field was read only as a nested path, never as the flat column `join` writes Streaming a primitive
+  rows without it are skipped instead of mixed in. Streaming a primitive
   array type (`objects/byte[]`) in INDEXED mode found nothing, as the class-instances index holds
   no primitive arrays; those classes are now scanned. `doc/hdumppath.md`
   now documents what is streamed and what is capped at 100 objects
+- **HdumpPath: `filter(baseline.exists = false)` after a `join` matched nothing.** The documented
+  way to find classes only in the new dump (`classes | join(session=1) | filter(baseline.exists =
+  false)`) read the dotted field only as a nested path, never as the flat column `join` writes, so
+  no row matched either value. A dotted filter field now means that column when the row has it
 - **`cacheStats()` never reported `isLruMode = true`.** The reader decodes a boolean field as
   `Boolean` and the check tested for `Number`; LinkedHashMap subclasses (the usual LRU cache) were
   also not recognised. On a JDK 25 dump with 50 access-order `LinkedHashMap` subclasses,
