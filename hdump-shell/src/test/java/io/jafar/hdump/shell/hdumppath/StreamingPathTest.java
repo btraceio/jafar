@@ -352,4 +352,51 @@ class StreamingPathTest {
     List<Map<String, Object>> desc = inMemory("objects | groupBy(arrayLength, sortBy=key)");
     assertNull(desc.get(desc.size() - 1).get("arrayLength"), desc.toString());
   }
+
+  @Test
+  void groupByAfterATwoDumpJoinDoesNotSumBaselineColumns(@TempDir Path dir) throws IOException {
+    // Current: JAVA_FRAME roots on a missing object (first) and on a HashMap. Baseline: two roots
+    // on resolvable HashMaps. Joined on type, the unresolved row offered baseline.shallowSize
+    // (the baseline's first root), so the group summed that constant twice: 72 instead of 36.
+    MinimalHprofBuilder.Field[] mapFields = {
+      new Field("table", TYPE_OBJECT), new Field("size", TYPE_INT)
+    };
+    Path current =
+        new MinimalHprofBuilder()
+            .addClass(1, "java/lang/Object")
+            .addClass(3, "java/util/HashMap", 1, mapFields)
+            .addInstance(100, 3, fieldData().ref(0).i32(0).bytes())
+            .addJavaFrameRoot(999_999, 6, 2)
+            .addJavaFrameRoot(100, 7, 3)
+            .write(dir);
+    Path baseline =
+        new MinimalHprofBuilder()
+            .addClass(1, "java/lang/Object")
+            .addClass(3, "java/util/HashMap", 1, mapFields)
+            .addInstance(100, 3, fieldData().ref(0).i32(0).bytes())
+            .addInstance(101, 3, fieldData().ref(0).i32(0).bytes())
+            .addJavaFrameRoot(100, 7, 3)
+            .addJavaFrameRoot(101, 7, 4)
+            .write(dir);
+    try (HeapSession cur = HeapSession.open(current);
+        HeapSession base = HeapSession.open(baseline)) {
+      SessionResolver resolver =
+          ref -> Optional.of(new io.jafar.shell.core.SessionManager.SessionRef<>(1, "base", base));
+      double shallow =
+          ((Number)
+                  HdumpPathEvaluator.evaluate(
+                          cur, HdumpPathParser.parse("objects/java.util.HashMap | sum(shallow)"))
+                      .get(0)
+                      .get("shallow"))
+              .doubleValue();
+      Map<String, Object> row =
+          HdumpPathEvaluator.evaluate(
+                  cur,
+                  HdumpPathParser.parse(
+                      "gcroots/JAVA_FRAME | join(session=1) | groupBy(type, agg=sum)"),
+                  resolver)
+              .get(0);
+      assertEquals(shallow, ((Number) row.get("sum")).doubleValue(), row.toString());
+    }
+  }
 }

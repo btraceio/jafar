@@ -405,7 +405,8 @@ objects | groupBy(class, agg=max)          # Max shallow size by class
 
 Without `value=`, `sum`/`avg`/`min`/`max` aggregate `shallowSize` on `objects`, and otherwise the
 first numeric column that is not an identifier (`id`, `objectId`, a GC root's `threadSerial` or
-`frameNumber`, or a `join` copy of one such as `baseline.objectId` or `objectIdDelta`); each group aggregates one such column, chosen by its first row that has one, and
+`frameNumber`) and not one that `join` added (`baseline.*`, `*Delta`; name those with `value=`);
+each group aggregates one such column, chosen by its first row that has one, and
 rows without it are skipped. The result column is named after the aggregation (`sum`, `avg`, ...);
 a `count` is always named `count`. With `value=<memory field>` (`shallow`, `retained`, ...) the
 result column is named after that field, so sort it by that name:
