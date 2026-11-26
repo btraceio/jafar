@@ -399,4 +399,40 @@ class StreamingPathTest {
       assertEquals(shallow, ((Number) row.get("sum")).doubleValue(), row.toString());
     }
   }
+
+  @Test
+  void filterOnABaselineColumnAfterAJoinMatches(@TempDir Path dir) throws IOException {
+    // doc/hdumppath.md: "classes | join(session=1) | filter(baseline.exists = false)" finds
+    // classes only in the new dump. A dotted filter field was read as a nested path: no row
+    // matched.
+    Path current =
+        new MinimalHprofBuilder()
+            .addClass(1, "java/lang/Object")
+            .addClass(2, "com/example/Kept", 1)
+            .addClass(3, "com/example/OnlyNew", 1)
+            .write(dir);
+    Path baseline =
+        new MinimalHprofBuilder()
+            .addClass(1, "java/lang/Object")
+            .addClass(2, "com/example/Kept", 1)
+            .write(dir);
+    try (HeapSession cur = HeapSession.open(current);
+        HeapSession base = HeapSession.open(baseline)) {
+      SessionResolver resolver =
+          ref -> Optional.of(new io.jafar.shell.core.SessionManager.SessionRef<>(1, "base", base));
+      List<Map<String, Object>> onlyNew =
+          HdumpPathEvaluator.evaluate(
+              cur,
+              HdumpPathParser.parse("classes | join(session=1) | filter(baseline.exists = false)"),
+              resolver);
+      assertEquals(1, onlyNew.size(), onlyNew.toString());
+      assertEquals("com.example.OnlyNew", onlyNew.get(0).get("name"));
+      List<Map<String, Object>> kept =
+          HdumpPathEvaluator.evaluate(
+              cur,
+              HdumpPathParser.parse("classes | join(session=1) | filter(baseline.exists = true)"),
+              resolver);
+      assertEquals(2, kept.size(), kept.toString());
+    }
+  }
 }

@@ -407,9 +407,10 @@ Without `value=`, `sum`/`avg`/`min`/`max` aggregate `shallowSize` on `objects`, 
 first numeric column that is not an identifier (`id`, `objectId`, a GC root's `threadSerial` or
 `frameNumber`) and not a column a heap-to-heap `join` adds (`baseline.*`, `*Delta`). The check is
 by name, so any column ending in `Delta` is skipped. To aggregate a delta, name it:
-`value=shallowSizeDelta`; a `baseline.*` column cannot be named in a query (field names take no
-dot). Each group aggregates one such column, chosen by its first row that has one, and
-rows without it are skipped. The result column is named after the aggregation (`sum`, `avg`, ...);
+`value=shallowSizeDelta`. A `baseline.*` column can be used only in a `filter(...)` comparison,
+such as `filter(baseline.exists = false)`; other operators take no dotted field name. Each group
+aggregates one default column, chosen by its first row that has one, and rows without it are
+skipped. The result column is named after the aggregation (`sum`, `avg`, ...);
 a `count` is always named `count`. With `value=<memory field>` (`shallow`, `retained`, ...) the
 result column is named after that field, so sort it by that name:
 `groupBy(class, agg=sum, value=retained) | top(10, retained)`. Values that are missing or not

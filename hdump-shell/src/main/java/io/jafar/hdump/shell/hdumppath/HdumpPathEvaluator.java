@@ -123,8 +123,8 @@ public final class HdumpPathEvaluator {
    * join, an unresolved GC root (no {@code shallowSize}) offered {@code baseline.objectId}, or in a
    * two-dump diff {@code baseline.shallowSize}, and its group summed that. The check is by name, so
    * any column ending in {@code Delta} is skipped too. A {@code *Delta} column can be aggregated
-   * with {@code value=}; a {@code baseline.*} one cannot be named in a query (the parser takes no
-   * dotted field names).
+   * with {@code value=}; a {@code baseline.*} one can only be used in a {@code filter(...)}
+   * comparison (other operators take no dotted field name).
    */
   private static boolean isExcludedFromDefault(String column) {
     return IDENTIFIER_COLUMNS.contains(column)
@@ -1184,6 +1184,16 @@ public final class HdumpPathEvaluator {
 
   private static Object extractFieldValue(Map<String, Object> map, List<String> path) {
     if (path.isEmpty()) return null;
+
+    // join() stores its columns under flat dotted keys ("baseline.exists"); a filter path a.b
+    // means that column when the row has it, otherwise a nested field. Read only as nested, the
+    // documented filter(baseline.exists = false) matched no row.
+    if (path.size() > 1) {
+      String flat = String.join(".", path);
+      if (map.containsKey(flat)) {
+        return map.get(flat);
+      }
+    }
 
     Object current = getField(map, path.get(0));
     for (int i = 1; i < path.size() && current != null; i++) {
