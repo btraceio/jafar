@@ -4,6 +4,7 @@ import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.stream.IntStream;
 
 /**
@@ -61,16 +62,20 @@ public final class ClassInstancesDataReader implements AutoCloseable {
     if (magic != IndexFormat.CLASSINSTANCES_DATA_MAGIC) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Invalid classinstances-data.idx magic: 0x%08X (expected 0x%08X)",
-              magic, IndexFormat.CLASSINSTANCES_DATA_MAGIC));
+              magic,
+              IndexFormat.CLASSINSTANCES_DATA_MAGIC));
     }
 
     formatVersion = buffer.getInt();
     if (formatVersion != IndexFormat.FORMAT_VERSION) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Unsupported format version: %d (expected %d)",
-              formatVersion, IndexFormat.FORMAT_VERSION));
+              formatVersion,
+              IndexFormat.FORMAT_VERSION));
     }
 
     totalInstances = buffer.getLong();
@@ -106,8 +111,12 @@ public final class ClassInstancesDataReader implements AutoCloseable {
     if (endOffset > buffer.limit()) {
       throw new IllegalArgumentException(
           String.format(
+              Locale.ROOT,
               "Read would exceed file bounds: offset=%d count=%d endOffset=%d limit=%d",
-              offset, count, endOffset, buffer.limit()));
+              offset,
+              count,
+              endOffset,
+              buffer.limit()));
     }
 
     // Create stream that reads int32 values sequentially

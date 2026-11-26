@@ -1,5 +1,7 @@
 package io.jafar.shell.cli.completion;
 
+import java.util.Locale;
+
 /**
  * Represents a single token in a JfrPath expression.
  *
@@ -59,6 +61,6 @@ public record Token(TokenType type, String value, int start, int end) {
    */
   @Override
   public String toString() {
-    return String.format("%s['%s']@%d-%d", type, value, start, end);
+    return String.format(Locale.ROOT, "%s['%s']@%d-%d", type, value, start, end);
   }
 }

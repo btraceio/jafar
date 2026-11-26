@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -103,9 +104,9 @@ public final class OtlpSession implements Session {
 
   private static String formatDuration(long nanos) {
     if (nanos < 1_000) return nanos + " ns";
-    if (nanos < 1_000_000) return String.format("%.2f µs", nanos / 1_000.0);
-    if (nanos < 1_000_000_000) return String.format("%.2f ms", nanos / 1_000_000.0);
-    return String.format("%.2f s", nanos / 1_000_000_000.0);
+    if (nanos < 1_000_000) return String.format(Locale.ROOT, "%.2f µs", nanos / 1_000.0);
+    if (nanos < 1_000_000_000) return String.format(Locale.ROOT, "%.2f ms", nanos / 1_000_000.0);
+    return String.format(Locale.ROOT, "%.2f s", nanos / 1_000_000_000.0);
   }
 
   @Override

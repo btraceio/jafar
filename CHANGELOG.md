@@ -140,6 +140,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **Numbers in tool payloads, reports and shell output followed the JVM default locale (#224).**
+  On a ru-RU or de-DE host `jfr_summary` returned `"pct": "66,6%"` and `"topMethod": "... (34,9%)"`,
+  `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON
+  numbers written with a dot, so a client parsing the strings failed or misread them. Every
+  `String.format`, `formatted` and `printf` in the shipped modules now passes `Locale.ROOT`, and so
+  does every fixed `DateTimeFormatter.ofPattern`. A `timerange(format=...)`/`asDateTime(format=...)`
+  pattern is formatted in `Locale.US` on every machine: with `MMM` or `EEE` it printed "Aug." and
+  "Di." under de-DE and Cyrillic names under ru-RU. Output is unchanged on an en-US machine; other
+  English locales now get the US conventions too (`PM` rather than `pm`/`p.m.`, US week numbering
+  for `w`/`W`/`Y`/`e`/`c`, US zone abbreviations). The time zone is still the machine's. Under a
+  locale with non-ASCII digits (ar-EG, fa-IR, ...) jafar-processor's `%d` template generated
+  `requireStorage(metadata, metaField, ٠, ...)`, which does not compile; it now writes ASCII
+  digits. Arch rule (j) fails the build on a new default-locale call (`doc/agents/Gates.md`)
 - **Live `tail` passed struct arrays through as raw JDK objects (#196).** `stackTrace.frames` was
   an `Object[]` of `jdk.jfr.consumer.RecordedFrame`, so `tail --format json` printed
   `"frames":"[Ljava.lang.Object;@44f75083"`, the table format the same identity string once a

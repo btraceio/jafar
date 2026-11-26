@@ -22,6 +22,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -300,7 +301,8 @@ public final class JFRSession implements Session {
     long endTime = System.currentTimeMillis();
     hasRun = true;
 
-    System.out.printf("Processed %d events in %d ms%n", totalEvents.get(), (endTime - startTime));
+    System.out.printf(
+        Locale.ROOT, "Processed %d events in %d ms%n", totalEvents.get(), (endTime - startTime));
   }
 
   /**

@@ -4,6 +4,7 @@ import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
+import java.util.Locale;
 
 /**
  * Memory-mapped reader for classinstances-offset.idx with O(1) random access.
@@ -66,16 +67,20 @@ public final class ClassInstancesOffsetReader implements AutoCloseable {
     if (magic != IndexFormat.CLASSINSTANCES_OFFSET_MAGIC) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Invalid classinstances-offset.idx magic: 0x%08X (expected 0x%08X)",
-              magic, IndexFormat.CLASSINSTANCES_OFFSET_MAGIC));
+              magic,
+              IndexFormat.CLASSINSTANCES_OFFSET_MAGIC));
     }
 
     formatVersion = buffer.getInt();
     if (formatVersion != IndexFormat.FORMAT_VERSION) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Unsupported format version: %d (expected %d)",
-              formatVersion, IndexFormat.FORMAT_VERSION));
+              formatVersion,
+              IndexFormat.FORMAT_VERSION));
     }
 
     long classCountLong = buffer.getLong();
@@ -116,8 +121,11 @@ public final class ClassInstancesOffsetReader implements AutoCloseable {
     if (storedClassId != classId32) {
       throw new IllegalStateException(
           String.format(
+              Locale.ROOT,
               "Corrupted index: expected class ID %d at offset %d, found %d",
-              classId32, entryOffset, storedClassId));
+              classId32,
+              entryOffset,
+              storedClassId));
     }
 
     // Return null if class has no instances

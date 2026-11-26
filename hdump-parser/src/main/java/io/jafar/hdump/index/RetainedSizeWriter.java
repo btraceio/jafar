@@ -5,6 +5,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
 /**
  * Writer for retained.idx file that stores computed approximate retained sizes.
@@ -81,8 +82,10 @@ public final class RetainedSizeWriter implements AutoCloseable {
     if (objectId32 != entriesWritten) {
       throw new IllegalArgumentException(
           String.format(
+              Locale.ROOT,
               "Retained size entries must be written sequentially: expected %d, got %d",
-              entriesWritten, objectId32));
+              entriesWritten,
+              objectId32));
     }
 
     out.writeInt(objectId32);
@@ -109,8 +112,10 @@ public final class RetainedSizeWriter implements AutoCloseable {
       Files.deleteIfExists(tempFile);
       throw new IllegalStateException(
           String.format(
+              Locale.ROOT,
               "Incomplete retained size index: expected %d entries, wrote %d",
-              expectedCount, entriesWritten));
+              expectedCount,
+              entriesWritten));
     }
 
     // Atomic rename to final location

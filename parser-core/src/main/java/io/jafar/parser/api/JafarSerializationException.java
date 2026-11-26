@@ -1,6 +1,7 @@
 package io.jafar.parser.api;
 
 import java.nio.file.Path;
+import java.util.Locale;
 
 /** Exception thrown during bytecode generation and class serialization operations. */
 public class JafarSerializationException extends JafarParseException {
@@ -70,7 +71,9 @@ public class JafarSerializationException extends JafarParseException {
       String className, Path debugPath, Throwable cause) {
     return new JafarSerializationException(
         String.format(
-            "Failed to generate bytecode for class. Debug bytecode available at: %s", debugPath),
+            Locale.ROOT,
+            "Failed to generate bytecode for class. Debug bytecode available at: %s",
+            debugPath),
         cause,
         className);
   }
@@ -98,7 +101,7 @@ public class JafarSerializationException extends JafarParseException {
   public static JafarSerializationException methodHandleCreationFailed(
       String className, String methodName, Throwable cause) {
     return new JafarSerializationException(
-        String.format("Failed to create method handle for method '%s'", methodName),
+        String.format(Locale.ROOT, "Failed to create method handle for method '%s'", methodName),
         cause,
         className);
   }
