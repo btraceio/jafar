@@ -2579,6 +2579,47 @@ public final class HeapDumpImpl implements HeapDump {
   private volatile HeapGraph pathGraph;
   private final Object pathGraphLock = new Object();
 
+  // BFS tree over pathGraph from this dump's GC roots and statics (4 bytes per object), built on
+  // the first path query and dropped by close(); answers every later query for these roots.
+  private volatile PathFinder.PathTree pathTree;
+
+  /** The cached path tree if one has been built, without building it. */
+  PathFinder.PathTree cachedPathTree() {
+    return pathTree;
+  }
+
+  /**
+   * The BFS tree over {@code g} for {@code roots}. Cached only for this dump's own GC roots (same
+   * ids, same order); any other root list gets a tree of its own, not kept.
+   */
+  PathFinder.PathTree pathTree(HeapGraph g, List<GcRootImpl> roots) {
+    PathFinder.PathTree t = pathTree;
+    if (t != null && t.builtFrom(roots)) {
+      return t;
+    }
+    if (!sameRootIds(roots, gcRoots)) {
+      return PathFinder.buildPathTree(this, g, roots);
+    }
+    synchronized (pathGraphLock) {
+      t = pathTree;
+      if (t == null) {
+        t = PathFinder.buildPathTree(this, g, roots);
+        if (pathGraph == g) { // not if close() ran meanwhile
+          pathTree = t;
+        }
+      }
+    }
+    return t;
+  }
+
+  private static boolean sameRootIds(List<GcRootImpl> a, List<GcRootImpl> b) {
+    if (a.size() != b.size()) return false;
+    for (int i = 0; i < a.size(); i++) {
+      if (a.get(i).getObjectId() != b.get(i).getObjectId()) return false;
+    }
+    return true;
+  }
+
   /** The cached path graph if one has been built, without building it. */
   HeapGraph cachedPathGraph() {
     return pathGraph;
@@ -2682,6 +2723,7 @@ public final class HeapDumpImpl implements HeapDump {
 
     synchronized (pathGraphLock) {
       pathGraph = null;
+      pathTree = null;
     }
 
     // Clear object caches to free memory

@@ -52,9 +52,45 @@ class PathFinderEquivalenceTest {
     w.write(file, 1 << 24);
     HeapDumpImpl dump = (HeapDumpImpl) HeapDumpParser.parse(file, ParserOptions.IN_MEMORY);
     dump.findPathToGcRoot(dump.getObjects().findFirst().orElseThrow());
-    assertNotNull(dump.cachedPathGraph(), "built by the first query");
+    assertNotNull(dump.cachedPathGraph(), "graph built by the first query");
+    assertNotNull(dump.cachedPathTree(), "tree built by the first query");
     dump.close();
-    assertNull(dump.cachedPathGraph(), "dropped by close()");
+    assertNull(dump.cachedPathGraph(), "graph dropped by close()");
+    assertNull(dump.cachedPathTree(), "tree dropped by close()");
+  }
+
+  /**
+   * The cached BFS tree belongs to one GC-root list: a query with other roots must not be answered
+   * from it (and answering one must not spoil the tree for the dump's own roots).
+   */
+  @Test
+  void pathTreeFollowsTheRootList(@TempDir Path dir) throws Exception {
+    GraphHeapDumpWriter w = DominatorOracleTest.randomGraph(new Random(91), 600, 0.5, false, 6);
+    Path file = dir.resolve("graph.hprof");
+    w.write(file, 1 << 24);
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
+      HeapDump generic = genericView(dump);
+      List<GcRootImpl> all = new ArrayList<>();
+      for (GcRoot r : dump.getGcRoots()) all.add((GcRootImpl) r);
+      List<GcRootImpl> some = all.subList(0, Math.max(1, all.size() / 2));
+      int differ = 0;
+      PathFinder.PathTree own = null;
+      for (List<GcRootImpl> roots : List.of(all, some, all, some)) {
+        for (HeapObject t : dump.getObjects().toList()) {
+          List<String> fast = render(PathFinder.findShortestPath(dump, t, roots));
+          assertEquals(render(PathFinder.findShortestPath(generic, t, roots)), fast, "" + t);
+          if (roots == some && !fast.equals(render(PathFinder.findShortestPath(generic, t, all)))) {
+            differ++;
+          }
+        }
+        // the dump's own roots: one tree, built once, kept across the other list's queries
+        PathFinder.PathTree cached = ((HeapDumpImpl) dump).cachedPathTree();
+        assertNotNull(cached, "tree for the dump's own roots is cached");
+        if (own == null) own = cached;
+        assertTrue(own == cached, "the cached tree is reused, not rebuilt or replaced");
+      }
+      assertTrue(differ > 0, "the two root lists must give different paths somewhere");
+    }
   }
 
   /** INDEXED mode has no in-memory graph: the id-based BFS answers there. */

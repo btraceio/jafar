@@ -261,28 +261,51 @@ public final class PathFinder {
   }
 
   /**
-   * {@link #findShortestPathById} on the dump's cached int graph: the same start order, neighbour
-   * order and tie breaking (graph rows are the strong reference ids that name an object, in order),
-   * with an {@code int[]} parent array instead of hash lookups per edge.
+   * The BFS tree of the whole graph from the BFS start objects (GC roots, then static-field
+   * targets): the parent of every reached node, and the start objects' names. A BFS that stops at a
+   * target assigns every parent it assigns exactly as this full BFS does (a node's parent is fixed
+   * when the node is discovered, and the order of discovery does not depend on the target), so the
+   * path to any target is the parent chain in this tree.
    */
-  private static List<PathStep> findShortestPathOnGraph(
-      HeapDumpImpl dump, HeapGraph g, HeapObject target, List<GcRootImpl> gcRoots) {
-    FAST_PATH_QUERIES.incrementAndGet();
-    int targetNode = g.nodeOf(target.getId());
-    if (targetNode < 0) {
-      return List.of();
+  static final class PathTree {
+    static final int UNREACHED = -2;
+    static final int START = -1;
+
+    final int[] parent; // node -> parent node, START, or UNREACHED
+    final Int2ObjectOpenHashMap<String> startNames; // static-field start node -> name
+    private final long[] rootIds; // the GC root ids this tree was built from, in order
+
+    private PathTree(int[] parent, Int2ObjectOpenHashMap<String> startNames, long[] rootIds) {
+      this.parent = parent;
+      this.startNames = startNames;
+      this.rootIds = rootIds;
     }
+
+    boolean builtFrom(List<GcRootImpl> gcRoots) {
+      if (gcRoots.size() != rootIds.length) return false;
+      for (int i = 0; i < rootIds.length; i++) {
+        if (gcRoots.get(i).getObjectId() != rootIds[i]) return false;
+      }
+      return true;
+    }
+  }
+
+  /** Full BFS over the dump's int graph; see {@link PathTree}. */
+  static PathTree buildPathTree(HeapDumpImpl dump, HeapGraph g, List<GcRootImpl> gcRoots) {
     final int n = g.size();
-    final int unvisited = -2;
-    final int start = -1;
+    final int unvisited = PathTree.UNREACHED;
+    final int start = PathTree.START;
     int[] parent = new int[n];
     Arrays.fill(parent, unvisited);
     int[] queue = new int[n];
     int tail = 0;
     Int2ObjectOpenHashMap<String> startNames = new Int2ObjectOpenHashMap<>();
+    long[] rootIds = new long[gcRoots.size()];
 
-    for (GcRoot root : gcRoots) {
-      int v = g.nodeOf(root.getObjectId());
+    for (int i = 0; i < rootIds.length; i++) {
+      long id = gcRoots.get(i).getObjectId();
+      rootIds[i] = id;
+      int v = g.nodeOf(id);
       if (v >= 0 && parent[v] == unvisited) {
         parent[v] = start;
         queue[tail++] = v;
@@ -303,13 +326,8 @@ public final class PathFinder {
     final int[] ss = g.succStart;
     final int[] su = g.succ;
     final java.util.BitSet shadowed = g.shadowedFieldNodes;
-    boolean found = false;
     for (int head = 0; head < tail; head++) {
       int cur = queue[head];
-      if (cur == targetNode) {
-        found = true;
-        break;
-      }
       if (shadowed.get(cur)) {
         int[] t = {tail};
         visitOutboundEdges(
@@ -332,12 +350,29 @@ public final class PathFinder {
         }
       }
     }
-    if (!found) {
+    return new PathTree(parent, startNames, rootIds);
+  }
+
+  /**
+   * {@link #findShortestPathById} on the dump's cached int graph, answered from the dump's cached
+   * {@link PathTree}: the same start order, neighbour order and tie breaking (graph rows are the
+   * strong reference ids that name an object, in order). After the first query a query costs the
+   * length of its path.
+   */
+  private static List<PathStep> findShortestPathOnGraph(
+      HeapDumpImpl dump, HeapGraph g, HeapObject target, List<GcRootImpl> gcRoots) {
+    FAST_PATH_QUERIES.incrementAndGet();
+    int targetNode = g.nodeOf(target.getId());
+    if (targetNode < 0) {
       return List.of();
     }
-
+    PathTree tree = dump.pathTree(g, gcRoots);
+    int[] parent = tree.parent;
+    if (parent[targetNode] == PathTree.UNREACHED) {
+      return List.of();
+    }
     IntArrayList nodes = new IntArrayList();
-    for (int v = targetNode; v != start; v = parent[v]) {
+    for (int v = targetNode; v != PathTree.START; v = parent[v]) {
       nodes.add(v);
     }
     List<PathStep> path = new ArrayList<>(nodes.size());
@@ -346,7 +381,7 @@ public final class PathFinder {
       int v = nodes.getInt(i);
       HeapObject obj = i == 0 ? target : g.nodes[v];
       String fieldName =
-          prev == null ? startNames.get(v) : firstFieldReferencing(prev, g.nodes[v].getId());
+          prev == null ? tree.startNames.get(v) : firstFieldReferencing(prev, g.nodes[v].getId());
       path.add(new PathStep(obj, fieldName));
       prev = obj;
     }
