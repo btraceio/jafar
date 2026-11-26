@@ -105,8 +105,27 @@ class ArchRuleFireTest {
 
   @Test
   void ruleJFiresOnDefaultLocaleFormatting() throws IOException {
-    ModuleClasses modules = loadWithFixture("shell-core", DefaultLocaleFormatFixture.class);
+    ModuleClasses modules =
+        loadWithFixture(
+            "shell-core",
+            DefaultLocaleFormatFixture.class,
+            DefaultLocaleFormatFixture.CustomStream.class);
     assertFires(ArchitectureRules.ruleJ(), "j:", DefaultLocaleFormatFixture.class, modules);
+    AssertionError failure =
+        assertThrows(
+            AssertionError.class, () -> ArchitectureRules.ruleJ().check(modules.classes()));
+    // Every branch fires, not only String.format: one fixture method per forbidden form
+    for (java.lang.reflect.Method m : DefaultLocaleFormatFixture.class.getDeclaredMethods()) {
+      if (m.isSynthetic()) {
+        continue;
+      }
+      // a call inside a lambda is reported from its synthetic lambda$<method>$N method
+      String msg = failure.getMessage();
+      assertTrue(
+          msg.contains("DefaultLocaleFormatFixture." + m.getName() + "(")
+              || msg.contains("DefaultLocaleFormatFixture.lambda$" + m.getName() + "$"),
+          "rule (j) did not report " + m.getName() + ": " + msg);
+    }
   }
 
   @Test

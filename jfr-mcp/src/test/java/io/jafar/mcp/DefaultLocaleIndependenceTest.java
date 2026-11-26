@@ -36,11 +36,15 @@ class DefaultLocaleIndependenceTest extends BaseJfrTest {
   private static final Pattern DOT_DECIMAL_PERCENT = Pattern.compile("\\d\\.\\d+%");
 
   private Locale saved;
+  private Locale savedFormat;
+  private Locale savedDisplay;
   private JafarMcpServer server;
 
   @BeforeEach
   void setUp() throws Exception {
     saved = Locale.getDefault();
+    savedFormat = Locale.getDefault(Locale.Category.FORMAT);
+    savedDisplay = Locale.getDefault(Locale.Category.DISPLAY);
     Locale.setDefault(Locale.of("ru", "RU"));
     server = new JafarMcpServer();
     Method open = JafarMcpServer.class.getDeclaredMethod("handleJfrOpen", Map.class);
@@ -52,7 +56,10 @@ class DefaultLocaleIndependenceTest extends BaseJfrTest {
 
   @AfterEach
   void restore() {
+    // setDefault(Locale) resets both categories; restore each as it was
     Locale.setDefault(saved);
+    Locale.setDefault(Locale.Category.FORMAT, savedFormat);
+    Locale.setDefault(Locale.Category.DISPLAY, savedDisplay);
   }
 
   @Test

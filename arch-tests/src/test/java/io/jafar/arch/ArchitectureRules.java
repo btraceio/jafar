@@ -5,6 +5,8 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.AccessTarget.CodeUnitAccessTarget;
+import com.tngtech.archunit.core.domain.JavaAccess;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClass.Predicates;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
@@ -290,45 +292,103 @@ public final class ArchitectureRules {
   }
 
   /**
-   * (j) No class in a covered module formats with the JVM default locale: {@code
-   * String.format(String, ...)}, {@code String.formatted(...)}, {@code PrintStream}/{@code
-   * PrintWriter} {@code printf}/{@code format(String, ...)}, {@code MessageFormat.format(String,
-   * ...)}, the no-argument {@code NumberFormat} factories and {@code new DecimalFormat(String)} all
-   * take the locale from the machine, so on a ru-RU or de-DE host a percentage reads {@code
-   * "47,8%"} next to a JSON number {@code 47.8} (issue #224). Pass a {@code Locale} ({@code
-   * Locale.ROOT} for anything a program or a bug report reads). Not frozen: there is no
-   * grandfathered debt, and a new call must fail.
+   * (j) No class in a covered module formats with the JVM default locale. On a ru-RU or de-DE host
+   * those calls wrote {@code "47,8%"} next to a JSON number {@code 47.8} (issue #224), under ar-EG
+   * {@code %d} produced Arabic-Indic digits (jafar-processor then generated uncompilable source),
+   * and date patterns localize month and day names. Pass a {@code Locale}: {@code Locale.ROOT} for
+   * anything a program, an agent or a bug report reads. Calls, method references and constructor
+   * references all count, and an owner matches with its subtypes ({@code DecimalFormat.getInstance}
+   * is {@code NumberFormat.getInstance}). Not frozen: there is no grandfathered debt.
    */
   public static ArchRule ruleJ() {
-    return noClasses()
-        .should()
-        .callMethod(String.class, "format", String.class, Object[].class)
-        .orShould()
-        .callMethod(String.class, "formatted", Object[].class)
-        .orShould()
-        .callMethod(java.io.PrintStream.class, "printf", String.class, Object[].class)
-        .orShould()
-        .callMethod(java.io.PrintStream.class, "format", String.class, Object[].class)
-        .orShould()
-        .callMethod(java.io.PrintWriter.class, "printf", String.class, Object[].class)
-        .orShould()
-        .callMethod(java.io.PrintWriter.class, "format", String.class, Object[].class)
-        .orShould()
-        .callMethod(java.text.MessageFormat.class, "format", String.class, Object[].class)
-        .orShould()
-        .callMethod(java.text.NumberFormat.class, "getInstance")
-        .orShould()
-        .callMethod(java.text.NumberFormat.class, "getNumberInstance")
-        .orShould()
-        .callMethod(java.text.NumberFormat.class, "getPercentInstance")
-        .orShould()
-        .callMethod(java.text.NumberFormat.class, "getIntegerInstance")
-        .orShould()
-        .callConstructor(java.text.DecimalFormat.class, String.class)
+    return classes()
+        .should(notFormatWithTheDefaultLocale())
         .as(
             "j: no class formats with the JVM default locale (String.format/formatted,"
-                + " PrintStream/PrintWriter printf/format, MessageFormat.format, NumberFormat and"
-                + " DecimalFormat without a Locale)");
+                + " PrintStream/PrintWriter/Console printf/format, MessageFormat, NumberFormat,"
+                + " DecimalFormat, Formatter, DateTimeFormatter.ofPattern and SimpleDateFormat"
+                + " without a Locale)");
+  }
+
+  /** One forbidden member: owner (matched with subtypes), name, exact raw parameter types. */
+  private record DefaultLocaleMember(Class<?> owner, String name, List<String> params) {
+    boolean matches(JavaClass targetOwner, String targetName, List<String> targetParams) {
+      return targetName.equals(name)
+          && targetParams.equals(params)
+          && targetOwner.isAssignableTo(owner);
+    }
+  }
+
+  private static DefaultLocaleMember member(Class<?> owner, String name, Class<?>... params) {
+    List<String> names = new ArrayList<>();
+    for (Class<?> p : params) {
+      names.add(p.getName());
+    }
+    return new DefaultLocaleMember(owner, name, names);
+  }
+
+  /** The default-locale overloads rule (j) forbids; constructors are named {@code <init>}. */
+  static final List<DefaultLocaleMember> DEFAULT_LOCALE_MEMBERS =
+      List.of(
+          member(String.class, "format", String.class, Object[].class),
+          member(String.class, "formatted", Object[].class),
+          member(java.io.PrintStream.class, "printf", String.class, Object[].class),
+          member(java.io.PrintStream.class, "format", String.class, Object[].class),
+          member(java.io.PrintWriter.class, "printf", String.class, Object[].class),
+          member(java.io.PrintWriter.class, "format", String.class, Object[].class),
+          member(java.io.Console.class, "printf", String.class, Object[].class),
+          member(java.io.Console.class, "format", String.class, Object[].class),
+          member(java.text.MessageFormat.class, "format", String.class, Object[].class),
+          member(java.text.MessageFormat.class, "<init>", String.class),
+          member(java.text.NumberFormat.class, "getInstance"),
+          member(java.text.NumberFormat.class, "getNumberInstance"),
+          member(java.text.NumberFormat.class, "getPercentInstance"),
+          member(java.text.NumberFormat.class, "getIntegerInstance"),
+          member(java.text.NumberFormat.class, "getCurrencyInstance"),
+          member(java.text.NumberFormat.class, "getCompactNumberInstance"),
+          member(java.text.DecimalFormat.class, "<init>"),
+          member(java.text.DecimalFormat.class, "<init>", String.class),
+          member(java.text.SimpleDateFormat.class, "<init>"),
+          member(java.text.SimpleDateFormat.class, "<init>", String.class),
+          member(java.time.format.DateTimeFormatter.class, "ofPattern", String.class));
+
+  private static ArchCondition<JavaClass> notFormatWithTheDefaultLocale() {
+    return new ArchCondition<JavaClass>("not format with the JVM default locale") {
+      @Override
+      public void check(JavaClass javaClass, ConditionEvents events) {
+        List<JavaAccess<?>> accesses = new ArrayList<>();
+        accesses.addAll(javaClass.getMethodCallsFromSelf());
+        accesses.addAll(javaClass.getConstructorCallsFromSelf());
+        accesses.addAll(javaClass.getMethodReferencesFromSelf());
+        accesses.addAll(javaClass.getConstructorReferencesFromSelf());
+        for (JavaAccess<?> access : accesses) {
+          if (!(access.getTarget() instanceof CodeUnitAccessTarget target)) {
+            continue;
+          }
+          List<String> params = new ArrayList<>();
+          for (JavaClass p : target.getRawParameterTypes()) {
+            params.add(p.getName());
+          }
+          boolean forbidden = false;
+          for (DefaultLocaleMember m : DEFAULT_LOCALE_MEMBERS) {
+            if (m.matches(target.getOwner(), target.getName(), params)) {
+              forbidden = true;
+              break;
+            }
+          }
+          // Any java.util.Formatter constructor without a Locale parameter
+          if (!forbidden
+              && target.getName().equals("<init>")
+              && target.getOwner().isAssignableTo(java.util.Formatter.class)
+              && !params.contains(java.util.Locale.class.getName())) {
+            forbidden = true;
+          }
+          if (forbidden) {
+            events.add(SimpleConditionEvent.violated(javaClass, access.getDescription()));
+          }
+        }
+      }
+    };
   }
 
   /**

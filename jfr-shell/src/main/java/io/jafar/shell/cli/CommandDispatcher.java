@@ -771,7 +771,7 @@ public class CommandDispatcher {
       Files.createDirectories(directory);
       String stamp =
           java.time.LocalDateTime.now()
-              .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+              .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT));
       Path script = directory.resolve("ask-" + stamp + ".jfrs");
 
       StringBuilder sb = new StringBuilder();

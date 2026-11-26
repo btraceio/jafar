@@ -41,7 +41,8 @@ import org.jline.reader.Candidate;
  * filtering, completion, cell picker, session picker, and CSV export.
  */
 public final class TuiCommandExecutor {
-  private static final DateTimeFormatter EXPORT_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+  private static final DateTimeFormatter EXPORT_TS =
+      DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
   private static final Set<String> SCRIPTING_KEYWORDS = Set.of("if", "elif", "else", "endif");
 
   private final TuiContext ctx;

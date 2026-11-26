@@ -43,7 +43,7 @@ final class TimeFormats {
     if (format == null || format.isEmpty()) {
       return DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     }
-    return DateTimeFormatter.ofPattern(format);
+    return DateTimeFormatter.ofPattern(format, Locale.ROOT);
   }
 
   /**

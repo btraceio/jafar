@@ -123,13 +123,22 @@ and one unfrozen one, in plain words:
   `io.jafar.shell.backend.impl..`, and classes in
   `io.jafar.shell.core.llm..` never depend on `io.jafar.shell.llm..` —
   backends are discovered, never hard-wired;
-- **(j)** no class formats with the JVM default locale: `String.format(String,
-  ...)`, `String.formatted(...)`, `PrintStream`/`PrintWriter` `printf`/`format(String,
-  ...)`, `MessageFormat.format(String, ...)`, the no-argument `NumberFormat`
-  factories and `new DecimalFormat(String)` are all forbidden. Pass a `Locale`
-  — `Locale.ROOT` for anything a program, an agent or a bug report reads. On a
+- **(j)** no class formats with the JVM default locale. Forbidden, whether
+  called, used as a method reference or reached through a subtype of the
+  owner: `String.format(String, ...)`, `String.formatted(...)`,
+  `PrintStream`/`PrintWriter`/`Console` `printf`/`format(String, ...)`,
+  `MessageFormat.format(String, ...)` and `new MessageFormat(String)`, the
+  no-argument `NumberFormat` factories (`getInstance`, `getNumberInstance`,
+  `getPercentInstance`, `getIntegerInstance`, `getCurrencyInstance`,
+  `getCompactNumberInstance`), `new DecimalFormat()`/`(String)`, any
+  `java.util.Formatter` constructor without a `Locale`,
+  `DateTimeFormatter.ofPattern(String)` and `new SimpleDateFormat()`/`(String)`
+  (the list is `ArchitectureRules.DEFAULT_LOCALE_MEMBERS`). Pass a `Locale` —
+  `Locale.ROOT` for anything a program, an agent or a bug report reads. On a
   ru-RU or de-DE host those calls wrote `"47,8%"` next to the JSON number
-  `47.8` (issue #224). Rule (j) is **not frozen**: there is no grandfathered
+  `47.8` (issue #224); under ar-EG `%d` wrote Arabic-Indic digits.
+  `toLowerCase()`/`toUpperCase()` without a locale are a different bug class
+  and not covered. Rule (j) is **not frozen**: there is no grandfathered
   debt, so its test checks the rule directly and any new call fails the build.
   It covers the classified modules' main classes like the other rules; the
   `parser-core` multi-release overlays (`src/java9|13|21`), `test-*` modules

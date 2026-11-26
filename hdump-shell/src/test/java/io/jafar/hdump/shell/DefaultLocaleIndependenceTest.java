@@ -25,16 +25,23 @@ class DefaultLocaleIndependenceTest {
   private static final Pattern COMMA_DECIMAL = Pattern.compile("\\d,\\d+\\s*(%|[KMGT]?B\\b)");
 
   private Locale saved;
+  private Locale savedFormat;
+  private Locale savedDisplay;
 
   @BeforeEach
   void ruRu() {
     saved = Locale.getDefault();
+    savedFormat = Locale.getDefault(Locale.Category.FORMAT);
+    savedDisplay = Locale.getDefault(Locale.Category.DISPLAY);
     Locale.setDefault(Locale.of("ru", "RU"));
   }
 
   @AfterEach
   void restore() {
+    // setDefault(Locale) resets both categories; restore each as it was
     Locale.setDefault(saved);
+    Locale.setDefault(Locale.Category.FORMAT, savedFormat);
+    Locale.setDefault(Locale.Category.DISPLAY, savedDisplay);
   }
 
   private Path heapOfAFewKilobytes() throws IOException {
