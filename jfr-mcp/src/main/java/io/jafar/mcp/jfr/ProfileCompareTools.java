@@ -78,7 +78,9 @@ public final class ProfileCompareTools {
             }
         """;
     String schema =
-        """
+        String.format(
+            Locale.ROOT,
+            """
         {
           "type": "object",
           "properties": {
@@ -107,8 +109,9 @@ public final class ProfileCompareTools {
           },
           "required": ["baseline", "candidate"]
         }
-        """
-            .formatted(side.strip(), side.strip());
+        """,
+            side.strip(),
+            side.strip());
 
     return new McpServerFeatures.SyncToolSpecification(
         Tool.builder()

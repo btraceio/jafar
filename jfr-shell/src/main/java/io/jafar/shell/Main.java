@@ -995,7 +995,7 @@ public final class Main implements Callable<Integer> {
         out.append("  no sample types\n");
       }
       for (SampleTypeInfo type : types) {
-        out.append(String.format("  %-40s %s%n", type.label(), type.kind()));
+        out.append(String.format(java.util.Locale.ROOT, "  %-40s %s%n", type.label(), type.kind()));
       }
       return out.toString();
     }
