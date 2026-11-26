@@ -57,6 +57,11 @@ final class HeapClassImpl implements HeapClass {
     this.primitiveArrayType = type;
   }
 
+  /** Sets the instance count where it is known in bulk (INDEXED mode reads it from an index). */
+  void setInstanceCount(int count) {
+    this.instanceCount = count;
+  }
+
   void incrementInstanceCount() {
     instanceCount++;
   }

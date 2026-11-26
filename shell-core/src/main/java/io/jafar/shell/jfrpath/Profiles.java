@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -532,16 +533,21 @@ final class Profiles {
                 double threadPct = node.total == 0 ? 0 : (cnt * 100.0) / node.total;
                 threads.put(
                     e.getKey(),
-                    String.format("%d (%4.1f%%) %s", cnt, threadPct, threadBar(cnt, maxCount, 10)));
+                    String.format(
+                        Locale.ROOT,
+                        "%d (%4.1f%%) %s",
+                        cnt,
+                        threadPct,
+                        threadBar(cnt, maxCount, 10)));
               });
       row.put("threads", threads);
     }
     Map<String, Object> profile = new LinkedHashMap<>();
     profile.put("self", node.self);
     profile.put("total", node.total);
-    profile.put("totalPct", String.format("%.1f%%", pct));
+    profile.put("totalPct", String.format(Locale.ROOT, "%.1f%%", pct));
     double selfPct = node.total == 0 ? 0 : (node.self * 100.0) / node.total;
-    profile.put("selfPct", String.format("%.1f%%", selfPct));
+    profile.put("selfPct", String.format(Locale.ROOT, "%.1f%%", selfPct));
     profile.put("pattern", pattern);
     profile.put("timeBuckets", node.timeBuckets.clone());
     profile.put("threadCounts", new LinkedHashMap<>(node.threadCounts));

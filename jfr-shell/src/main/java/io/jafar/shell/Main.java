@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -410,7 +411,7 @@ public final class Main implements Callable<Integer> {
 
                   @Override
                   public void printf(String fmt, Object... args) {
-                    output.append(String.format(fmt, args));
+                    output.append(String.format(Locale.ROOT, fmt, args));
                   }
 
                   @Override
@@ -730,7 +731,7 @@ public final class Main implements Callable<Integer> {
 
                   @Override
                   public void printf(String fmt2, Object... args) {
-                    out.printf(fmt2, args);
+                    out.printf(Locale.ROOT, fmt2, args);
                   }
 
                   @Override
@@ -916,7 +917,7 @@ public final class Main implements Callable<Integer> {
 
                   @Override
                   public void printf(String fmt, Object... args) {
-                    output.append(String.format(fmt, args));
+                    output.append(String.format(Locale.ROOT, fmt, args));
                   }
 
                   @Override
@@ -963,8 +964,10 @@ public final class Main implements Callable<Integer> {
           }
           System.err.println(
               String.format(
+                  Locale.ROOT,
                   "\nExecuted %d/%d commands successfully.",
-                  result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size()));
+                  result.getSuccessCount(),
+                  result.getSuccessCount() + result.getErrors().size()));
           return 1;
         }
 

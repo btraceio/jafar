@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -127,6 +128,7 @@ public final class HeapReportGenerator {
     String fileName = path != null ? path.getFileName().toString() : "unknown";
     sb.append(
         String.format(
+            Locale.ROOT,
             "Heap: %s (%s, %,d objects, %,d classes)%n",
             fileName,
             formatSize(totalHeapSize(dump)),
@@ -141,7 +143,7 @@ public final class HeapReportGenerator {
       char code = sev == Severity.CRITICAL ? 'C' : sev == Severity.WARNING ? 'W' : 'I';
       int idx = 1;
       for (Finding f : group) {
-        sb.append(String.format("[%c%d] %s%n", code, idx++, f.title()));
+        sb.append(String.format(Locale.ROOT, "[%c%d] %s%n", code, idx++, f.title()));
         if (f.description() != null && !f.description().isBlank()) {
           sb.append("     ").append(f.description()).append("\n");
         }
@@ -173,6 +175,7 @@ public final class HeapReportGenerator {
     String fileName = path != null ? path.getFileName().toString() : "unknown";
     sb.append(
         String.format(
+            Locale.ROOT,
             "**Heap:** %s | **Size:** %s | **Objects:** %,d | **Classes:** %,d%n%n",
             fileName,
             formatSize(totalHeapSize(dump)),
@@ -186,7 +189,7 @@ public final class HeapReportGenerator {
       char code = sev == Severity.CRITICAL ? 'C' : sev == Severity.WARNING ? 'W' : 'I';
       int idx = 1;
       for (Finding f : group) {
-        sb.append(String.format("### [%c%d] %s%n%n", code, idx++, f.title()));
+        sb.append(String.format(Locale.ROOT, "### [%c%d] %s%n%n", code, idx++, f.title()));
         if (f.description() != null && !f.description().isBlank()) {
           sb.append(f.description()).append("\n\n");
         }
@@ -212,8 +215,11 @@ public final class HeapReportGenerator {
             Severity.INFO,
             "summary",
             String.format(
+                Locale.ROOT,
                 "Heap summary: %,d objects, %,d classes, %s total shallow",
-                dump.getObjectCount(), dump.getClassCount(), formatSize(totalShallow)),
+                dump.getObjectCount(),
+                dump.getClassCount(),
+                formatSize(totalShallow)),
             null,
             totalShallow,
             dump.getObjectCount(),
@@ -234,6 +240,7 @@ public final class HeapReportGenerator {
               Severity.INFO,
               "histogram",
               String.format(
+                  Locale.ROOT,
                   "Top class by instance count: %s (%,d instances, %s shallow)",
                   ClassNameUtil.toHumanReadable(topClass.getName()),
                   topClass.getInstanceCount(),
@@ -244,7 +251,7 @@ public final class HeapReportGenerator {
               "Inspect with: objects/" + ClassNameUtil.toHumanReadable(topClass.getName()),
               "objects/"
                   + ClassNameUtil.toHumanReadable(topClass.getName())
-                  + " | groupBy(class) | stats(shallow)"));
+                  + " | stats(shallow)"));
     }
 
     return findings;
@@ -271,7 +278,7 @@ public final class HeapReportGenerator {
         new Finding(
             Severity.INFO,
             "gcroots",
-            String.format("GC roots: %s", desc),
+            String.format(Locale.ROOT, "GC roots: %s", desc),
             null,
             -1,
             dump.getGcRootCount(),
@@ -306,6 +313,7 @@ public final class HeapReportGenerator {
               sev,
               "leaks/" + detector.getName(),
               String.format(
+                  Locale.ROOT,
                   "%s: %,d suspect(s) found%s",
                   detector.getName(),
                   results.size(),
@@ -363,7 +371,10 @@ public final class HeapReportGenerator {
       if (rc != null) {
         desc =
             String.format(
-                "Most wasteful: %s (%s copies)", rc, copies != null ? copies.toString() : "?");
+                Locale.ROOT,
+                "Most wasteful: %s (%s copies)",
+                rc,
+                copies != null ? copies.toString() : "?");
       }
     }
 
@@ -372,7 +383,10 @@ public final class HeapReportGenerator {
             sev,
             "duplicates",
             String.format(
-                "Duplicate subgraphs: %,d groups, ~%s reclaimable", groups, formatSize(totalWaste)),
+                Locale.ROOT,
+                "Duplicate subgraphs: %,d groups, ~%s reclaimable",
+                groups,
+                formatSize(totalWaste)),
             desc,
             totalWaste,
             groups,
@@ -404,36 +418,40 @@ public final class HeapReportGenerator {
             sev,
             "waste",
             String.format(
+                Locale.ROOT,
                 "Collection capacity waste: %,d collection instances, estimated ~%s overhead",
-                wastedCollections, formatSize(wastedEstimate)),
+                wastedCollections,
+                formatSize(wastedEstimate)),
             "Run waste() for exact per-object figures",
             wastedEstimate,
             wastedCollections,
-            "Inspect with: objects/instanceof/java.util.Map | waste() | sortBy(wastedBytes desc)",
-            "objects/instanceof/java.util.Map | waste() | filter(wastedBytes > 1MB)"
+            // instanceof on a concrete base also covers subclasses (anonymous LRU maps etc.);
+            // a java.util.* glob would miss those and drag in every HashMap$Node
+            // top(), not sortBy(): on heaps over 5M objects only a pipeline ending in an
+            // aggregation streams every object (sortBy would see 100 of them)
+            "Inspect with: objects/instanceof/java.util.HashMap | waste() | top(20, wastedBytes);"
+                + " likewise java.util.ArrayList and java.util.concurrent.ConcurrentHashMap",
+            "objects/instanceof/java.util.HashMap | waste() | filter(wastedBytes > 1MB)"
                 + " | top(10, wastedBytes)"));
   }
 
   // ---- Utilities ----
 
   /**
-   * Returns the total shallow heap size. Falls back to summing {@code instanceCount * instanceSize}
-   * from the class histogram when the indexed parser leaves {@code getTotalHeapSize()} at zero
-   * (large heap dumps use lazy loading and don't accumulate the total during parsing).
+   * Returns the total shallow heap size. Both parsing modes set it; the fallback this used to have
+   * (summing {@code instanceCount * instanceSize}, which leaves out headers and every array)
+   * printed a plausible, wrong figure once INDEXED mode reported instance counts.
    */
   private static long totalHeapSize(HeapDump dump) {
-    long size = dump.getTotalHeapSize();
-    if (size > 0) return size;
-    return dump.getClasses().stream()
-        .mapToLong(c -> (long) c.getInstanceCount() * c.getInstanceSize())
-        .sum();
+    return dump.getTotalHeapSize();
   }
 
   private static String formatSize(long bytes) {
     if (bytes < 0) return "?";
     if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-    if (bytes < 1024L * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
-    return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+    if (bytes < 1024 * 1024) return String.format(Locale.ROOT, "%.1f KB", bytes / 1024.0);
+    if (bytes < 1024L * 1024 * 1024)
+      return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024));
+    return String.format(Locale.ROOT, "%.2f GB", bytes / (1024.0 * 1024 * 1024));
   }
 }

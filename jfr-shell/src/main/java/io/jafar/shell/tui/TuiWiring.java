@@ -5,6 +5,7 @@ import dev.tamboui.terminal.Terminal;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.TuiAdapter;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -90,7 +91,7 @@ public final class TuiWiring {
 
               @Override
               public void printf(String fmt, Object... args) {
-                executor.addOutputLine(String.format(fmt, args));
+                executor.addOutputLine(String.format(Locale.ROOT, fmt, args));
               }
 
               @Override

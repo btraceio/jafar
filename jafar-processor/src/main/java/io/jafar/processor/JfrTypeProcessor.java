@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
@@ -451,30 +452,31 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   /** Generates an instance field declaration for constant pool reference. */
   private String instanceFieldCpDeclaration(String fieldName) {
-    return String.format(INSTANCE_FIELD_CP_TEMPLATE, fieldName);
+    return String.format(Locale.ROOT, INSTANCE_FIELD_CP_TEMPLATE, fieldName);
   }
 
   /** Generates an instance field declaration for constant pool reference array. */
   private String instanceFieldCpArrayDeclaration(String fieldName) {
-    return String.format(INSTANCE_FIELD_CP_ARRAY_TEMPLATE, fieldName);
+    return String.format(Locale.ROOT, INSTANCE_FIELD_CP_ARRAY_TEMPLATE, fieldName);
   }
 
   /** Generates an instance field declaration. */
   private String instanceFieldDeclaration(String javaType, String fieldName) {
-    return String.format(INSTANCE_FIELD_TEMPLATE, javaType, fieldName);
+    return String.format(Locale.ROOT, INSTANCE_FIELD_TEMPLATE, javaType, fieldName);
   }
 
   /** Generates a switch case for a complex field: inline when the plan says so, else pooled. */
   private String switchCaseCp(String jfrFieldName, String fieldName, String inlineHandler) {
     if (inlineHandler == null) {
-      return String.format(SWITCH_CASE_CP_ONLY_TEMPLATE, jfrFieldName, fieldName);
+      return String.format(Locale.ROOT, SWITCH_CASE_CP_ONLY_TEMPLATE, jfrFieldName, fieldName);
     }
-    return String.format(SWITCH_CASE_CP_TEMPLATE, jfrFieldName, fieldName, inlineHandler);
+    return String.format(
+        Locale.ROOT, SWITCH_CASE_CP_TEMPLATE, jfrFieldName, fieldName, inlineHandler);
   }
 
   /** Generates a switch case for direct field reading. */
   private String switchCase(String jfrFieldName, String fieldName, String readCode) {
-    return String.format(SWITCH_CASE_TEMPLATE, jfrFieldName, fieldName, readCode);
+    return String.format(Locale.ROOT, SWITCH_CASE_TEMPLATE, jfrFieldName, fieldName, readCode);
   }
 
   /** Generates a switch case for an array of complex values: inline or pool references. */
@@ -484,14 +486,20 @@ public class JfrTypeProcessor extends AbstractProcessor {
         inlineHandler == null
             ? ""
             : String.format(
-                SWITCH_CASE_INLINE_ARRAY_TEMPLATE, fieldName, elementType, inlineHandler);
-    return String.format(SWITCH_CASE_CP_ARRAY_TEMPLATE, jfrFieldName, inline, fieldName, fieldName);
+                Locale.ROOT,
+                SWITCH_CASE_INLINE_ARRAY_TEMPLATE,
+                fieldName,
+                elementType,
+                inlineHandler);
+    return String.format(
+        Locale.ROOT, SWITCH_CASE_CP_ARRAY_TEMPLATE, jfrFieldName, inline, fieldName, fieldName);
   }
 
   /** Generates a switch case for primitive array reading. */
   private String switchCasePrimitiveArray(
       String jfrFieldName, String fieldName, String elementType, String readCode) {
     return String.format(
+        Locale.ROOT,
         SWITCH_CASE_PRIMITIVE_ARRAY_TEMPLATE,
         jfrFieldName,
         fieldName,
@@ -502,28 +510,31 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   /** Generates a switch case for String array reading. */
   private String switchCaseStringArray(String jfrFieldName, String fieldName) {
-    return String.format(SWITCH_CASE_STRING_ARRAY_TEMPLATE, jfrFieldName, fieldName, fieldName);
+    return String.format(
+        Locale.ROOT, SWITCH_CASE_STRING_ARRAY_TEMPLATE, jfrFieldName, fieldName, fieldName);
   }
 
   /** Generates reset statement for constant pool reference field. */
   private String resetFieldCp(String fieldName) {
-    return String.format(RESET_FIELD_CP_TEMPLATE, fieldName);
+    return String.format(Locale.ROOT, RESET_FIELD_CP_TEMPLATE, fieldName);
   }
 
   /** Generates reset statement for primitive field. */
   private String resetFieldPrimitive(String fieldName, String javaType) {
-    return String.format(RESET_FIELD_PRIMITIVE_TEMPLATE, fieldName, getDefaultValue(javaType));
+    return String.format(
+        Locale.ROOT, RESET_FIELD_PRIMITIVE_TEMPLATE, fieldName, getDefaultValue(javaType));
   }
 
   /** Generates reset statement for object field. */
   private String resetFieldObject(String fieldName) {
-    return String.format(RESET_FIELD_OBJECT_TEMPLATE, fieldName);
+    return String.format(Locale.ROOT, RESET_FIELD_OBJECT_TEMPLATE, fieldName);
   }
 
   /** Generates getter method for constant pool field. */
   private String getterMethodCp(
       String returnType, String methodName, String fieldName, String inlineHandler) {
     return String.format(
+        Locale.ROOT,
         GETTER_CP_TEMPLATE,
         returnType,
         methodName,
@@ -532,13 +543,16 @@ public class JfrTypeProcessor extends AbstractProcessor {
   }
 
   private static String inlineGetterPrefix(String fieldName, String inlineHandler) {
-    return inlineHandler == null ? "" : String.format(GETTER_INLINE_TEMPLATE, fieldName);
+    return inlineHandler == null
+        ? ""
+        : String.format(Locale.ROOT, GETTER_INLINE_TEMPLATE, fieldName);
   }
 
   /** Generates getter method for constant pool array field. */
   private String getterMethodCpArray(
       String elementType, String methodName, String fieldName, String inlineHandler) {
     return String.format(
+        Locale.ROOT,
         GETTER_CP_ARRAY_TEMPLATE,
         elementType,
         methodName,
@@ -548,7 +562,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   /** Generates getter method for direct field. */
   private String getterMethod(String returnType, String methodName, String fieldName) {
-    return String.format(GETTER_TEMPLATE, returnType, methodName, fieldName);
+    return String.format(Locale.ROOT, GETTER_TEMPLATE, returnType, methodName, fieldName);
   }
 
   // --- Build methods (aggregate multiple items) ---
@@ -634,7 +648,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
     if (field.needsConstantPool) {
       return switchCaseCp(label, field.fieldName, field.inlineHandler);
     } else if (field.isPooledString()) {
-      return String.format(SWITCH_CASE_STRING_TEMPLATE, label, field.fieldName);
+      return String.format(Locale.ROOT, SWITCH_CASE_STRING_TEMPLATE, label, field.fieldName);
     }
     return switchCase(label, field.fieldName, generateReadCode(field));
   }
@@ -694,6 +708,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private String validateBody(FieldInfo field) {
     if (field.needsConstantPool) {
       return String.format(
+          Locale.ROOT,
           VALIDATE_CASE_COMPLEX_TEMPLATE,
           field.fieldName,
           field.cpTypeName,
@@ -701,11 +716,11 @@ public class JfrTypeProcessor extends AbstractProcessor {
           field.inlineHandler == null ? "null" : "\"" + field.inlineHandler + "\"");
     }
     if (field.isPooledString()) {
-      return String.format(VALIDATE_CASE_STRING_TEMPLATE, field.fieldName + "_cpType");
+      return String.format(Locale.ROOT, VALIDATE_CASE_STRING_TEMPLATE, field.fieldName + "_cpType");
     }
     int pooled = field.isRaw ? 2 : 0;
     String types = expectedJfrTypes(field.isArray ? field.elementType : field.javaType);
-    return String.format(VALIDATE_CASE_TEMPLATE, pooled, field.isArray, types);
+    return String.format(Locale.ROOT, VALIDATE_CASE_TEMPLATE, pooled, field.isArray, types);
   }
 
   /**
@@ -1068,7 +1083,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
         sb.append(resetFieldObject(field.fieldName));
         sb.append(resetFieldCp(field.fieldName));
         sb.append(
-            String.format(RESET_FIELD_PRIMITIVE_TEMPLATE, field.fieldName + "_cpType", "-1L"));
+            String.format(
+                Locale.ROOT, RESET_FIELD_PRIMITIVE_TEMPLATE, field.fieldName + "_cpType", "-1L"));
       } else if (field.isPrimitive) {
         sb.append(resetFieldPrimitive(field.fieldName, field.javaType));
       } else {
@@ -1095,7 +1111,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
                   field.returnType, field.methodName, field.fieldName, field.inlineHandler));
         }
       } else if (field.isPooledString()) {
-        sb.append(String.format(GETTER_STRING_TEMPLATE, field.fieldName));
+        sb.append(String.format(Locale.ROOT, GETTER_STRING_TEMPLATE, field.fieldName));
       } else {
         sb.append(getterMethod(field.returnType, field.methodName, field.fieldName));
       }

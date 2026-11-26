@@ -2,6 +2,7 @@ package io.jafar.shell.plugin;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -145,7 +146,12 @@ final class UpdateChecker {
             case MAJOR -> "major update";
           };
       return String.format(
-          "Plugin '%s': %s → %s (%s)", pluginId, currentVersion, availableVersion, typeLabel);
+          Locale.ROOT,
+          "Plugin '%s': %s → %s (%s)",
+          pluginId,
+          currentVersion,
+          availableVersion,
+          typeLabel);
     }
   }
 }

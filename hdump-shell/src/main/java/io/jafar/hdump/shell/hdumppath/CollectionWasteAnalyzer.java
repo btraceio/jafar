@@ -1,5 +1,6 @@
 package io.jafar.hdump.shell.hdumppath;
 
+import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapObject;
 import java.util.Map;
 
@@ -8,7 +9,8 @@ import java.util.Map;
  * types to compute capacity, size, load factor, and wasted bytes.
  *
  * <p>Supported collections: HashMap, LinkedHashMap, HashSet, LinkedHashSet, ArrayList,
- * ConcurrentHashMap, ArrayDeque.
+ * ConcurrentHashMap, ArrayDeque, and their subclasses: an object is analyzed as its nearest
+ * supported superclass, through the fields it inherits from it.
  */
 final class CollectionWasteAnalyzer {
 
@@ -26,16 +28,35 @@ final class CollectionWasteAnalyzer {
     if (obj.getHeapClass() == null) {
       return false;
     }
-    // HeapClass names use JVM internal form (slashes, not dots)
-    String className = obj.getHeapClass().getName();
-    return switch (className) {
-      case "java/util/HashMap", "java/util/LinkedHashMap" -> analyzeHashMap(obj, row, refSize);
-      case "java/util/HashSet", "java/util/LinkedHashSet" -> analyzeHashSet(obj, row, refSize);
-      case "java/util/ArrayList" -> analyzeArrayList(obj, row, refSize);
-      case "java/util/concurrent/ConcurrentHashMap" -> analyzeConcurrentHashMap(obj, row, refSize);
-      case "java/util/ArrayDeque" -> analyzeArrayDeque(obj, row, refSize);
-      default -> false;
-    };
+    // A subclass (an anonymous LinkedHashMap, say) inherits the fields read below, so walk up to
+    // the nearest supported class. Matching the exact name only left subclass rows with null
+    // columns (issue #225).
+    for (HeapClass cls = obj.getHeapClass(); cls != null; cls = cls.getSuperClass()) {
+      // HeapClass names use JVM internal form (slashes, not dots)
+      String className = cls.getName();
+      if (className == null) {
+        continue;
+      }
+      switch (className) {
+        case "java/util/HashMap", "java/util/LinkedHashMap" -> {
+          return analyzeHashMap(obj, row, refSize);
+        }
+        case "java/util/HashSet", "java/util/LinkedHashSet" -> {
+          return analyzeHashSet(obj, row, refSize);
+        }
+        case "java/util/ArrayList" -> {
+          return analyzeArrayList(obj, row, refSize);
+        }
+        case "java/util/concurrent/ConcurrentHashMap" -> {
+          return analyzeConcurrentHashMap(obj, row, refSize);
+        }
+        case "java/util/ArrayDeque" -> {
+          return analyzeArrayDeque(obj, row, refSize);
+        }
+        default -> {}
+      }
+    }
+    return false;
   }
 
   private static boolean analyzeHashMap(HeapObject obj, Map<String, Object> row, int refSize) {

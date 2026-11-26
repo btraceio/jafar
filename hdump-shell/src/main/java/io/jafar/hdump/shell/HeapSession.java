@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -196,6 +197,7 @@ public final class HeapSession implements Session {
     System.err.println("Computing approximate retained sizes...");
     System.err.println(
         String.format(
+            Locale.ROOT,
             "Scanning %,d objects from heap dump (may take a while for large dumps)",
             dump.getObjectCount()));
     System.err.println();
@@ -212,6 +214,7 @@ public final class HeapSession implements Session {
             String progressBar = createProgressBar(progress, 30);
             System.err.print(
                 String.format(
+                    Locale.ROOT,
                     "\r%s [%s] %.0f%% - %s",
                     spinner[spinnerIndex[0] % spinner.length],
                     progressBar,
@@ -244,6 +247,7 @@ public final class HeapSession implements Session {
     System.err.println("Computing full dominator tree for dominators() operator...");
     System.err.println(
         String.format(
+            Locale.ROOT,
             "Analyzing %,d objects (estimated time: 15-30 seconds for 10M objects)",
             dump.getObjectCount()));
     System.err.println();
@@ -260,6 +264,7 @@ public final class HeapSession implements Session {
             String progressBar = createProgressBar(progress, 30);
             System.err.print(
                 String.format(
+                    Locale.ROOT,
                     "\r%s [%s] %.0f%% - %s",
                     spinner[spinnerIndex[0] % spinner.length],
                     progressBar,
@@ -312,6 +317,7 @@ public final class HeapSession implements Session {
       System.err.println();
       System.err.println("Computing object age estimates...");
       System.err.printf(
+          Locale.ROOT,
           "Scanning %,d objects and their references (may take a while for large dumps)%n",
           dump.getObjectCount());
       System.err.println();
@@ -398,23 +404,19 @@ public final class HeapSession implements Session {
     stats.put("classes", dump.getClassCount());
     stats.put("objects", dump.getObjectCount());
     stats.put("gcRoots", dump.getGcRootCount());
-    long totalSize = dump.getTotalHeapSize();
-    if (totalSize == 0) {
-      totalSize =
-          dump.getClasses().stream()
-              .mapToLong(c -> (long) c.getInstanceCount() * c.getInstanceSize())
-              .sum();
-    }
-    stats.put("totalHeapSize", formatSize(totalSize));
+    // Both parsing modes set the total; the instanceCount * instanceSize fallback this had left out
+    // headers and arrays (removed from HeapReportGenerator for the same reason)
+    stats.put("totalHeapSize", formatSize(dump.getTotalHeapSize()));
     stats.put("dominatorsComputed", dump.hasDominators());
     return stats;
   }
 
   private static String formatSize(long bytes) {
     if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-    if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
-    return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+    if (bytes < 1024 * 1024) return String.format(Locale.ROOT, "%.1f KB", bytes / 1024.0);
+    if (bytes < 1024 * 1024 * 1024)
+      return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024));
+    return String.format(Locale.ROOT, "%.2f GB", bytes / (1024.0 * 1024 * 1024));
   }
 
   @Override

@@ -217,8 +217,9 @@ hdump> classes[instanceCount > 1000] | sortBy(instanceCount desc)
 ### Class Hierarchy
 
 ```bash
-# Find implementations of Map
-hdump> objects/instanceof/java.util.Map | groupBy(class) | top(10, count)
+# Find Map implementations (instanceof follows superclasses; a heap dump records no
+# interfaces, so name the abstract class rather than java.util.Map)
+hdump> objects/instanceof/java.util.AbstractMap | groupBy(class) | top(10, count)
 
 | class                          | count  |
 |-------------------------------|--------|
@@ -230,15 +231,19 @@ hdump> objects/instanceof/java.util.Map | groupBy(class) | top(10, count)
 ### Collection Analysis
 
 ```bash
-# All collections
-hdump> objects/instanceof/java.util.Collection | groupBy(class) | top(10, count)
+# Collections that extend AbstractCollection (not CopyOnWriteArrayList or the
+# Collections.unmodifiable*/synchronized* wrappers)
+hdump> objects/instanceof/java.util.AbstractCollection | groupBy(class) | top(10, count)
 
-# List implementations
-hdump> objects/instanceof/java.util.List | groupBy(class) | top(5, count)
+# Lists that extend AbstractList: ArrayList, LinkedList, Vector (not List.of)
+hdump> objects/instanceof/java.util.AbstractList | groupBy(class) | top(5, count)
 
-# Set implementations
-hdump> objects/instanceof/java.util.Set | groupBy(class) | top(5, count)
+# Sets that extend AbstractSet: HashSet, LinkedHashSet, TreeSet (not Set.of)
+hdump> objects/instanceof/java.util.AbstractSet | groupBy(class) | top(5, count)
 ```
+
+What each abstract class covers is listed in
+[HdumpPath: Instanceof](../hdumppath.md#instanceof-subclass-matching).
 
 ## GC Root Analysis
 
@@ -321,7 +326,7 @@ Retained size shows how much memory would be freed if an object were garbage col
 hdump> objects | top(10, retained)
 
 # Classes by total retained memory
-hdump> objects | groupBy(class) | top(10, retained)
+hdump> objects | groupBy(class, agg=sum, value=retained) | top(10, retained)
 
 # Large retained objects of specific type
 hdump> objects/java.util.HashMap[retained > 10MB] | top(10, retained)
@@ -428,7 +433,7 @@ hdump> objects/java.lang.String | stats(shallow)
 
 ```bash
 # Find cache-like structures
-hdump> objects/instanceof/java.util.Map | groupBy(class, agg=count)
+hdump> objects/instanceof/java.util.AbstractMap | groupBy(class, agg=count)
 
 # Large Maps that might be caches
 hdump> classes/*Cache* | select(name, instanceCount)
@@ -518,7 +523,7 @@ hdump> objects/java.util.LinkedHashMap | cacheStats()
 hdump> objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
 
 # Top 10 most expensive caches by retained bytes per entry
-hdump> objects/instanceof/java.util.Map | cacheStats() | top(10, costPerEntry)
+hdump> objects/instanceof/java.util.AbstractMap | cacheStats() | top(10, costPerEntry)
 
 # Find under-utilized maps (< 10% fill)
 hdump> objects/java.util.HashMap | cacheStats() | filter(fillRatio < 0.1) | sortBy(entryCount desc)
@@ -700,11 +705,12 @@ classes | count
 gcroots | groupBy(type)
 ```
 
-### 2. Use instanceof for Interface Analysis
+### 2. Use instanceof for Class Hierarchies
 
-Find all implementations:
+Find all subclasses (superclasses only; interfaces such as `java.io.Closeable` are not recorded
+in a heap dump, and `instanceof` on one fails with an explanation):
 ```bash
-objects/instanceof/java.io.Closeable | groupBy(class)
+objects/instanceof/java.io.InputStream | groupBy(class)
 ```
 
 ### 3. Focus on Your Application
