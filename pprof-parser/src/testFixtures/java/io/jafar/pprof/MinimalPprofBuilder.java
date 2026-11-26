@@ -46,6 +46,8 @@ public final class MinimalPprofBuilder {
   private final List<FunctionDef> functions = new ArrayList<>();
   private long durationNanos = 0;
   private long timeNanos = 0;
+  private long[] periodType; // [typeIdx, unitIdx], or null
+  private long period = 0;
 
   private record SampleDef(List<Long> locationIds, List<Long> values, List<long[]> labels) {}
 
@@ -115,6 +117,13 @@ public final class MinimalPprofBuilder {
     return this;
   }
 
+  /** Sets the sampling period and its value type (e.g. cpu / nanoseconds, 10000000). */
+  public MinimalPprofBuilder setPeriod(int typeIdx, int unitIdx, long period) {
+    this.periodType = new long[] {typeIdx, unitIdx};
+    this.period = period;
+    return this;
+  }
+
   /** Writes the profile to a temp file inside {@code dir} and returns its path. */
   public Path write(Path dir) throws IOException {
     Path file = dir.resolve("test-" + System.nanoTime() + ".pb.gz");
@@ -159,6 +168,12 @@ public final class MinimalPprofBuilder {
     // field 10: durationNanos
     if (durationNanos != 0) {
       writeVarint(out, 10, durationNanos);
+    }
+
+    // field 11: periodType, field 12: period
+    if (periodType != null) {
+      writeLen(out, 11, encodeSampleType(periodType[0], periodType[1]));
+      writeVarint(out, 12, period);
     }
 
     // field 9: timeNanos
