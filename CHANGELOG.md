@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are not A/A, too few runs, and inconsistent benchmark sets. The procedure is in
   [doc/plans/perf-ab.md](doc/plans/perf-ab.md), section 3.8; the calibration file follows once the
   runs exist on the runner
+- **`scripts/perf-ab-calibration.json`** - the perf-ab calibration from ten A/A runs on GitHub
+  runners (three AMD EPYC models, both round orders, no p < 0.01 in 60 tests): minimum effects of
+  4-5% and noise bounds of 12.5-33.5% per `QueryPushdownBenchmark` method. perf-ab verdicts on PRs
+  now read `slower`, `faster` or `no change detected` instead of `uncalibrated`
 - **`jfr-shell compare <baseline.jfr> <candidate.jfr>`** - the `jfr_compare` comparison without an
   MCP server, for CI. Prints a short report, or with `--json` the keys `jfr_compare` returns plus
   `inclusiveFrames`: per frame, the share of samples whose stack contains it (once per sample under
