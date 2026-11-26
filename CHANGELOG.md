@@ -153,6 +153,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   locale with non-ASCII digits (ar-EG, fa-IR, ...) jafar-processor's `%d` template generated
   `requireStorage(metadata, metaField, ٠, ...)`, which does not compile; it now writes ASCII
   digits. Arch rule (j) fails the build on a new default-locale call (`doc/agents/Gates.md`)
+- **HdumpPath: `instanceof/<interface>` silently matched nothing, and `waste()` gave subclasses
+  null columns that headed `top()` lists (#225).** A heap dump records each class's superclass but
+  not its interfaces (HotSpot's `HPROF_GC_CLASS_DUMP` has no interface list), so
+  `objects/instanceof/java.util.Map` returned 0 objects on a heap with thousands of maps. It now
+  fails and says why when every class it matches looks like an interface (in the dump, with no
+  instances, no instance fields and no subclasses; globs included), and `instanceof` on a name not
+  in the dump fails with `no class named ...`. A field-less class with no live instances looks the
+  same; the message names `objects/<class>` (without instanceof) for that case. Jafar's own hints recommended these queries; `hdump_report`,
+  the `hdump_query` tool description, the MCP help and the docs now use `java.util.AbstractMap`,
+  `java.util.AbstractCollection` or `java.util.HashMap`; `doc/hdumppath.md` lists what each
+  abstract class covers and misses. `waste()` analyzes a subclass of a supported
+  collection (an anonymous `HashMap`, say) through the fields it inherits, where it used to
+  return null columns; `top()` and `sortBy(... desc)` put rows with a null value last instead of
+  first; and rows after `waste()`, `cacheStats()`, string transforms and joins keep the
+  `class`/`shallow`/`retained` aliases (`select(class, ...)` read `null` after them), and writing
+  to an alias (`uppercase(class)`) changes the canonical column instead of adding a second one
+- **Heap dumps over 2 GB (INDEXED mode) reported 0 instances for every class.** The two-pass
+  parser never set `HeapClass.getInstanceCount()`, so `classes | select(name, instanceCount)` and
+  `hdump_report`'s histogram and waste findings read 0 on any dump AUTO opened in INDEXED mode;
+  `getTotalHeapSize()` was 0 too. Both now come from one pass over the object index (class-object
+  entries skipped, primitive arrays counted under `[B`/`[I`/...). Streaming a type through the
+  class-instances index also returned each class's own class object as an extra instance;
+  `hdump_report`'s fallback heap total (instance count x instance size, no headers or arrays) is
+  gone
+- **HdumpPath on heaps over 5M objects: `top(n, field)` returned the n smallest values, in
+  ascending order.** The bounded heap evicted its best row instead of its worst. The streaming
+  groupBy sorts also put nulls first when descending. A pipeline whose leading `waste()`,
+  `cacheStats()` or `filter()` steps reach `top`, `groupBy`, `count`, `sum` or `stats` is now
+  streamed object by object; it used to run on 100 objects of the stream. Steps after a streamed
+  aggregation get the session resolver, so `join(session=...)` works there; streamed `top()` and
+  `sum()` fail on a missing field (and name columns, and order ties) as the in-memory ones do.
+  `groupBy(...) | top(n)` no longer uses a bounded accumulator that dropped groups every 10K rows
+  (approximate totals) and ranked by the aggregate before `top()`'s field. There is now one
+  `groupBy` implementation for both paths: groups in first-seen order, values that are missing or
+  not numbers skipped (the streamed path summed `NaN`), `null` for a group without values,
+  `sortBy=value` on the aggregate column (in memory it sorted by a column that did not exist for
+  `value=shallow`), groups without a value last, and `count` always a long, always named `count`.
+  Without `value=`, each group aggregates one column (never an identifier such as a GC root's
+  `threadSerial`, nor a column a heap-to-heap `join` adds such as `baseline.shallowSize`), so
+  rows without it are skipped instead of mixed in. Streaming a primitive
+  array type (`objects/byte[]`) in INDEXED mode found nothing, as the class-instances index holds
+  no primitive arrays; those classes are now scanned. `doc/hdumppath.md`
+  now documents what is streamed and what is capped at 100 objects
+- **HdumpPath: `filter(baseline.exists = false)` after a `join` matched nothing.** The documented
+  way to find classes only in the new dump (`classes | join(session=1) | filter(baseline.exists =
+  false)`) read the dotted field only as a nested path, never as the flat column `join` writes, so
+  no row matched either value. A dotted filter field now means that column when the row has it
+- **`cacheStats()` never reported `isLruMode = true`.** The reader decodes a boolean field as
+  `Boolean` and the check tested for `Number`; LinkedHashMap subclasses (the usual LRU cache) were
+  also not recognised. On a JDK 25 dump with 50 access-order `LinkedHashMap` subclasses,
+  `objects/instanceof/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true) | count`
+  went from 0 to 50
+- **HdumpPath: `groupBy(class, agg=sum)` summed object ids, and operators over a missing column
+  returned results that read as measurements (#226).** Without `value=`, `sum`/`avg`/`min`/`max`
+  took the first numeric column of an object row, which is `id`: on a heap with three `Foo` objects
+  (ids 1000-1002) the "sum of shallow sizes" was 3003. They now aggregate `shallowSize`, as the
+  documentation says, and never an identifier. `stats()` with no numeric value returned
+  `min: Infinity, max: -Infinity`; `min`/`max` are now `null`. `stats`, `sum`, `top` and `sortBy`
+  over a field no input row carries now fail with the available columns instead of returning
+  `count: 0` or an unsorted list: `hdump_report`'s suggested
+  `objects/<class> | groupBy(class) | stats(shallow)` had reported `count: 0` for a class with
+  419 012 instances, because group rows carry only the key and the count. The suggestion is now
+  `objects/<class> | stats(shallow)`. `groupBy(class)` itself did group correctly
 - **`jfr_compare` and `jfr-shell compare` treated a JVM-generated frame as a different frame in
   each recording.** Hidden classes carry a per-run address (`LambdaForm$MH/0x00007f2e141a1000`) and
   lambda classes a per-run number (`Foo$$Lambda$14`), so every such frame read as gone from one

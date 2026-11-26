@@ -1,5 +1,6 @@
 package io.jafar.hdump.shell.hdumppath;
 
+import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapObject;
 import java.util.Map;
 
@@ -7,8 +8,9 @@ import java.util.Map;
  * Analyzes Map-based objects for cache-relevant statistics. Reads internal fields of known Map
  * types to compute entry count, fill ratio, cost-per-entry, and LRU mode.
  *
- * <p>Supported types: HashMap, LinkedHashMap, WeakHashMap, and their subclasses via the {@code
- * "table"} field heuristic.
+ * <p>Supported types: HashMap, LinkedHashMap, WeakHashMap and their subclasses, which are analyzed
+ * as their nearest supported superclass (so an access-order LinkedHashMap subclass, the usual LRU
+ * cache, reports {@code isLruMode}); other objects through the {@code "table"} field heuristic.
  */
 final class CacheStatsAnalyzer {
 
@@ -26,12 +28,17 @@ final class CacheStatsAnalyzer {
     if (obj.getHeapClass() == null) {
       return false;
     }
-    String className = obj.getHeapClass().getName();
-    return switch (className) {
-      case "java/util/HashMap", "java/util/LinkedHashMap", "java/util/WeakHashMap" ->
-          analyzeHashMap(obj, row, retainedSize, className);
-      default -> analyzeGenericMap(obj, row, retainedSize);
-    };
+    // Walk up to the nearest supported class: matching the exact name only sent subclasses to the
+    // generic path, which never reports LRU mode (found reviewing #225)
+    for (HeapClass cls = obj.getHeapClass(); cls != null; cls = cls.getSuperClass()) {
+      String className = cls.getName();
+      if ("java/util/HashMap".equals(className)
+          || "java/util/LinkedHashMap".equals(className)
+          || "java/util/WeakHashMap".equals(className)) {
+        return analyzeHashMap(obj, row, retainedSize, className);
+      }
+    }
+    return analyzeGenericMap(obj, row, retainedSize);
   }
 
   private static boolean analyzeHashMap(
@@ -51,7 +58,11 @@ final class CacheStatsAnalyzer {
     boolean isLruMode = false;
     if ("java/util/LinkedHashMap".equals(className)) {
       Object accessOrderObj = obj.getFieldValue("accessOrder");
-      isLruMode = accessOrderObj instanceof Number n && n.intValue() != 0;
+      // HprofReader decodes a boolean field as Boolean; testing for Number made this always false
+      isLruMode =
+          accessOrderObj instanceof Boolean b
+              ? b
+              : accessOrderObj instanceof Number n && n.intValue() != 0;
     }
 
     row.put("entryCount", entryCount);

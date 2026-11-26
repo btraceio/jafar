@@ -796,7 +796,7 @@ jfr> gcroots | groupBy(type) | sortBy(count desc)
 objects/java.lang.String | top(10, shallow)
 
 # Include subclasses
-objects/instanceof/java.util.Map | groupBy(class)
+objects/instanceof/java.util.AbstractMap | groupBy(class)
 
 # Filter with predicates
 objects[shallow > 1MB and class ~ "com.myapp.*"]
