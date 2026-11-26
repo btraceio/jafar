@@ -207,7 +207,8 @@ jfr-shell compare before.jfr after.jfr --json
 ```
 
 See [Comparing two recordings](../doc/cli/Usage.md#comparing-two-recordings) for what `compare`
-reports.
+reports. Run from the `jafar-shell` jar, either side can also be a pprof profile; see
+[Comparing a pprof profile](../doc/cli/Usage.md#comparing-a-pprof-profile).
 
 Exit codes: 0 for success, 1 for errors (sent to stderr).
 

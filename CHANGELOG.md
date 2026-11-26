@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Cross-format compare: `profile_compare` and pprof sides in `compare`** - a JFR recording or a
+  pprof profile can be compared against either. The MCP tool `profile_compare` takes
+  `{format: jfr|pprof, sessionId}` per side (each format numbers its sessions from 1), plus
+  `sampleType`, `minDeltaPct`, `limit`, `inclusiveFrames` and `allowMixedSamplers`; `jfr_compare`
+  is unchanged apart from dotted method names (see Changed). `compare` reads a pprof side when run
+  from the `jafar-shell` jar, with `--sample-type`, `--baseline-sample-type`,
+  `--candidate-sample-type`, `--allow-mixed-samplers` and `--list-sample-types`. Shares come from
+  the chosen sample type's values, the significance test from observation counts (a `count`
+  column, or `value / period`); with neither, nothing is called significant. CPU against wall clock
+  is refused unless allowed, allocation against CPU or wall always. The default pprof sample type
+  is the first CPU one, else the first, and the result says which. pprof records no truncation, so
+  inclusive moves are judged with a note. The comparison is now `ProfileCompare` in
+  `io.jafar.shell.core.compare`; `JfrCompare` reads recordings, `PprofProfileReader` (`pprof-shell`)
+  reads profiles, and a module offers its reader through `ShellModule.profileReader()`. OTLP is not
+  covered yet. See [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
 - **Work budgets** (`gradle/work-budgets.properties`, the `workTest` tasks of `parser-core` and
   `parser-codegen`) - a ratchet gate on how much work a parse does, counted rather than timed:
   chunks started and read, events read and decoded, varints read, values skipped, constant-pool
@@ -139,7 +154,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OTLP session in `--tui` mode used to answer "Variable assignment requires a JFR session"; it now
   creates a lazy variable run by that module's evaluator
 
+### Changed
+- **`jfr_compare` and `jfr-shell compare` report dotted class names** - a frame's `method` was the
+  class name as the recording stores it, `java/lang/String.indexOf`; it is now
+  `java.lang.String.indexOf`, so it matches the same frame read from a pprof profile. Native frames
+  keep their symbol. A script that matches `method` values against slashed names must change
+
 ### Fixed
+- **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
+  usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
+  the class path
+- **jfr2pprof named a frame without a class `.sendto`** - with the default `{class}.{method}`
+  format a native frame (no class) kept the separator. It is now `sendto`, the same as the name read
+  from the recording; the text between `{class}` and `{method}` goes with a missing class in any
+  format
+- **Compare kept the hidden-class address in the form `Handler$$Lambda.0x00007fd6a823c220`** - the
+  address after a dot, as `tck-test.jfr` stores hidden lambda classes, was not removed, so the same
+  lambda had a different name in each run. It is now removed like the `/0x...` form
 - **Filtered JfrPath queries threw an exception per event** - a filter resolves its field path
   for every event it tests, and the path parser told a field name from an index by catching
   `NumberFormatException` from `Integer.parseInt`. `events/bench.Common[bucket=7] | count()` on a

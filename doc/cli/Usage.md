@@ -153,10 +153,15 @@ jfr-shell constants <jfr-file> [options]
   --summary                 Show summary only
   --format, -f <format>     Output format: table (default), json
 
-# Compare command - Compare a candidate recording against a baseline
-jfr-shell compare <baseline.jfr> <candidate.jfr> [options]
+# Compare command - Compare a candidate recording or pprof profile against a baseline
+jfr-shell compare <baseline> <candidate> [options]
   --json                    Print the full result as JSON
-  --event-type <type>       Execution sample event type (default: detected per recording)
+  --event-type <type>       Execution sample event type of a JFR side (default: detected)
+  --sample-type <t[/unit]>  Sample type of a pprof side (default: first CPU type, else first)
+  --baseline-sample-type, --candidate-sample-type <t[/unit]>
+                            The same for one side; overrides --sample-type
+  --allow-mixed-samplers    Compare CPU against wall clock instead of refusing (nothing judged)
+  --list-sample-types       List both files' sample types and exit
   --min-delta-pct <pct>     Noise floor in percentage points for frame changes (default: 1.0)
   --limit, -l <N>           Maximum number of changed frames per list (default: 25)
 ```
@@ -196,7 +201,9 @@ as shares of each recording's execution samples, in two lists:
   counted once per sample even when it recurses. This list names a caller whose own code did not
   change but whose callees got slower, which self time cannot show.
 
-Frame names leave out what the JVM assigns per run, a hidden class's address (`/0x…`, as in
+Frame names are `<class>.<method>` with the class name dotted (`java.lang.String.indexOf`, though
+JFR stores `java/lang/String`), or the bare symbol for a native frame. They leave out what the JVM
+assigns per run, a hidden class's address (`/0x…` or `.0x…`, as in
 `LambdaForm$MH/0x00007f2e141a1000`) and a lambda class's number (`$$Lambda$14`), and what javac
 assigns per compilation: the number in a synthetic accessor (`access$300`, for code compiled for
 Java 8) and in a lambda body (`lambda$main$0`). Two recordings come from two JVMs, often running
@@ -231,6 +238,35 @@ The JSON object has the keys `baseline`, `candidate` (each with `recordingPath`,
 `findingCounts`. Self-time rows carry `baselineSelfPct` and `candidateSelfPct`; inclusive rows carry
 `baselineTotalPct` and `candidateTotalPct`. The exit code is `0` whenever the comparison ran,
 whatever it found, `1` when a recording is missing or cannot be read, and `2` on a usage error.
+
+#### Comparing a pprof profile
+
+Either side can be a pprof profile (`.pb.gz`, `.pprof`) when `compare` runs from the `jafar-shell`
+jar, which carries the pprof module; jfr-shell's own jar knows JFR only, and reads every file as a
+recording. A file that starts with JFR's magic is a recording; any other file is read by the
+module that recognises it. The comparison is the same, with these differences:
+
+- **Shares are of the chosen sample type.** A pprof profile has one value column per sample type.
+  `--sample-type` (or `--baseline-sample-type` / `--candidate-sample-type`) picks one by `type` or
+  `type/unit`; the default is the first CPU type, else the first, and the side's description says
+  which was chosen and why (`sampleTypeChosen`). `--list-sample-types` prints them.
+- **Significance needs observation counts.** They come from a column with unit `count`, or from
+  `value / period` when the period has the column's unit. A profile with neither (a
+  `cpu/nanoseconds` column and no period) still gets its shares, but no change is called
+  significant, and a note says why.
+- **Samplers must measure the same thing.** CPU against wall clock is refused unless
+  `--allow-mixed-samplers`, which compares with nothing judged; an allocation profile against a CPU
+  or wall one is always refused. A sample type whose kind is not recognised is compared with a note.
+- **No event rates** unless both sides are recordings, and **no truncation count** for a pprof side:
+  pprof does not record when a stack was cut, so a note says inclusive shares may be understated.
+  Inclusive moves are still judged.
+
+```bash
+# A recording against its jfr2pprof conversion: the same frames, so nothing moves
+jafar-shell compare before.jfr before.pb.gz
+# Two Go-style CPU profiles, comparing the cpu/nanoseconds column
+jafar-shell compare old.pb.gz new.pb.gz --sample-type cpu/nanoseconds --json
+```
 
 **Exit Codes:**
 - `0` - Success
