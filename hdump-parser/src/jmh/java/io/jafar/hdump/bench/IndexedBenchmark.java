@@ -130,6 +130,18 @@ public class IndexedBenchmark {
     return check("approx", sum);
   }
 
+  /**
+   * Hybrid mode: approximate sizes for all objects (including the inbound/strong-ref index build),
+   * then exact dominators for the top 100 retainers and their paths to the roots.
+   */
+  @Benchmark
+  public long hybridDominators() {
+    ((io.jafar.hdump.impl.HeapDumpImpl) dump).computeHybridDominators(100, null, null);
+    long sum = 0;
+    for (HeapObject t : targets) sum = sum * 31 + t.getRetainedSize();
+    return check("hybrid", sum);
+  }
+
   /** Paths for 20 entities (one BFS each in INDEXED mode). */
   @Benchmark
   public long pathsToGcRoot20() {

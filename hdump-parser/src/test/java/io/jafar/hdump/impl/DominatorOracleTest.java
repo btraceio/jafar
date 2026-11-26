@@ -226,6 +226,18 @@ class DominatorOracleTest {
   @ParameterizedTest(name = "exact dominators for a class pattern seed={0}")
   @ValueSource(longs = {1, 2, 3, 4})
   void exactForClassesExpandsToRootPaths(long seed, @TempDir Path dir) throws IOException {
+    exactForClasses(seed, dir, ParserOptions.IN_MEMORY);
+  }
+
+  /** The same in INDEXED mode (expansion on the on-disk graph's reverse). */
+  @ParameterizedTest(name = "exact dominators for a class pattern, indexed, seed={0}")
+  @ValueSource(longs = {1, 2, 3, 4})
+  void exactForClassesExpandsToRootPathsIndexed(long seed, @TempDir Path dir) throws IOException {
+    exactForClasses(seed, dir, ParserOptions.INDEXED);
+  }
+
+  private static void exactForClasses(long seed, Path dir, ParserOptions options)
+      throws IOException {
     Random rnd = new Random(6000 + seed);
     int n = 300 + rnd.nextInt(500);
     GraphHeapDumpWriter w = randomGraph(rnd, n, 0.4, false, 4);
@@ -238,7 +250,7 @@ class DominatorOracleTest {
     boolean[] root = new boolean[n];
     for (int r : w.rootNodes()) root[r] = true;
 
-    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
+    try (HeapDump dump = HeapDumpParser.parse(file, options)) {
       // expected subgraph: backward closure from every weak reference, not expanding roots
       boolean[] in = new boolean[n];
       java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();

@@ -205,6 +205,11 @@ public final class ObjectIndexReader implements AutoCloseable {
     return buffer.getInt(entry(objectId32) + 20);
   }
 
+  /** Element type of a primitive array (a {@code BasicType} constant). */
+  public byte elementTypeOf(int objectId32) {
+    return buffer.get(entry(objectId32) + 25);
+  }
+
   /** {@link IndexFormat#FLAG_IS_OBJECT_ARRAY} / {@link IndexFormat#FLAG_IS_PRIMITIVE_ARRAY}. */
   public byte flagsOf(int objectId32) {
     return buffer.get(entry(objectId32) + 24);

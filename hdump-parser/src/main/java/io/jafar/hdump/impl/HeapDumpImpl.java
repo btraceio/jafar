@@ -1653,18 +1653,7 @@ public final class HeapDumpImpl implements HeapDump {
       // Special handling for primitive arrays (classId == -1)
       if (meta.classId == -1 && meta.isPrimitiveArray()) {
         // Create synthetic class name for primitive array
-        String arrayClassName =
-            switch (meta.elementType) {
-              case BasicType.BOOLEAN -> "[Z";
-              case BasicType.CHAR -> "[C";
-              case BasicType.FLOAT -> "[F";
-              case BasicType.DOUBLE -> "[D";
-              case BasicType.BYTE -> "[B";
-              case BasicType.SHORT -> "[S";
-              case BasicType.INT -> "[I";
-              case BasicType.LONG -> "[J";
-              default -> "[?";
-            };
+        String arrayClassName = primitiveArrayClassName(meta.elementType);
 
         cls = classesByName.get(arrayClassName);
         if (cls == null) {
@@ -1956,6 +1945,74 @@ public final class HeapDumpImpl implements HeapDump {
     return retainedSizeOptions;
   }
 
+  /** Receives one object of {@link #forEachIndexedObject}. */
+  @FunctionalInterface
+  interface IndexedObjectVisitor {
+    void visit(long address, long retainedSize, String className);
+  }
+
+  /**
+   * INDEXED mode: every object {@link #getObjects()} yields, in the same order, with what loading
+   * it would give for {@code getRetainedSize()} and {@code getHeapClass().getName()} (null when the
+   * class is unknown) — without loading it: the cached instance's size when the object is in the
+   * LRU cache (it may hold an exact size), retained.idx otherwise. Requires retained sizes to have
+   * been computed. Entries are read without objects.idx's range/id check, as the indexes are
+   * consistent by construction (an inconsistent index fails here instead of being skipped).
+   */
+  void forEachIndexedObject(IndexedObjectVisitor visitor) {
+    ObjectIndexReader index = objectIndexReader.view();
+    StreamSupport.longStream(addressToId32.keySet().spliterator(), false)
+        .filter(addr -> !classAddresses.contains(addr))
+        .forEach(
+            addr -> {
+              int id32 = addressToId32.get(addr);
+              int classId = index.classIdOf(id32);
+              String className;
+              if (classId == -1
+                  && (index.flagsOf(id32) & IndexFormat.FLAG_IS_PRIMITIVE_ARRAY) != 0) {
+                className = primitiveArrayClassName(index.elementTypeOf(id32));
+              } else {
+                long classAddress = classId32ToAddress.get(classId);
+                if (classAddress == -1) {
+                  return; // getObjectByIdInternal fails to load it: getObjects() skips it
+                }
+                HeapClassImpl cls = getClassByIdInternal(classAddress);
+                className = cls != null ? cls.getName() : null;
+              }
+              // An instance still in the LRU cache may carry an exact size from an earlier exact
+              // computation; getObjects() would hand out that instance, so it wins.
+              HeapObjectImpl cached = getCachedObject(addr);
+              long retained = cached != null ? cached.getRetainedSize() : -1;
+              if (retained == -1 && retainedSizeReader != null) {
+                try {
+                  retained = retainedSizeReader.getRetainedSize(id32);
+                } catch (IllegalArgumentException e) {
+                  retained = -1; // out of range: resolve it the way a loaded object does
+                }
+              }
+              if (retained == -1) {
+                HeapObjectImpl obj = getObjectByIdInternal(addr);
+                if (obj == null) return;
+                retained = obj.getRetainedSize();
+              }
+              visitor.visit(addr, retained, className);
+            });
+  }
+
+  private static String primitiveArrayClassName(int elementType) {
+    return switch (elementType) {
+      case BasicType.BOOLEAN -> "[Z";
+      case BasicType.CHAR -> "[C";
+      case BasicType.FLOAT -> "[F";
+      case BasicType.DOUBLE -> "[D";
+      case BasicType.BYTE -> "[B";
+      case BasicType.SHORT -> "[S";
+      case BasicType.INT -> "[I";
+      case BasicType.LONG -> "[J";
+      default -> "[?";
+    };
+  }
+
   /** INDEXED mode: objects.idx reader; null in IN_MEMORY mode. */
   ObjectIndexReader getObjectIndexReader() {
     return objectIndexReader;
@@ -2131,63 +2188,6 @@ public final class HeapDumpImpl implements HeapDump {
   }
 
   /**
-   * Ensures all objects are loaded into objectsById for algorithms that need full access.
-   *
-   * <p>This is only needed for indexed parsing mode when running algorithms like:
-   *
-   * <ul>
-   *   <li>Approximate retained size computation (needs to iterate all objects)
-   *   <li>Hybrid dominator computation (needs top N by retained size)
-   *   <li>Full dominator tree computation
-   * </ul>
-   *
-   * <p>In in-memory mode, objects are already loaded during parsing, so this is a no-op.
-   *
-   * @param progressCallback optional callback for progress updates
-   * @throws RuntimeException if loading fails
-   */
-  private void ensureAllObjectsLoaded(
-      ApproximateRetainedSizeComputer.ProgressCallback progressCallback) {
-    if (options.parsingMode() != HeapDumpParser.ParsingMode.INDEXED) {
-      return; // Already loaded in in-memory mode
-    }
-
-    if (getCachedObjectCount() == objectCount) {
-      return; // Already loaded
-    }
-
-    LOG.info("Loading all {} objects from index for algorithm execution...", objectCount);
-    long startTime = System.currentTimeMillis();
-
-    // Load all objects by iterating through address mapping
-    // This triggers lazy loading via getObjectByIdInternal()
-    int loaded = 0;
-    for (var entry : addressToId32.long2IntEntrySet()) {
-      long objectId = entry.getLongKey();
-      getObjectByIdInternal(objectId); // Lazy load and cache
-
-      loaded++;
-      if (loaded % 100000 == 0) {
-        double progress = (double) loaded / objectCount;
-        if (progressCallback != null) {
-          progressCallback.onProgress(
-              progress * 0.3,
-              String.format("Loading objects from index (%,d / %,d)", loaded, objectCount));
-        }
-        LOG.debug("Loaded {} / {} objects", loaded, objectCount);
-      }
-    }
-
-    // Report completion
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.3, String.format("Loaded %,d objects from index", objectCount));
-    }
-
-    long elapsedMs = System.currentTimeMillis() - startTime;
-    LOG.info("Loaded all {} objects in {} seconds", objectCount, elapsedMs / 1000.0);
-  }
-
-  /**
    * Ensures inbound reference index is built for retained size computation.
    *
    * <p>This is only needed for indexed parsing mode. In in-memory mode, inbound references are
@@ -2328,14 +2328,8 @@ public final class HeapDumpImpl implements HeapDump {
       Set<String> classPatterns,
       DominatorTreeComputer.ProgressCallback progressCallback) {
 
-    // Note: In indexed mode, hybrid computation uses streaming with LRU cache.
-    // Objects are loaded on-demand and automatically evicted, keeping memory bounded.
-    // For in-memory mode, ensure all objects are loaded first
-    // Adapt DominatorTreeComputer.ProgressCallback to
-    // ApproximateRetainedSizeComputer.ProgressCallback
-    ApproximateRetainedSizeComputer.ProgressCallback adaptedCallback =
-        progressCallback != null ? progressCallback::onProgress : null;
-    ensureAllObjectsLoaded(adaptedCallback);
+    // INDEXED mode: the passes below read the indexes (retained.idx, objects.idx,
+    // strongrefs.idx) instead of loading every object through the bounded LRU cache.
 
     // IN_MEMORY: build the cached reference graph once; the approximate sizes and the path
     // expansion below both use it (no-op in INDEXED mode)

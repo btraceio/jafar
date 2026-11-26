@@ -89,37 +89,41 @@ public final class HybridDominatorComputer {
     int[] leakProneCount = {0};
     int[] patternCount = {0};
 
-    dump.getObjects()
-        .forEach(
-            obj -> {
-              long retained = obj.getRetainedSize();
-              HeapClass cls = obj.getHeapClass();
-              String className = cls != null ? cls.getName() : null;
+    java.util.Map<String, Boolean> matchesByClass = new java.util.HashMap<>();
+    HeapDumpImpl.IndexedObjectVisitor consider =
+        (id, retained, className) -> {
+          // Heuristic 1: maintain bounded top-N by retained size
+          if (retained > 0) {
+            topNQueue.offer(retained, id);
+          }
 
-              // Heuristic 1: maintain bounded top-N by retained size
-              if (retained > 0) {
-                topNQueue.offer(retained, obj.getId());
-              }
+          // Heuristic 2: large instances of known leak-prone classes
+          if (className != null && leakProneClasses.contains(className) && retained > 1024 * 1024) {
+            interesting.add(id);
+            leakProneCount[0]++;
+          }
 
-              // Heuristic 2: large instances of known leak-prone classes
-              if (className != null
-                  && leakProneClasses.contains(className)
-                  && retained > 1024 * 1024) {
-                interesting.add(obj.getId());
-                leakProneCount[0]++;
-              }
-
-              // Heuristic 3: user-provided class patterns
-              if (className != null) {
-                for (Pattern p : compiledPatterns) {
-                  if (p.matcher(className).matches()) {
-                    interesting.add(obj.getId());
-                    patternCount[0]++;
-                    break;
-                  }
-                }
-              }
-            });
+          // Heuristic 3: user-provided class patterns (matched once per class name)
+          if (className != null
+              && !compiledPatterns.isEmpty()
+              && matchesByClass.computeIfAbsent(
+                  className, name -> matchesAny(compiledPatterns, name))) {
+            interesting.add(id);
+            patternCount[0]++;
+          }
+        };
+    if (dump.getObjectIndexReader() != null) {
+      // INDEXED: the same objects in the same order, without loading each through the LRU cache
+      dump.forEachIndexedObject(consider);
+    } else {
+      dump.getObjects()
+          .forEach(
+              obj -> {
+                HeapClass cls = obj.getHeapClass();
+                consider.visit(
+                    obj.getId(), obj.getRetainedSize(), cls != null ? cls.getName() : null);
+              });
+    }
 
     // Drain the top-N queue into the interesting set
     for (long[] entry : topNQueue.entries()) {
@@ -174,6 +178,15 @@ public final class HybridDominatorComputer {
     }
   }
 
+  private static boolean matchesAny(List<Pattern> patterns, String className) {
+    for (Pattern p : patterns) {
+      if (p.matcher(className).matches()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * Expands the interesting object set to include their full dominator paths to GC roots.
    *
@@ -199,6 +212,16 @@ public final class HybridDominatorComputer {
     HeapGraph graph = dump.pathGraph(); // IN_MEMORY only; null in INDEXED mode
     if (graph != null) {
       expandOnGraph(graph, gcRoots, interesting, expanded);
+      LOG.info(
+          "Expanded to {} objects ({}% of heap)",
+          expanded.size(), String.format("%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
+      return expanded;
+    }
+
+    StrongRefsIndex stored =
+        dump.getObjectIndexReader() != null ? dump.strongRefsIndex() : null; // INDEXED only
+    if (stored != null && stored.start(stored.size()) < Integer.MAX_VALUE - 8) {
+      expandIndexed(dump, stored.view(), gcRoots, interesting, expanded);
       LOG.info(
           "Expanded to {} objects ({}% of heap)",
           expanded.size(), String.format("%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
@@ -367,6 +390,71 @@ public final class HybridDominatorComputer {
     for (int head = 0; head < tail; head++) {
       int v = queue[head];
       result.add(g.nodes[v].getId());
+      if (isRoot[v]) continue; // reached a GC root: stop expanding
+      for (int i = predStart[v], end = predStart[v + 1]; i < end; i++) {
+        int p = pred[i];
+        if (!seen[p]) {
+          seen[p] = true;
+          queue[tail++] = p;
+        }
+      }
+    }
+  }
+
+  /**
+   * INDEXED mode: {@link #expandOnGraph} on the reverse of the on-disk strong-reference graph
+   * (predecessor CSR in heap: 4 bytes per id32 plus 4 per reference, against the boxed inbound map
+   * of the generic path). Predecessors are those of {@code getStrongOutboundReferenceIds()} over
+   * {@code getObjects()}: class entries have no references, so iterating every id32 is the same.
+   */
+  private static void expandIndexed(
+      HeapDumpImpl dump,
+      StrongRefsIndex g,
+      List<GcRootImpl> gcRoots,
+      LongOpenHashSet interesting,
+      LongOpenHashSet result) {
+    final int n = g.size();
+    int[] predStart = new int[n + 1];
+    for (int u = 0; u < n; u++) {
+      for (long e = g.start(u), end = g.start(u + 1); e < end; e++) {
+        predStart[g.ref(e) + 1]++;
+      }
+    }
+    for (int v = 0; v < n; v++) {
+      predStart[v + 1] += predStart[v];
+    }
+    // Fill each row from its end (predStart[v + 1] counts down to the row start): no fill array.
+    int[] pred = new int[predStart[n]];
+    for (int u = 0; u < n; u++) {
+      for (long e = g.start(u), end = g.start(u + 1); e < end; e++) {
+        int v = g.ref(e);
+        pred[--predStart[v + 1]] = u;
+      }
+    }
+    // predStart[v + 1] is now the start of row v; shift so predStart[v] is row v's start again
+    System.arraycopy(predStart, 1, predStart, 0, n);
+    predStart[n] = pred.length;
+
+    it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap id32 = dump.getAddressToId32();
+    it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap address = dump.getId32ToAddress();
+    boolean[] isRoot = new boolean[n];
+    for (GcRootImpl root : gcRoots) {
+      int r = id32.get(root.getObjectId());
+      if (r >= 0) isRoot[r] = true;
+    }
+    boolean[] seen = new boolean[n];
+    int[] queue = new int[n];
+    int tail = 0;
+    for (long id : interesting) {
+      int v = id32.get(id);
+      if (v >= 0 && !seen[v]) {
+        seen[v] = true;
+        queue[tail++] = v;
+      }
+    }
+    for (int head = 0; head < tail; head++) {
+      int v = queue[head];
+      result.add(address.get(v));
       if (isRoot[v]) continue; // reached a GC root: stop expanding
       for (int i = predStart[v], end = predStart[v + 1]; i < end; i++) {
         int p = pred[i];

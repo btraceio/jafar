@@ -42,6 +42,79 @@ class IndexedModeTest {
     verify(DominatorOracleTest.randomGraph(rnd, n, 0.45, seed % 2 == 0, 3), dir);
   }
 
+  /**
+   * INDEXED {@code identifyInterestingObjects} reads objects.idx and retained.idx instead of
+   * loading every object; it must pick exactly what a {@code getObjects()} loop with the same top-N
+   * queue and pattern matching picks — same order, so the same choice among equal sizes — on a
+   * fresh dump and after an exact computation left exact sizes on cached instances, with a cache
+   * that holds the heap and one that does not.
+   */
+  @ParameterizedTest(name = "interesting objects, indexed, seed={0}")
+  @ValueSource(longs = {1, 2, 3})
+  void interestingObjectsMatchAGetObjectsLoop(long seed, @TempDir Path dir) throws IOException {
+    Random rnd = new Random(8000 + seed);
+    GraphHeapDumpWriter w =
+        DominatorOracleTest.randomGraph(rnd, 400 + rnd.nextInt(400), 0.45, false, 3);
+    Path file = dir.resolve("graph.hprof");
+    w.write(file, 1 << 24);
+    for (int cache : new int[] {100_000, 50}) {
+      ParserOptions options =
+          ParserOptions.builder()
+              .parsingMode(HeapDumpParser.ParsingMode.INDEXED)
+              .objectCacheSize(cache)
+              .build();
+      try (HeapDump heap = HeapDumpParser.parse(file, options)) {
+        HeapDumpImpl dump = (HeapDumpImpl) heap;
+        dump.computeDominators();
+        // After an exact computation, only a cache that holds the heap gives a defined answer:
+        // with a smaller one, which exact sizes survive depends on what loading evicted.
+        for (int round = 0; round < (cache >= 100_000 ? 2 : 1); round++) {
+          for (int k : new int[] {5, 20, 100}) {
+            for (java.util.Set<String> patterns :
+                java.util.List.of(java.util.Set.<String>of(), java.util.Set.of("?B"))) {
+              assertEquals(
+                  referenceInteresting(dump, k, patterns),
+                  HybridDominatorComputer.identifyInterestingObjects(dump, k, patterns),
+                  "cache " + cache + " round " + round + " k " + k + " patterns " + patterns);
+            }
+          }
+          // second round: exact sizes now sit on cached instances
+          dump.computeExactForClasses(java.util.Set.of("*WeakReference", "test/Node"), null);
+        }
+      }
+    }
+  }
+
+  /** The heuristics of identifyInterestingObjects over getObjects(), as before the change. */
+  private static it.unimi.dsi.fastutil.longs.LongOpenHashSet referenceInteresting(
+      HeapDumpImpl dump, int k, java.util.Set<String> patterns) {
+    var queue = new HybridDominatorComputer.TopN(k);
+    var result = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    java.util.List<java.util.regex.Pattern> compiled = new java.util.ArrayList<>();
+    for (String p : patterns) {
+      compiled.add(
+          java.util.regex.Pattern.compile(
+              p.replace(".", "\\.").replace("*", ".*").replace("?", ".")));
+    }
+    dump.getObjects()
+        .forEach(
+            o -> {
+              long retained = o.getRetainedSize();
+              if (retained > 0) queue.offer(retained, o.getId());
+              String name = o.getHeapClass() != null ? o.getHeapClass().getName() : null;
+              if (name != null) {
+                for (var p : compiled) {
+                  if (p.matcher(name).matches()) {
+                    result.add(o.getId());
+                    break;
+                  }
+                }
+              }
+            });
+    for (long[] e : queue.entries()) result.add(e[1]);
+    return result;
+  }
+
   /** An unknown -Djafar.hdump.retained.strategy is ignored (AUTO), not a broken class. */
   @Test
   void unknownStrategyPropertyFallsBackToAuto(@TempDir Path dir) throws IOException {
