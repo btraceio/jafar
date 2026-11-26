@@ -5,6 +5,8 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.AccessTarget.CodeUnitAccessTarget;
+import com.tngtech.archunit.core.domain.JavaAccess;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClass.Predicates;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
@@ -24,7 +26,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The module-boundary rules (a)–(i), one static factory per rule. Every factory takes the {@link
+ * The architecture rules (a)–(j), one static factory per rule. Every factory takes the {@link
  * ModuleClasses} membership, so the identical rule runs on the real module classes
  * (ArchitectureRulesTest) and on fixture-augmented imports (ArchRuleFireTest) — module membership,
  * not package names, decides what a rule covers, because packages overlap across modules.
@@ -287,6 +289,141 @@ public final class ArchitectureRules {
             .dependOnClassesThat()
             .resideInAPackage("io.jafar.shell.llm..")
             .as("i: classes in io.jafar.shell.core.llm.. must not depend on io.jafar.shell.llm.."));
+  }
+
+  /**
+   * (j) No class in a covered module calls a formatting API that takes the JVM default locale (the
+   * list is {@link #DEFAULT_LOCALE_MEMBERS}, plus any {@code Formatter} constructor without a
+   * {@code Locale}). On a ru-RU or de-DE host those calls wrote {@code "47,8%"} next to a JSON
+   * number {@code 47.8} (issue #224), under ar-EG {@code %d} produced Arabic-Indic digits
+   * (jafar-processor then generated uncompilable source), and date patterns localize month and day
+   * names. Pass a {@code Locale}: {@code Locale.ROOT} for anything a program, an agent or a bug
+   * report reads. Calls, method references and constructor references all count, and an owner
+   * matches with its subtypes ({@code DecimalFormat.getInstance} is {@code
+   * NumberFormat.getInstance}). Not frozen: there is no grandfathered debt.
+   */
+  public static ArchRule ruleJ() {
+    return classes()
+        .should(notFormatWithTheDefaultLocale())
+        .as(
+            "j: no class formats with the JVM default locale (String.format/formatted,"
+                + " PrintStream/PrintWriter/Console printf/format/readLine/readPassword,"
+                + " MessageFormat, NumberFormat, DecimalFormat(Symbols), DateFormat(Symbols),"
+                + " SimpleDateFormat, Formatter, DateTimeFormatter ofPattern/ofLocalized* and"
+                + " DateTimeFormatterBuilder.toFormatter without a Locale)");
+  }
+
+  /** One forbidden member: owner (matched with subtypes), name, exact raw parameter types. */
+  record DefaultLocaleMember(Class<?> owner, String name, List<String> params) {
+    boolean matches(JavaClass targetOwner, String targetName, List<String> targetParams) {
+      return targetName.equals(name)
+          && targetParams.equals(params)
+          && targetOwner.isAssignableTo(owner);
+    }
+  }
+
+  private static DefaultLocaleMember member(Class<?> owner, String name, Class<?>... params) {
+    List<String> names = new ArrayList<>();
+    for (Class<?> p : params) {
+      names.add(p.getName());
+    }
+    return new DefaultLocaleMember(owner, name, names);
+  }
+
+  /** The default-locale overloads rule (j) forbids; constructors are named {@code <init>}. */
+  static final List<DefaultLocaleMember> DEFAULT_LOCALE_MEMBERS =
+      List.of(
+          member(String.class, "format", String.class, Object[].class),
+          member(String.class, "formatted", Object[].class),
+          member(java.io.PrintStream.class, "printf", String.class, Object[].class),
+          member(java.io.PrintStream.class, "format", String.class, Object[].class),
+          member(java.io.PrintWriter.class, "printf", String.class, Object[].class),
+          member(java.io.PrintWriter.class, "format", String.class, Object[].class),
+          member(java.io.Console.class, "printf", String.class, Object[].class),
+          member(java.io.Console.class, "format", String.class, Object[].class),
+          member(java.io.Console.class, "readLine", String.class, Object[].class),
+          member(java.io.Console.class, "readPassword", String.class, Object[].class),
+          member(java.text.MessageFormat.class, "format", String.class, Object[].class),
+          member(java.text.MessageFormat.class, "<init>", String.class),
+          member(java.text.NumberFormat.class, "getInstance"),
+          member(java.text.NumberFormat.class, "getNumberInstance"),
+          member(java.text.NumberFormat.class, "getPercentInstance"),
+          member(java.text.NumberFormat.class, "getIntegerInstance"),
+          member(java.text.NumberFormat.class, "getCurrencyInstance"),
+          member(java.text.NumberFormat.class, "getCompactNumberInstance"),
+          member(java.text.DecimalFormat.class, "<init>"),
+          member(java.text.DecimalFormat.class, "<init>", String.class),
+          member(java.text.DecimalFormatSymbols.class, "<init>"),
+          member(java.text.DecimalFormatSymbols.class, "getInstance"),
+          member(java.text.DateFormat.class, "getInstance"),
+          member(java.text.DateFormat.class, "getDateInstance"),
+          member(java.text.DateFormat.class, "getDateInstance", int.class),
+          member(java.text.DateFormat.class, "getTimeInstance"),
+          member(java.text.DateFormat.class, "getTimeInstance", int.class),
+          member(java.text.DateFormat.class, "getDateTimeInstance"),
+          member(java.text.DateFormat.class, "getDateTimeInstance", int.class, int.class),
+          member(java.text.DateFormatSymbols.class, "<init>"),
+          member(java.text.DateFormatSymbols.class, "getInstance"),
+          member(java.text.SimpleDateFormat.class, "<init>"),
+          member(java.text.SimpleDateFormat.class, "<init>", String.class),
+          member(java.time.format.DateTimeFormatter.class, "ofPattern", String.class),
+          member(
+              java.time.format.DateTimeFormatter.class,
+              "ofLocalizedDate",
+              java.time.format.FormatStyle.class),
+          member(
+              java.time.format.DateTimeFormatter.class,
+              "ofLocalizedTime",
+              java.time.format.FormatStyle.class),
+          member(
+              java.time.format.DateTimeFormatter.class,
+              "ofLocalizedDateTime",
+              java.time.format.FormatStyle.class),
+          member(
+              java.time.format.DateTimeFormatter.class,
+              "ofLocalizedDateTime",
+              java.time.format.FormatStyle.class,
+              java.time.format.FormatStyle.class),
+          member(java.time.format.DateTimeFormatter.class, "ofLocalizedPattern", String.class),
+          member(java.time.format.DateTimeFormatterBuilder.class, "toFormatter"));
+
+  private static ArchCondition<JavaClass> notFormatWithTheDefaultLocale() {
+    return new ArchCondition<JavaClass>("not format with the JVM default locale") {
+      @Override
+      public void check(JavaClass javaClass, ConditionEvents events) {
+        List<JavaAccess<?>> accesses = new ArrayList<>();
+        accesses.addAll(javaClass.getMethodCallsFromSelf());
+        accesses.addAll(javaClass.getConstructorCallsFromSelf());
+        accesses.addAll(javaClass.getMethodReferencesFromSelf());
+        accesses.addAll(javaClass.getConstructorReferencesFromSelf());
+        for (JavaAccess<?> access : accesses) {
+          if (!(access.getTarget() instanceof CodeUnitAccessTarget target)) {
+            continue;
+          }
+          List<String> params = new ArrayList<>();
+          for (JavaClass p : target.getRawParameterTypes()) {
+            params.add(p.getName());
+          }
+          boolean forbidden = false;
+          for (DefaultLocaleMember m : DEFAULT_LOCALE_MEMBERS) {
+            if (m.matches(target.getOwner(), target.getName(), params)) {
+              forbidden = true;
+              break;
+            }
+          }
+          // Any java.util.Formatter constructor without a Locale parameter
+          if (!forbidden
+              && target.getName().equals("<init>")
+              && target.getOwner().isAssignableTo(java.util.Formatter.class)
+              && !params.contains(java.util.Locale.class.getName())) {
+            forbidden = true;
+          }
+          if (forbidden) {
+            events.add(SimpleConditionEvent.violated(javaClass, access.getDescription()));
+          }
+        }
+      }
+    };
   }
 
   /**

@@ -4,6 +4,7 @@ import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
+import java.util.Locale;
 
 /**
  * Memory-mapped reader for objects.idx with O(1) random access.
@@ -97,16 +98,20 @@ public final class ObjectIndexReader implements AutoCloseable {
     if (magic != IndexFormat.OBJECTS_INDEX_MAGIC) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Invalid objects.idx magic: 0x%08X (expected 0x%08X)",
-              magic, IndexFormat.OBJECTS_INDEX_MAGIC));
+              magic,
+              IndexFormat.OBJECTS_INDEX_MAGIC));
     }
 
     formatVersion = buffer.getInt();
     if (formatVersion != IndexFormat.FORMAT_VERSION) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Unsupported format version: %d (expected %d)",
-              formatVersion, IndexFormat.FORMAT_VERSION));
+              formatVersion,
+              IndexFormat.FORMAT_VERSION));
     }
 
     long entryCountLong = buffer.getLong();
@@ -131,7 +136,10 @@ public final class ObjectIndexReader implements AutoCloseable {
     if (objectId32 < 0 || objectId32 >= entryCount) {
       throw new IllegalArgumentException(
           String.format(
-              "Object ID out of range: %d (valid range: 0 to %d)", objectId32, entryCount - 1));
+              Locale.ROOT,
+              "Object ID out of range: %d (valid range: 0 to %d)",
+              objectId32,
+              entryCount - 1));
     }
 
     // Calculate entry offset: header + (id32 × entry size)
@@ -150,7 +158,11 @@ public final class ObjectIndexReader implements AutoCloseable {
     if (id32 != objectId32) {
       throw new IllegalStateException(
           String.format(
-              "Corrupted index: expected ID %d at offset %d, found %d", objectId32, offset, id32));
+              Locale.ROOT,
+              "Corrupted index: expected ID %d at offset %d, found %d",
+              objectId32,
+              offset,
+              id32));
     }
 
     return new ObjectMetadata(id32, fileOffset, dataSize, classId, arrayLength, flags, elementType);

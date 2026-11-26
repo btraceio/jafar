@@ -1,5 +1,6 @@
 package io.jafar.shell.live;
 
+import java.util.Locale;
 import java.util.Map;
 
 /** Single-line JSON serialization for streamed events ({@code tail --format json}). */
@@ -10,7 +11,7 @@ final class JsonLines {
 
   static {
     for (int i = 0; i < 0x20; i++) {
-      CONTROL_ESCAPES[i] = String.format("\\u%04x", i);
+      CONTROL_ESCAPES[i] = String.format(Locale.ROOT, "\\u%04x", i);
     }
   }
 

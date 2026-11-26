@@ -80,7 +80,7 @@ scripts/check-doc-links.sh
 # Java/Go untyped-parser parity gate, local mode
 scripts/parity-check.sh --base origin/main
 
-# Architectural invariants (module boundaries, api signatures, SPI rules; rules (a)–(i)
+# Architectural invariants (module boundaries, api signatures, SPI rules, locale-free formatting; rules (a)–(j)
 # in doc/agents/Gates.md)
 ./gradlew :arch-tests:test
 

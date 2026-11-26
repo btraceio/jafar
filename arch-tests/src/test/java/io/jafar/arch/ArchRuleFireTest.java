@@ -6,9 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.tngtech.archunit.ArchConfiguration;
+import com.tngtech.archunit.core.domain.JavaCall;
+import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
+import io.jafar.arch.fixture.DefaultLocaleFormatFixture;
+import io.jafar.arch.fixture.ExplicitLocaleFormatFixture;
 import io.jafar.arch.fixture.NotAnInterfaceSpiFixture;
 import io.jafar.arch.fixture.PprofInternalReachInFixture;
 import io.jafar.arch.fixture.ReachIntoConsumersFixture;
@@ -100,6 +105,57 @@ class ArchRuleFireTest {
   void ruleEFiresOnMutableStaticFieldInParserImpl() throws IOException {
     ModuleClasses modules = loadWithFixture("parser-core", StaticCounterFixture.class);
     assertFires(ArchitectureRules.ruleE(modules), "e:", StaticCounterFixture.class, modules);
+  }
+
+  @Test
+  void ruleJFiresOnDefaultLocaleFormatting() throws IOException {
+    ModuleClasses modules =
+        loadWithFixture(
+            "shell-core",
+            DefaultLocaleFormatFixture.class,
+            DefaultLocaleFormatFixture.CustomStream.class,
+            ExplicitLocaleFormatFixture.class);
+    assertFires(ArchitectureRules.ruleJ(), "j:", DefaultLocaleFormatFixture.class, modules);
+    String msg =
+        assertThrows(AssertionError.class, () -> ArchitectureRules.ruleJ().check(modules.classes()))
+            .getMessage();
+    // Every listed member must be reported, so a member the fixture does not call fails here
+    for (ArchitectureRules.DefaultLocaleMember m : ArchitectureRules.DEFAULT_LOCALE_MEMBERS) {
+      String target =
+          m.owner().getName() + "." + m.name() + "(" + String.join(", ", m.params()) + ")";
+      assertTrue(msg.contains(target), "rule (j) did not report " + target + ": " + msg);
+    }
+    // ...and every call in the fixture's all(), so dropping a member from the list fails here too
+    JavaClass fixture = new ClassFileImporter().importClass(DefaultLocaleFormatFixture.class);
+    JavaMethod all =
+        fixture.getMethod(
+            "all",
+            java.io.PrintWriter.class,
+            java.io.Console.class,
+            java.time.format.DateTimeFormatterBuilder.class,
+            Object.class);
+    List<JavaCall<?>> calls = new java.util.ArrayList<>(all.getCallsFromSelf());
+    assertTrue(calls.size() >= ArchitectureRules.DEFAULT_LOCALE_MEMBERS.size(), calls.toString());
+    for (JavaCall<?> call : calls) {
+      assertTrue(
+          msg.contains(call.getDescription()),
+          "rule (j) did not report " + call.getDescription() + ": " + msg);
+    }
+    // ...and nothing that passes a Locale: a rule matching too broadly fails here
+    assertTrue(
+        !msg.contains("ExplicitLocaleFormatFixture"),
+        "rule (j) reported a call with an explicit Locale: " + msg);
+    // ...and each other form: subtype owners, references, a lambda, the Formatter branch
+    for (String expected :
+        List.of(
+            "DefaultLocaleFormatFixture.printStreamSubclassPrintf(",
+            "DefaultLocaleFormatFixture.decimalFormatGetInstance(",
+            "DefaultLocaleFormatFixture.methodReference(",
+            "DefaultLocaleFormatFixture.constructorReference(",
+            "DefaultLocaleFormatFixture.inLambda(",
+            "DefaultLocaleFormatFixture.formatterNoLocale(")) {
+      assertTrue(msg.contains(expected), "rule (j) did not report " + expected + ": " + msg);
+    }
   }
 
   @Test

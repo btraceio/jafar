@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
@@ -60,7 +61,7 @@ public final class Shell implements AutoCloseable {
 
               @Override
               public void printf(String fmt, Object... args) {
-                terminal.writer().printf(fmt, args);
+                terminal.writer().printf(Locale.ROOT, fmt, args);
                 terminal.flush();
               }
 
@@ -313,7 +314,7 @@ public final class Shell implements AutoCloseable {
         String baseName = name.substring(0, name.length() - 5); // Remove .jfrs
         String description = getScriptDescription(script);
         if (description != null) {
-          terminal.writer().printf("  %-25s %s%n", baseName, description);
+          terminal.writer().printf(Locale.ROOT, "  %-25s %s%n", baseName, description);
         } else {
           terminal.writer().println("  " + baseName);
         }
@@ -421,6 +422,7 @@ public final class Shell implements AutoCloseable {
             .writer()
             .println(
                 String.format(
+                    Locale.ROOT,
                     "\nExecuted %d/%d commands successfully.",
                     result.getSuccessCount(),
                     result.getSuccessCount() + result.getErrors().size()));
