@@ -2,6 +2,7 @@ package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.HeapClass;
 import io.jafar.hdump.api.HeapField;
+import io.jafar.hdump.internal.BasicType;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -187,6 +188,54 @@ final class HeapClassImpl implements HeapClass {
       duplicateFieldNames = cached;
     }
     return cached == 1;
+  }
+
+  // Byte offsets of the object-reference fields in an instance's data, in field order
+  // (getAllInstanceFields). Computed on first use, like allInstanceFieldsCache; not keyed by
+  // idSize, which is fixed for the dump a class belongs to. Shared arrays: callers must not modify.
+  private volatile int[] refOffsets;
+  // As refOffsets, without referent/discovered when this is a Reference subclass.
+  private volatile int[] strongRefOffsets;
+
+  /** Offsets of all object-reference fields within the instance data. */
+  int[] refOffsets(int idSize) {
+    int[] offs = refOffsets;
+    if (offs == null) {
+      offs = computeRefOffsets(idSize, false);
+      refOffsets = offs;
+    }
+    return offs;
+  }
+
+  /**
+   * Offsets of the strong object-reference fields: all of them, except {@code referent} and {@code
+   * discovered} on {@code java.lang.ref.Reference} subclasses.
+   */
+  int[] strongRefOffsets(int idSize) {
+    int[] offs = strongRefOffsets;
+    if (offs == null) {
+      offs = isReferenceSubclass() ? computeRefOffsets(idSize, true) : refOffsets(idSize);
+      strongRefOffsets = offs;
+    }
+    return offs;
+  }
+
+  private int[] computeRefOffsets(int idSize, boolean strongOnly) {
+    List<HeapField> all = getAllInstanceFields();
+    int[] tmp = new int[all.size()];
+    int count = 0;
+    int offset = 0;
+    for (HeapField f : all) {
+      int type = f.getType();
+      if (type == BasicType.OBJECT) {
+        String n = f.getName();
+        if (!strongOnly || !("referent".equals(n) || "discovered".equals(n))) {
+          tmp[count++] = offset;
+        }
+      }
+      offset += BasicType.sizeOf(type, idSize);
+    }
+    return count == tmp.length ? tmp : java.util.Arrays.copyOf(tmp, count);
   }
 
   @Override

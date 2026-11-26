@@ -1516,7 +1516,7 @@ public final class HeapDumpImpl implements HeapDump {
 
     // Eagerly extract references for small objects (adaptive optimization)
     if (dataSize < 256) {
-      obj.extractOutboundReferences();
+      obj.extractOutboundReferences(reader);
     }
 
     if (cls != null) {
@@ -1547,7 +1547,7 @@ public final class HeapDumpImpl implements HeapDump {
     obj.setShallowSize(shallowSize);
 
     // Eagerly extract array references (cheap - contiguous block)
-    obj.extractOutboundReferences();
+    obj.extractOutboundReferences(reader);
 
     if (cls != null) {
       cls.incrementInstanceCount();
