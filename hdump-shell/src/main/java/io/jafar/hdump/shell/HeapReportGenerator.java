@@ -251,7 +251,7 @@ public final class HeapReportGenerator {
               "Inspect with: objects/" + ClassNameUtil.toHumanReadable(topClass.getName()),
               "objects/"
                   + ClassNameUtil.toHumanReadable(topClass.getName())
-                  + " | groupBy(class) | stats(shallow)"));
+                  + " | stats(shallow)"));
     }
 
     return findings;
@@ -425,24 +425,25 @@ public final class HeapReportGenerator {
             "Run waste() for exact per-object figures",
             wastedEstimate,
             wastedCollections,
-            "Inspect with: objects/instanceof/java.util.Map | waste() | sortBy(wastedBytes desc)",
-            "objects/instanceof/java.util.Map | waste() | filter(wastedBytes > 1MB)"
+            // instanceof on a concrete base also covers subclasses (anonymous LRU maps etc.);
+            // a java.util.* glob would miss those and drag in every HashMap$Node
+            // top(), not sortBy(): on heaps over 5M objects only a pipeline ending in an
+            // aggregation streams every object (sortBy would see 100 of them)
+            "Inspect with: objects/instanceof/java.util.HashMap | waste() | top(20, wastedBytes);"
+                + " likewise java.util.ArrayList and java.util.concurrent.ConcurrentHashMap",
+            "objects/instanceof/java.util.HashMap | waste() | filter(wastedBytes > 1MB)"
                 + " | top(10, wastedBytes)"));
   }
 
   // ---- Utilities ----
 
   /**
-   * Returns the total shallow heap size. Falls back to summing {@code instanceCount * instanceSize}
-   * from the class histogram when the indexed parser leaves {@code getTotalHeapSize()} at zero
-   * (large heap dumps use lazy loading and don't accumulate the total during parsing).
+   * Returns the total shallow heap size. Both parsing modes set it; the fallback this used to have
+   * (summing {@code instanceCount * instanceSize}, which leaves out headers and every array)
+   * printed a plausible, wrong figure once INDEXED mode reported instance counts.
    */
   private static long totalHeapSize(HeapDump dump) {
-    long size = dump.getTotalHeapSize();
-    if (size > 0) return size;
-    return dump.getClasses().stream()
-        .mapToLong(c -> (long) c.getInstanceCount() * c.getInstanceSize())
-        .sum();
+    return dump.getTotalHeapSize();
   }
 
   private static String formatSize(long bytes) {

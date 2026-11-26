@@ -410,6 +410,8 @@ public final class HeapDumpImpl implements HeapDump {
       LOG.debug("Class-instances index not available (will be built on first parse)");
     }
 
+    loadInstanceCounts();
+
     LOG.debug(
         "Parsed {} classes, {} objects, {} GC roots (indexed mode)",
         classesById.size(),
@@ -1511,7 +1513,7 @@ public final class HeapDumpImpl implements HeapDump {
     cacheObject(objId, obj);
     objectCount++;
 
-    int shallowSize = reader.getIdSize() * 2 + 8 + dataSize; // Approximate
+    int shallowSize = shallowSize(false, false, reader.getIdSize(), dataSize);
     totalHeapSize += shallowSize;
     obj.setShallowSize(shallowSize);
 
@@ -1543,7 +1545,7 @@ public final class HeapDumpImpl implements HeapDump {
     cacheObject(objId, obj);
     objectCount++;
 
-    int shallowSize = reader.getIdSize() * 2 + 12 + dataSize;
+    int shallowSize = shallowSize(true, false, reader.getIdSize(), dataSize);
     totalHeapSize += shallowSize;
     obj.setShallowSize(shallowSize);
 
@@ -1568,26 +1570,7 @@ public final class HeapDumpImpl implements HeapDump {
     reader.skip(dataSizeLong);
 
     // Create synthetic class name for primitive arrays
-    String arrayClassName =
-        switch (elemType) {
-          case BasicType.BOOLEAN -> "[Z";
-          case BasicType.CHAR -> "[C";
-          case BasicType.FLOAT -> "[F";
-          case BasicType.DOUBLE -> "[D";
-          case BasicType.BYTE -> "[B";
-          case BasicType.SHORT -> "[S";
-          case BasicType.INT -> "[I";
-          case BasicType.LONG -> "[J";
-          default -> "[?";
-        };
-
-    HeapClassImpl cls = classesByName.get(arrayClassName);
-    if (cls == null) {
-      // Create synthetic class for primitive array
-      cls = new HeapClassImpl(0, arrayClassName, this);
-      cls.setPrimitiveArrayType(elemType);
-      classesByName.put(arrayClassName, cls);
-    }
+    HeapClassImpl cls = primitiveArrayClass(elemType);
 
     HeapObjectImpl obj = new HeapObjectImpl(objId, cls, dataPos, dataSize, this);
     obj.setArrayLength(length);
@@ -1595,7 +1578,7 @@ public final class HeapDumpImpl implements HeapDump {
     cacheObject(objId, obj);
     objectCount++;
 
-    int shallowSize = reader.getIdSize() + 12 + dataSize;
+    int shallowSize = shallowSize(false, true, reader.getIdSize(), dataSize);
     totalHeapSize += shallowSize;
     obj.setShallowSize(shallowSize);
 
@@ -1654,26 +1637,7 @@ public final class HeapDumpImpl implements HeapDump {
       // Special handling for primitive arrays (classId == -1)
       if (meta.classId == -1 && meta.isPrimitiveArray()) {
         // Create synthetic class name for primitive array
-        String arrayClassName =
-            switch (meta.elementType) {
-              case BasicType.BOOLEAN -> "[Z";
-              case BasicType.CHAR -> "[C";
-              case BasicType.FLOAT -> "[F";
-              case BasicType.DOUBLE -> "[D";
-              case BasicType.BYTE -> "[B";
-              case BasicType.SHORT -> "[S";
-              case BasicType.INT -> "[I";
-              case BasicType.LONG -> "[J";
-              default -> "[?";
-            };
-
-        cls = classesByName.get(arrayClassName);
-        if (cls == null) {
-          // Create synthetic class for primitive array
-          cls = new HeapClassImpl(0, arrayClassName, this);
-          cls.setPrimitiveArrayType(meta.elementType);
-          classesByName.put(arrayClassName, cls);
-        }
+        cls = primitiveArrayClass(meta.elementType);
       } else {
         // Regular object or object array - lookup class by address
         long classAddress64 = classId32ToAddress.get(meta.classId);
@@ -1687,15 +1651,9 @@ public final class HeapDumpImpl implements HeapDump {
       HeapObjectImpl obj = new HeapObjectImpl(id, cls, meta.fileOffset, meta.dataSize, this);
 
       // Compute shallowSize including object header overhead, matching in-memory mode formulas
-      int idSize = reader.getIdSize();
-      int shallowSize;
-      if (meta.isObjectArray()) {
-        shallowSize = idSize * 2 + 12 + meta.dataSize;
-      } else if (meta.isPrimitiveArray()) {
-        shallowSize = idSize + 12 + meta.dataSize;
-      } else {
-        shallowSize = idSize * 2 + 8 + meta.dataSize;
-      }
+      int shallowSize =
+          shallowSize(
+              meta.isObjectArray(), meta.isPrimitiveArray(), reader.getIdSize(), meta.dataSize);
       obj.setShallowSize(shallowSize);
 
       if (meta.isArray()) {
@@ -1797,6 +1755,103 @@ public final class HeapDumpImpl implements HeapDump {
     return Optional.ofNullable(getCachedObject(id));
   }
 
+  /**
+   * Approximate shallow size of an object, the same in both parsing modes: header estimate plus
+   * field or element bytes. The one formula for in-memory parsing, indexed materialization and the
+   * INDEXED-mode heap total.
+   */
+  static int shallowSize(boolean objectArray, boolean primitiveArray, int idSize, int dataSize) {
+    if (objectArray) {
+      return idSize * 2 + 12 + dataSize;
+    }
+    if (primitiveArray) {
+      return idSize + 12 + dataSize;
+    }
+    return idSize * 2 + 8 + dataSize;
+  }
+
+  /** True for the primitive array class names {@code [Z [C [F [D [B [S [I [J}. */
+  static boolean isPrimitiveArrayClassName(String name) {
+    return name != null
+        && name.length() == 2
+        && name.charAt(0) == '['
+        && "ZCFDBSIJ".indexOf(name.charAt(1)) >= 0;
+  }
+
+  /**
+   * The class for primitive arrays of {@code elemType} ({@code [B}, {@code [I}, ...), created if
+   * absent.
+   */
+  private HeapClassImpl primitiveArrayClass(int elemType) {
+    String arrayClassName =
+        switch (elemType) {
+          case BasicType.BOOLEAN -> "[Z";
+          case BasicType.CHAR -> "[C";
+          case BasicType.FLOAT -> "[F";
+          case BasicType.DOUBLE -> "[D";
+          case BasicType.BYTE -> "[B";
+          case BasicType.SHORT -> "[S";
+          case BasicType.INT -> "[I";
+          case BasicType.LONG -> "[J";
+          default -> "[?";
+        };
+    HeapClassImpl cls = classesByName.get(arrayClassName);
+    if (cls == null) {
+      // Create synthetic class for primitive array
+      cls = new HeapClassImpl(0, arrayClassName, this);
+      cls.setPrimitiveArrayType(elemType);
+      classesByName.put(arrayClassName, cls);
+    }
+    return cls;
+  }
+
+  /**
+   * INDEXED mode only: sets {@link HeapClass#getInstanceCount()} for every class and {@link
+   * #getTotalHeapSize()}, which the single-pass parser accumulates as it reads objects and the
+   * two-pass parser never set (every class reported 0 instances, the heap 0 bytes, in INDEXED mode,
+   * the AUTO choice for dumps over 2 GB).
+   *
+   * <p>One sequential pass over the object index. Entries with file offset 0 are class objects
+   * (pass 2 files each class's own class object under that class) and are skipped. Primitive arrays
+   * carry class id -1 and are counted under their {@code [B}/{@code [I}/... class by element type.
+   */
+  private void loadInstanceCounts() {
+    if (classAddressToId32 == null || objectIndexReader == null) {
+      return;
+    }
+    it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap counts =
+        new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    int[] primitiveCounts = new int[16];
+    long heapSize = 0;
+    int idSize = reader.getIdSize();
+    int entries = objectIndexReader.getEntryCount();
+    for (int i = 0; i < entries; i++) {
+      ObjectIndexReader.ObjectMetadata meta = objectIndexReader.readObject(i);
+      if (meta == null || meta.fileOffset == 0) {
+        continue; // a class object's own entry
+      }
+      heapSize += shallowSize(meta.isObjectArray(), meta.isPrimitiveArray(), idSize, meta.dataSize);
+      if (meta.classId == -1 && meta.isPrimitiveArray()) {
+        int t = meta.elementType;
+        if (t >= 0 && t < primitiveCounts.length) {
+          primitiveCounts[t]++;
+        }
+      } else {
+        counts.addTo(meta.classId, 1);
+      }
+    }
+    for (HeapClassImpl cls : classesById.values()) {
+      int classId32 = classAddressToId32.get(cls.getId());
+      cls.setInstanceCount(classId32 >= 0 ? counts.get(classId32) : 0);
+    }
+    for (int t = 0; t < primitiveCounts.length; t++) {
+      if (primitiveCounts[t] > 0) {
+        primitiveArrayClass(t).setInstanceCount(primitiveCounts[t]);
+      }
+    }
+    totalHeapSize = heapSize;
+  }
+
   @Override
   public Stream<HeapObject> getObjectsOfClass(HeapClass cls) {
     return getObjects().filter(o -> o.getHeapClass() == cls);
@@ -1836,15 +1891,17 @@ public final class HeapDumpImpl implements HeapDump {
       return Stream.empty(); // Class has no instances
     }
 
-    // Stream instance IDs and load objects
+    // Stream instance IDs and load objects. The index also files the class's own class object
+    // under the class (see the CLASS_DUMP case in pass 2); it is not an instance.
+    long ownClassAddress = classId32ToAddress != null ? classId32ToAddress.get(classId32) : -1L;
     return classInstancesDataReader
         .readInstanceIds(location.dataFileOffset(), location.instanceCount())
         .mapToObj(
             objectId32 -> {
               // Map 32-bit ID back to 64-bit address
               long address = id32ToAddress.get(objectId32);
-              if (address == -1) {
-                return null; // Should not happen, indicates index corruption
+              if (address == -1 || address == ownClassAddress) {
+                return null; // -1 should not happen (index corruption); the other is the class
               }
               return getObjectByIdInternal(address);
             })
@@ -1865,6 +1922,14 @@ public final class HeapDumpImpl implements HeapDump {
    */
   @Override
   public Stream<HeapObject> getObjectsOfClassFast(HeapClass cls) {
+    // Primitive arrays are not in the class-instances index (pass 2 files them under class id -1),
+    // so the index lists only a primitive-array class's own class object: scan for them. Objects
+    // of [B etc. share this HeapClass instance (primitiveArrayClass returns the one in
+    // classesByName, which is the CLASS_DUMP's when the dump has one).
+    if (isPrimitiveArrayClassName(cls.getName())) {
+      return getObjects().filter(o -> o.getHeapClass() == cls);
+    }
+
     // Look up 32-bit class ID from 64-bit address
     long classAddress = cls.getId();
     int classId32 = classAddressToId32 != null ? classAddressToId32.get(classAddress) : -1;
@@ -2220,27 +2285,7 @@ public final class HeapDumpImpl implements HeapDump {
 
       // Special handling for primitive arrays (classId == -1)
       if (meta.classId == -1 && meta.isPrimitiveArray()) {
-        // Create synthetic class name for primitive array
-        String arrayClassName =
-            switch (meta.elementType) {
-              case BasicType.BOOLEAN -> "[Z";
-              case BasicType.CHAR -> "[C";
-              case BasicType.FLOAT -> "[F";
-              case BasicType.DOUBLE -> "[D";
-              case BasicType.BYTE -> "[B";
-              case BasicType.SHORT -> "[S";
-              case BasicType.INT -> "[I";
-              case BasicType.LONG -> "[J";
-              default -> "[?";
-            };
-
-        cls = classesByName.get(arrayClassName);
-        if (cls == null) {
-          // Create synthetic class for primitive array (these are cached since they're few)
-          cls = new HeapClassImpl(0, arrayClassName, this);
-          cls.setPrimitiveArrayType(meta.elementType);
-          classesByName.put(arrayClassName, cls);
-        }
+        cls = primitiveArrayClass(meta.elementType);
       } else {
         // Regular object or object array - lookup class by address
         long classAddress64 = classId32ToAddress.get(meta.classId);
@@ -2254,15 +2299,9 @@ public final class HeapDumpImpl implements HeapDump {
       HeapObjectImpl obj = new HeapObjectImpl(objectId, cls, meta.fileOffset, meta.dataSize, this);
 
       // Compute shallowSize including object header overhead, matching in-memory mode formulas
-      int idSz = reader.getIdSize();
-      int shallowSz;
-      if (meta.isObjectArray()) {
-        shallowSz = idSz * 2 + 12 + meta.dataSize;
-      } else if (meta.isPrimitiveArray()) {
-        shallowSz = idSz + 12 + meta.dataSize;
-      } else {
-        shallowSz = idSz * 2 + 8 + meta.dataSize;
-      }
+      int shallowSz =
+          shallowSize(
+              meta.isObjectArray(), meta.isPrimitiveArray(), reader.getIdSize(), meta.dataSize);
       obj.setShallowSize(shallowSz);
 
       if (meta.isArray()) {

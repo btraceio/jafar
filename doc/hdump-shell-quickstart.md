@@ -62,7 +62,7 @@ hdump> objects | top(10, shallow)
 hdump> objects/java.lang.String | stats(shallow)
 
 # Map implementations
-hdump> objects/instanceof/java.util.Map | groupBy(class) | top(5, count)
+hdump> objects/instanceof/java.util.AbstractMap | groupBy(class) | top(5, count)
 
 # Your application classes
 hdump> classes/com.myapp.* | top(10, instanceCount)
@@ -91,7 +91,7 @@ hdump> gcroots/THREAD_OBJ | head(10)
 ```
 objects/java.lang.String              # Exact class
 objects/java.util.*                   # Glob pattern
-objects/instanceof/java.util.Map      # Include subclasses
+objects/instanceof/java.util.AbstractMap  # Include subclasses (superclasses only, not interfaces)
 ```
 
 ### Predicates
@@ -139,7 +139,7 @@ hdump> checkLeaks(detector="growing-collections")
 # Manual investigation
 hdump> classes | top(20, instanceCount)
 hdump> classes/com.myapp.* | top(10, instanceCount)
-hdump> objects/instanceof/java.util.Collection | groupBy(class) | top(10, count)
+hdump> objects/instanceof/java.util.AbstractCollection | groupBy(class) | top(10, count)  # most JDK collections; see hdumppath.md
 ```
 
 ### Retained Size Analysis
