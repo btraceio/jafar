@@ -24,10 +24,8 @@ import org.junit.jupiter.api.io.TempDir;
  * normal {@link AllocationMeter} semantics (calling-thread delta) measure the whole parse; unlike
  * the parser-core cell there is nothing to mark from a pool-thread callback, and the test runs in
  * the module's normal {@code test} task (D9). The single-threadedness evidence is recorded in the
- * budget-file comment: no {@code Executor}/{@code new Thread} in {@code hdump-parser/src/main}, and
- * the module's only parallelism ({@code DominatorTreeComputer}'s parallel common-pool streams) is
- * reached solely through {@code computeDominators()}, which the default-options {@code parse(path)}
- * does not call.
+ * budget-file comment: no {@code Executor}/{@code new Thread}/parallel streams in {@code
+ * hdump-parser/src/main}.
  *
  * <p>Determinism: the fixture is generated once, outside any measurement — its file name may vary
  * with the temp dir, its bytes must not — and two warm-up parses are discarded before the measured

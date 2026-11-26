@@ -98,7 +98,7 @@ public final class HeapDumpImpl implements HeapDump {
 
   // Dominator children map: dominator ID -> list of dominated object IDs
   // Built during full dominator tree computation for O(1) lookup
-  private Map<Long, List<Long>> dominatorChildrenMap;
+  private DominatorTreeComputer.Result dominatorChildrenMap;
 
   /** Temporary storage for GC root data during Pass 2 (indexed mode). */
   private static class GcRootData {
@@ -2552,13 +2552,13 @@ public final class HeapDumpImpl implements HeapDump {
     }
 
     // O(1) lookup using cached children map instead of O(N) scan
-    List<Long> childrenIds = dominatorChildrenMap.get(dominator.getId());
-    if (childrenIds == null) {
+    long[] childrenIds = dominatorChildrenMap.childIds(dominator.getId());
+    if (childrenIds.length == 0) {
       return Collections.emptyList();
     }
 
-    List<HeapObject> dominated = new ArrayList<>(childrenIds.size());
-    for (Long childId : childrenIds) {
+    List<HeapObject> dominated = new ArrayList<>(childrenIds.length);
+    for (long childId : childrenIds) {
       // Use getObjectByIdInternal so indexed-mode objects are loaded from disk if not in LRU cache.
       // getCachedObject() only returns objects already in memory, leaving the list empty for any
       // child that was evicted, which causes dominatedCount=0 even when retainedSize > 0.
