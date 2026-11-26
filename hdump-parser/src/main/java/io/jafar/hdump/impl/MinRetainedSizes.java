@@ -46,21 +46,29 @@ final class MinRetainedSizes {
   /** Returns the minimum retained size of every node of {@code g}, indexed by node. */
   static long[] compute(HeapGraph g) {
     final int n = g.size();
-    final int[] ss = g.succStart;
-    final int[] su = g.succ;
-    final int m = ss[n];
-    long[] result = new long[n];
-    if (n == 0) {
-      return result;
-    }
     int[] shallow = new int[n];
     for (int v = 0; v < n; v++) {
       shallow[v] = g.nodes[v].getShallowSize();
     }
-
     int[] inbound = new int[n];
-    for (int e = 0; e < m; e++) {
-      inbound[su[e]]++;
+    for (int e = 0, m = g.succStart[n]; e < m; e++) {
+      inbound[g.succ[e]]++;
+    }
+    return compute(n, g.succStart, g.succ, shallow, inbound);
+  }
+
+  /**
+   * The same on a plain CSR graph of {@code n} nodes, with the inbound counts the per-object rule
+   * uses given by the caller. They need not be counted over these edges: INDEXED mode counts every
+   * object field (Reference.referent too), and a subgraph keeps its nodes' global counts. Correct
+   * as long as each count is at least the number of edges of this graph into the node, the edges of
+   * every node with count &le; 1 are all present, and an edge into a node with count 1 is that
+   * node's only reference.
+   */
+  static long[] compute(int n, int[] ss, int[] su, int[] shallow, int[] inbound) {
+    long[] result = new long[n];
+    if (n == 0) {
+      return result;
     }
 
     // Forest parent: the only referrer of a once-referenced object, when that referrer is itself

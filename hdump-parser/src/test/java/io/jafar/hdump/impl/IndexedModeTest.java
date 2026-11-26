@@ -2,13 +2,14 @@ package io.jafar.hdump.impl;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.management.HotSpotDiagnosticMXBean;
 import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapDumpParser;
 import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
-import io.jafar.hdump.api.HeapObject;
+import io.jafar.hdump.impl.ApproximateRetainedSizeComputer.IndexedStrategy;
 import io.jafar.hdump.index.IndexFormat;
 import io.jafar.hdump.test.GraphHeapDumpWriter;
 import io.jafar.hdump.test.GraphHeapDumpWriter.RootType;
@@ -18,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Duration;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,6 +40,25 @@ class IndexedModeTest {
     Random rnd = new Random(7000 + seed);
     int n = 300 + rnd.nextInt(700);
     verify(DominatorOracleTest.randomGraph(rnd, n, 0.45, seed % 2 == 0, 3), dir);
+  }
+
+  /** An unknown -Djafar.hdump.retained.strategy is ignored (AUTO), not a broken class. */
+  @Test
+  void unknownStrategyPropertyFallsBackToAuto(@TempDir Path dir) throws IOException {
+    GraphHeapDumpWriter w = DominatorOracleTest.randomGraph(new Random(5), 300, 0.45, false, 3);
+    Path file = dir.resolve("graph.hprof");
+    w.write(file, 1 << 24);
+    String old = System.getProperty("jafar.hdump.retained.strategy");
+    System.setProperty("jafar.hdump.retained.strategy", "no-such-strategy");
+    try {
+      long[] auto = indexedSizes(file, w, null, 256);
+      Files.delete(dir.resolve("graph.hprof.idx").resolve(IndexFormat.RETAINED_INDEX_NAME));
+      System.setProperty("jafar.hdump.retained.strategy", "per_object");
+      assertArrayEquals(auto, indexedSizes(file, w, null, 256), "lower-case value accepted");
+    } finally {
+      if (old == null) System.clearProperty("jafar.hdump.retained.strategy");
+      else System.setProperty("jafar.hdump.retained.strategy", old);
+    }
   }
 
   /** Once-referenced chains, shared leaves, unreachable cycles, weak references. */
@@ -107,6 +128,110 @@ class IndexedModeTest {
     }
   }
 
+  /** Every strategy, with budgets small enough that the budgeted path patches most objects. */
+  private static final Object[][] STRATEGIES = {
+    {IndexedStrategy.PER_OBJECT, 256, false},
+    {IndexedStrategy.BUDGETED, 1, false},
+    {IndexedStrategy.BUDGETED, 4, false},
+    {IndexedStrategy.BUDGETED, 256, false},
+    // the large objects' subgraph "does not fit": they fall back to one BFS each
+    {IndexedStrategy.BUDGETED, 1, true},
+    {IndexedStrategy.ALL_AT_ONCE, 256, false},
+    {IndexedStrategy.AUTO, 256, false},
+  };
+
+  /** Computes INDEXED approximate sizes with a pinned strategy; returns them by node. */
+  private static long[] indexedSizes(
+      Path file, GraphHeapDumpWriter w, IndexedStrategy strategy, int budget) throws IOException {
+    return indexedSizes(file, w, strategy, budget, false);
+  }
+
+  private static long[] indexedSizes(
+      Path file, GraphHeapDumpWriter w, IndexedStrategy strategy, int budget, boolean noHeap)
+      throws IOException {
+    ApproximateRetainedSizeComputer.indexedStrategy = strategy;
+    ApproximateRetainedSizeComputer.indexedBudget = budget;
+    var heap = ApproximateRetainedSizeComputer.availableHeap;
+    if (noHeap) ApproximateRetainedSizeComputer.availableHeap = () -> 0L;
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.INDEXED)) {
+      assertTrue(((HeapDumpImpl) dump).getObjectIndexReader() != null, "INDEXED mode");
+      dump.computeDominators();
+      long[] out = new long[w.nodeCount()];
+      for (int v = 0; v < out.length; v++) {
+        out[v] = dump.getObjectById(w.objectId(v)).orElseThrow().getRetainedSize();
+      }
+      return out;
+    } finally {
+      ApproximateRetainedSizeComputer.indexedStrategy = null;
+      ApproximateRetainedSizeComputer.indexedBudget = 256;
+      ApproximateRetainedSizeComputer.availableHeap = heap;
+    }
+  }
+
+  /**
+   * Long chains of once-referenced objects: a 200k chain from a root, and one hanging off an
+   * unreachable two-node cycle. The per-object BFS is quadratic here (2*10^10 visits); the budgeted
+   * and all-at-once strategies must finish well inside the timeout with the suffix sums.
+   */
+  @Test
+  void longChainsAreLinear(@TempDir Path dir) throws IOException {
+    int tail = 200_000;
+    GraphHeapDumpWriter w = new GraphHeapDumpWriter(2);
+    // nodes 0..1: an unreachable cycle; node 0 also references a chain of `tail` nodes;
+    // a second, rooted chain of `tail` nodes follows
+    for (int i = 0; i < 2 + 2 * tail; i++) w.addInstance();
+    w.addEdge(0, 1);
+    w.addEdge(1, 0);
+    w.addEdge(0, 2);
+    for (int i = 2; i + 1 < 2 + tail; i++) w.addEdge(i, i + 1);
+    int rooted = 2 + tail;
+    for (int i = rooted; i + 1 < rooted + tail; i++) w.addEdge(i, i + 1);
+    w.addRoot(rooted, RootType.JAVA_FRAME);
+    Path file = dir.resolve("chains.hprof");
+    w.write(file, 1 << 22);
+    long[] shallow;
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
+      shallow = new long[w.nodeCount()];
+      for (int v = 0; v < shallow.length; v++) {
+        shallow[v] = dump.getObjectById(w.objectId(v)).orElseThrow().getShallowSize();
+      }
+    }
+    int n = w.nodeCount();
+    long[] expected = new long[n];
+    for (int i = rooted + tail - 1; i >= rooted; i--) {
+      expected[i] = shallow[i] + (i + 1 < rooted + tail ? expected[i + 1] : 0);
+    }
+    for (int i = 2 + tail - 1; i >= 2; i--) {
+      expected[i] = shallow[i] + (i + 1 < 2 + tail ? expected[i + 1] : 0);
+    }
+    expected[0] = expected[1] = shallow[0] + shallow[1] + expected[2];
+    Path indexDir = dir.resolve("chains.hprof.idx");
+    for (IndexedStrategy strategy :
+        new IndexedStrategy[] {IndexedStrategy.BUDGETED, IndexedStrategy.ALL_AT_ONCE}) {
+      Files.deleteIfExists(indexDir.resolve(IndexFormat.RETAINED_INDEX_NAME));
+      long[][] actual = new long[1][];
+      assertTimeoutPreemptively(
+          Duration.ofSeconds(60), () -> actual[0] = indexedSizes(file, w, strategy, 256));
+      for (int v = 0; v < n; v++) {
+        assertEquals(expected[v], actual[0][v], strategy + ": node " + v);
+      }
+    }
+  }
+
+  /**
+   * True if budget 1 makes some object large: an object referenced at most once (counting every
+   * field, as inbound.idx does) with at least one strong reference costs more than 1 to search.
+   */
+  private static boolean hasOnceReferencedChildren(GraphHeapDumpWriter w) {
+    int[][] all = w.allAdjacency();
+    int[][] strong = w.strongAdjacency();
+    int[] inbound = new int[all.length];
+    for (int[] out : all) for (int t : out) inbound[t]++;
+    for (int v = 0; v < strong.length; v++)
+      if (inbound[v] <= 1 && strong[v].length > 0) return true;
+    return false;
+  }
+
   private static void verify(GraphHeapDumpWriter w, Path dir) throws IOException {
     Path file = dir.resolve("graph.hprof");
     w.write(file, 1 << 24);
@@ -120,23 +245,35 @@ class IndexedModeTest {
     long[] expected =
         DominatorOracle.approximateRetained(w.strongAdjacency(), w.allAdjacency(), shallow);
     Path indexDir = dir.resolve("graph.hprof.idx");
-    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.INDEXED)) {
-      assertTrue(((HeapDumpImpl) dump).getObjectIndexReader() != null, "INDEXED mode");
-      dump.computeDominators();
+    for (Object[] run : STRATEGIES) {
+      Files.deleteIfExists(indexDir.resolve(IndexFormat.RETAINED_INDEX_NAME));
+      boolean noHeap = (Boolean) run[2];
+      int fallbacks = ApproximateRetainedSizeComputer.SUBGRAPH_FALLBACKS.get();
+      long[] actual = indexedSizes(file, w, (IndexedStrategy) run[0], (Integer) run[1], noHeap);
+      int ranFallback = ApproximateRetainedSizeComputer.SUBGRAPH_FALLBACKS.get() - fallbacks;
+      if (!noHeap) {
+        assertEquals(0, ranFallback, run[0] + " budget " + run[1] + ": unexpected fallback");
+      } else if (hasOnceReferencedChildren(w)) {
+        assertTrue(ranFallback > 0, "budget 1 with no heap must take the fallback");
+      }
       assertTrue(Files.exists(indexDir.resolve(IndexFormat.STRONGREFS_INDEX_NAME)));
       int mismatches = 0;
       StringBuilder first = new StringBuilder();
       for (int v = 0; v < w.nodeCount(); v++) {
-        HeapObject o = dump.getObjectById(w.objectId(v)).orElseThrow();
-        long actual = o.getRetainedSize();
-        if (actual != expected[v]) {
-          if (mismatches++ < 5) {
-            first.append(" node ").append(v).append(" expected ").append(expected[v]);
-            first.append(" actual ").append(actual).append(';');
-          }
+        if (actual[v] != expected[v] && mismatches++ < 5) {
+          first.append(" node ").append(v).append(" expected ").append(expected[v]);
+          first.append(" actual ").append(actual[v]).append(';');
         }
       }
-      assertEquals(0, mismatches, "approximate retained size mismatches:" + first);
+      assertEquals(
+          0,
+          mismatches,
+          run[0]
+              + " budget "
+              + run[1]
+              + (noHeap ? " (subgraph fallback)" : "")
+              + ": approximate size mismatches:"
+              + first);
     }
     // reopen: strongrefs.idx reused, not rebuilt (same file, not a replacement)
     Path refsFile = indexDir.resolve(IndexFormat.STRONGREFS_INDEX_NAME);

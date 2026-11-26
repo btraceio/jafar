@@ -32,6 +32,9 @@ import java.util.concurrent.TimeUnit;
  * Plus a {@code LinkedList} of {@code scale/2} nodes (deep chain), a binary tree of ~{@code scale}
  * nodes, a {@code ConcurrentHashMap<Integer, Object[]>} of shared entities and weak references.
  * Roughly 11 heap objects per unit of scale.
+ *
+ * <p>Shape {@code chain}: one singly linked list of {@code scale} nodes ({@link Link}), each
+ * referenced once by its predecessor — the worst case of a per-object minimum-retained-size BFS.
  */
 public final class HeapDumpFixture {
 
@@ -48,8 +51,9 @@ public final class HeapDumpFixture {
       return file;
     }
     String[] parts = name.split("-");
-    if (parts.length != 2 || !parts[0].equals("app")) {
-      throw new IllegalArgumentException("unknown fixture: " + name + " (expected app-<scale>)");
+    if (parts.length != 2 || !(parts[0].equals("app") || parts[0].equals("chain"))) {
+      throw new IllegalArgumentException(
+          "unknown fixture: " + name + " (expected app-<scale> or chain-<length>)");
     }
     Path tmp = dir.resolve(name + ".tmp.hprof");
     Files.deleteIfExists(tmp);
@@ -62,6 +66,7 @@ public final class HeapDumpFixture {
                 "-cp",
                 System.getProperty("java.class.path"),
                 HeapDumpFixture.class.getName(),
+                parts[0],
                 parts[1],
                 tmp.toString())
             .inheritIO()
@@ -170,10 +175,31 @@ public final class HeapDumpFixture {
     return n;
   }
 
+  /** A singly linked list: every node is referenced once, by its predecessor. */
+  static final class Link {
+    final long value;
+    Link next;
+
+    Link(long value) {
+      this.value = value;
+    }
+  }
+
+  static Link buildChain(int length) {
+    Link head = new Link(0);
+    Link cur = head;
+    for (int i = 1; i < length; i++) {
+      cur.next = new Link(i);
+      cur = cur.next;
+    }
+    return head;
+  }
+
   public static void main(String[] args) throws Exception {
-    int scale = Integer.parseInt(args[0]);
-    Path out = Path.of(args[1]);
-    World world = build(scale);
+    String shape = args[0];
+    int scale = Integer.parseInt(args[1]);
+    Path out = Path.of(args[2]);
+    Object world = shape.equals("chain") ? buildChain(scale) : build(scale);
     System.gc();
     HotSpotDiagnosticMXBean bean =
         ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class);

@@ -8,6 +8,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,21 +38,92 @@ public final class ApproximateRetainedSizeComputer {
 
   private ApproximateRetainedSizeComputer() {}
 
+  /** How INDEXED mode computes; {@link #AUTO} unless a test pins one. */
+  enum IndexedStrategy {
+    /** All at once if the working set fits in free heap, else {@link #BUDGETED}. */
+    AUTO,
+    /** {@link MinRetainedSizes} on the whole graph. */
+    ALL_AT_ONCE,
+    /** Per-object BFS for small expanded sets, all at once for the subgraph of the large ones. */
+    BUDGETED,
+    /** Per-object BFS for every object (quadratic on long once-referenced chains). */
+    PER_OBJECT
+  }
+
+  /**
+   * INDEXED strategy: {@code -Djafar.hdump.retained.strategy=AUTO|ALL_AT_ONCE|BUDGETED|PER_OBJECT}
+   * (default AUTO). BUDGETED bounds the transient heap to the forest pass plus the large objects'
+   * subgraph even where all at once would fit. Tests pin it directly (package-private).
+   */
+  static volatile IndexedStrategy indexedStrategy = null; // null: the system property
+
+  /** The strategy: a test's pin, else {@code jafar.hdump.retained.strategy}, else AUTO. */
+  private static IndexedStrategy strategy() {
+    IndexedStrategy pinned = indexedStrategy;
+    if (pinned != null) return pinned;
+    String value = System.getProperty("jafar.hdump.retained.strategy");
+    if (value == null || value.isBlank()) return IndexedStrategy.AUTO;
+    try {
+      return IndexedStrategy.valueOf(value.trim().toUpperCase(Locale.ROOT));
+    } catch (IllegalArgumentException e) {
+      LOG.warn(
+          "Ignoring -Djafar.hdump.retained.strategy={} (expected one of {}); using AUTO",
+          value,
+          java.util.Arrays.toString(IndexedStrategy.values()));
+      return IndexedStrategy.AUTO;
+    }
+  }
+
+  static volatile int indexedBudget = 256;
+
+  /**
+   * Transient heap {@link MinRetainedSizes} needs for {@code n} nodes and {@code e} edges (its
+   * documented peak, 75n + 4e + 28f with f &le; e, rounded up), plus the arrays filled here.
+   */
+  static long allAtOnceBytes(long n, long e) {
+    return 88L * n + 32L * e;
+  }
+
+  /** Free heap in bytes; a test hook can replace it (package-private). */
+  static volatile java.util.function.LongSupplier availableHeap =
+      () -> {
+        Runtime rt = Runtime.getRuntime();
+        return rt.maxMemory() - (rt.totalMemory() - rt.freeMemory());
+      };
+
+  /** Times the large objects' subgraph did not fit and they fell back to one BFS each. */
+  static final java.util.concurrent.atomic.AtomicInteger SUBGRAPH_FALLBACKS =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  private static boolean fits(long bytes) {
+    return bytes < availableHeap.getAsLong() / 2;
+  }
+
   /**
    * INDEXED mode: {@link #computeMinRetainedSize} for every id32 in order, written to {@code
-   * writer}, without materialising objects.
-   *
-   * <p>Each BFS walks the on-disk strong-reference graph ({@link StrongRefsIndex}, through {@link
-   * IndexedRefs}), reads inbound counts from {@code inbound.idx} and shallow sizes from {@code
-   * objects.idx}, with one reusable visited-stamp array (4 bytes per id32) — no {@link
-   * HeapObjectImpl}, no LRU cache, no per-object sets. Values are those of the per-object BFS over
-   * loaded objects: same graph (references that name an object), same inbound counts, same shallow
-   * size formula. Class entries get 0, as before (a loaded class entry has shallow size 0 and no
+   * writer}, without materialising objects. Each object's value is that of the per-object BFS over
+   * loaded objects: the graph is the on-disk strong references ({@link StrongRefsIndex}, via {@link
+   * IndexedRefs}), inbound counts come from {@code inbound.idx}, shallow sizes from {@code
+   * objects.idx}. Class entries get 0, as before (a loaded class entry has shallow size 0 and no
    * readable references).
    *
-   * <p>Still one BFS per object, so a long singly linked chain costs quadratic time here; the
-   * all-at-once computation used in IN_MEMORY mode needs about 60 bytes per object of working
-   * arrays, which this mode does not assume it has.
+   * <p>A per-object BFS is quadratic on long chains of once-referenced objects (each expands the
+   * whole tail), so:
+   *
+   * <ul>
+   *   <li>When the whole computation fits in free heap ({@link #allAtOnceBytes}, under half of what
+   *       is available), {@link MinRetainedSizes} computes every value at once.
+   *   <li>Otherwise ({@link IndexedStrategy#BUDGETED}): one pass builds the once-referenced forest
+   *       ({@code fparent}) and, bottom-up, each node's subtree work (nodes plus their references:
+   *       what its BFS costs) capped at a budget; nodes on an only-referrer cycle never complete
+   *       and count as large. Objects whose expanded set is within the budget get their per-object
+   *       BFS (bounded by the budget plus its frontier). The large ones get a placeholder; one
+   *       multi-source BFS collects everything they expand into, {@link MinRetainedSizes} runs on
+   *       that subgraph alone (nodes keep their global inbound counts), and the placeholders are
+   *       patched. Transient heap: 16 bytes per id32 for the forest pass, plus {@link
+   *       #allAtOnceBytes} of the large objects' subgraph; if even that does not fit, those objects
+   *       fall back to the per-object BFS, with a warning.
+   * </ul>
    */
   static void computeAllIndexed(
       HeapDumpImpl dump,
@@ -65,56 +137,31 @@ public final class ApproximateRetainedSizeComputer {
     if (progressCallback != null) {
       progressCallback.onProgress(0.3, "Building reference graph index...");
     }
-    IndexedRefs refs = new IndexedRefs(dump, dump.strongRefsIndex());
+    StrongRefsIndex stored = dump.strongRefsIndex();
+    IndexedRefs refs = new IndexedRefs(dump, stored);
     final int n = refs.size();
-    int[] mark = new int[n];
-    int[] queue = new int[16];
-    int stamp = 0;
-    int lastReportedPercent = 0;
-    int reportEvery = Math.max(n / 100, 50_000);
+    long edges = stored != null ? stored.start(n) : -1;
+    IndexedStrategy strategy = strategy();
+    boolean canAllAtOnce = stored != null && edges < Integer.MAX_VALUE - 8;
+    if (strategy == IndexedStrategy.AUTO) {
+      strategy =
+          canAllAtOnce && fits(allAtOnceBytes(n, edges))
+              ? IndexedStrategy.ALL_AT_ONCE
+              : IndexedStrategy.BUDGETED;
+    }
+    if (strategy == IndexedStrategy.ALL_AT_ONCE && !canAllAtOnce) {
+      strategy = IndexedStrategy.BUDGETED;
+    }
+    LOG.debug(
+        "Indexed retained sizes: {} ({} entries, {} references)",
+        strategy,
+        n,
+        edges >= 0 ? edges : "unknown");
     try {
-      for (int t = 0; t < n; t++) {
-        long size = 0;
-        if (!refs.isClassEntry(t)) {
-          if (++stamp == 0) { // wrapped: reset the stamps
-            java.util.Arrays.fill(mark, 0);
-            stamp = 1;
-          }
-          int head = 0;
-          int tail = 0;
-          queue[tail++] = t;
-          mark[t] = stamp;
-          while (head < tail) {
-            int u = queue[head++];
-            size += refs.shallowSize(u);
-            if (inbound.getInboundCount(u) > 1) {
-              continue; // shared: not expanded
-            }
-            int k = refs.strongRefs(u);
-            int[] r = refs.refs();
-            for (int i = 0; i < k; i++) {
-              int c = r[i];
-              if (mark[c] != stamp) {
-                mark[c] = stamp;
-                if (tail == queue.length) queue = java.util.Arrays.copyOf(queue, tail * 2);
-                queue[tail++] = c;
-              }
-            }
-          }
-          if (queue.length > 1 << 16 && tail < 1 << 12) {
-            queue = new int[16]; // do not keep one huge BFS's queue
-          }
-        }
-        writer.writeEntry(t, size);
-        if (progressCallback != null && (t + 1) % reportEvery == 0) {
-          double progress = 0.3 + 0.7 * ((t + 1) / (double) n);
-          int percent = (int) (progress * 100);
-          if (percent > lastReportedPercent) {
-            progressCallback.onProgress(
-                progress, String.format("Computing approximate retained sizes (%d%%)...", percent));
-            lastReportedPercent = percent;
-          }
-        }
+      switch (strategy) {
+        case ALL_AT_ONCE -> allAtOnce(refs, stored, inbound, n, (int) edges, writer);
+        case BUDGETED -> budgeted(refs, inbound, n, indexedBudget, writer, progressCallback);
+        default -> perObject(refs, inbound, n, writer, progressCallback);
       }
     } catch (java.io.IOException e) {
       throw new RuntimeException("Failed to write retained size to index", e);
@@ -122,7 +169,291 @@ public final class ApproximateRetainedSizeComputer {
     if (progressCallback != null) {
       progressCallback.onProgress(1.0, "Approximate retained size computation complete");
     }
-    LOG.info("Completed indexed retained size computation for {} entries", n);
+    LOG.info("Completed indexed retained size computation for {} entries ({})", n, strategy);
+  }
+
+  private static void allAtOnce(
+      IndexedRefs refs,
+      StrongRefsIndex stored,
+      InboundCountReader inbound,
+      int n,
+      int edges,
+      io.jafar.hdump.index.RetainedSizeWriter writer)
+      throws java.io.IOException {
+    int[] ss = new int[n + 1];
+    int[] su = new int[edges];
+    int[] shallow = new int[n];
+    int[] inb = new int[n];
+    for (int v = 0; v < n; v++) {
+      ss[v + 1] = (int) stored.start(v + 1);
+      shallow[v] = refs.shallowSize(v);
+      inb[v] = inbound.getInboundCount(v);
+    }
+    for (int i = 0; i < edges; i++) {
+      su[i] = stored.ref(i);
+    }
+    long[] result = MinRetainedSizes.compute(n, ss, su, shallow, inb);
+    for (int t = 0; t < n; t++) {
+      writer.writeEntry(t, refs.isClassEntry(t) ? 0 : result[t]);
+    }
+  }
+
+  private static void perObject(
+      IndexedRefs refs,
+      InboundCountReader inbound,
+      int n,
+      io.jafar.hdump.index.RetainedSizeWriter writer,
+      ProgressCallback cb)
+      throws java.io.IOException {
+    Bfs bfs = new Bfs(refs, inbound, n);
+    for (int t = 0; t < n; t++) {
+      writer.writeEntry(t, refs.isClassEntry(t) ? 0 : bfs.size(t));
+      report(cb, t, n);
+    }
+  }
+
+  private static void budgeted(
+      IndexedRefs refs,
+      InboundCountReader inbound,
+      int n,
+      int budget,
+      io.jafar.hdump.index.RetainedSizeWriter writer,
+      ProgressCallback cb)
+      throws java.io.IOException {
+    java.util.BitSet large = largeObjects(refs, inbound, n, budget);
+    Bfs bfs = new Bfs(refs, inbound, n);
+    // The large objects first, so retained.idx is only ever written complete and in order.
+    it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap largeValues =
+        largeValues(refs, inbound, n, large, bfs);
+    for (int t = 0; t < n; t++) {
+      long value;
+      if (refs.isClassEntry(t)) {
+        value = 0;
+      } else if (large.get(t)) {
+        value = largeValues.get(t);
+      } else {
+        value = bfs.size(t);
+      }
+      writer.writeEntry(t, value);
+      report(cb, t, n);
+    }
+  }
+
+  /**
+   * The objects whose per-object BFS would exceed {@code budget} steps: referenced at most once,
+   * with a once-referenced subtree whose work (each node 1 + its references) exceeds the budget, or
+   * on an only-referrer cycle (their subtree never completes). Transient: 16 bytes per id32.
+   */
+  private static java.util.BitSet largeObjects(
+      IndexedRefs refs, InboundCountReader inbound, int n, int budget) {
+    final int cap = budget == Integer.MAX_VALUE ? budget : budget + 1;
+    // Once-referenced forest: fparent[c] = c's only referrer, when that referrer is expandable;
+    // work[v] starts as what v itself costs a BFS (1 + its references), capped.
+    int[] fparent = new int[n];
+    int[] work = new int[n];
+    java.util.Arrays.fill(fparent, -1);
+    for (int v = 0; v < n; v++) {
+      if (inbound.getInboundCount(v) > 1) continue;
+      int k = refs.strongRefs(v);
+      work[v] = (int) Math.min(cap, 1L + k);
+      int[] r = refs.refs();
+      for (int i = 0; i < k; i++) {
+        int c = r[i];
+        if (inbound.getInboundCount(c) == 1) fparent[c] = v;
+      }
+    }
+    // Subtree work, bottom-up (Kahn over fparent); only-referrer cycles never complete.
+    int[] pending = new int[n];
+    for (int c = 0; c < n; c++) {
+      if (fparent[c] >= 0) pending[fparent[c]]++;
+    }
+    int[] queue = new int[n];
+    int tail = 0;
+    for (int v = 0; v < n; v++) {
+      if (inbound.getInboundCount(v) <= 1 && pending[v] == 0) queue[tail++] = v;
+    }
+    for (int head = 0; head < tail; head++) {
+      int u = queue[head];
+      int p = fparent[u];
+      if (p >= 0) {
+        work[p] = (int) Math.min(cap, (long) work[p] + work[u]);
+        if (--pending[p] == 0) queue[tail++] = p;
+      }
+    }
+    java.util.BitSet large = new java.util.BitSet(n);
+    for (int t = 0; t < n; t++) {
+      // pending[t] > 0: t is an only-referrer cycle member
+      if (inbound.getInboundCount(t) <= 1 && (pending[t] > 0 || work[t] > budget)) large.set(t);
+    }
+    return large;
+  }
+
+  /**
+   * The values of the large objects, all at once on the subgraphs they expand into. Sources are
+   * taken in id order into a batch (one multi-source BFS: expanded nodes and their frontier, so the
+   * subgraph is closed) until the batch would no longer fit in the heap; {@link MinRetainedSizes}
+   * then computes the batch (nodes keep their global inbound counts) and every large object in it
+   * gets its value — also those reached as part of another's subtree, which are then skipped as
+   * sources. Only one source whose subgraph alone does not fit falls back to one BFS, with a
+   * warning.
+   */
+  private static it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap largeValues(
+      IndexedRefs refs, InboundCountReader inbound, int n, java.util.BitSet large, Bfs bfs) {
+    it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap values =
+        new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap(Math.max(16, large.cardinality()));
+    int[] local = new int[n]; // id32 -> index in the current batch + 1
+    it.unimi.dsi.fastutil.ints.IntArrayList nodes = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    long[] edges = {0};
+    for (int t = large.nextSetBit(0); t >= 0; t = large.nextSetBit(t + 1)) {
+      if (values.containsKey(t)) continue; // computed as part of an earlier source's subtree
+      int mark = nodes.size();
+      long markEdges = edges[0];
+      collect(refs, inbound, t, local, nodes, edges);
+      if (edges[0] < Integer.MAX_VALUE - 8 && fits(allAtOnceBytes(nodes.size(), edges[0]))) {
+        continue;
+      }
+      // t does not fit with the batch: compute the batch without t, then t on its own
+      for (int i = mark; i < nodes.size(); i++) local[nodes.getInt(i)] = 0;
+      nodes.size(mark);
+      edges[0] = markEdges;
+      computeBatch(refs, inbound, large, local, nodes, values);
+      collect(refs, inbound, t, local, nodes, edges);
+      if (edges[0] < Integer.MAX_VALUE - 8 && fits(allAtOnceBytes(nodes.size(), edges[0]))) {
+        continue;
+      }
+      LOG.warn(
+          "Object id32={} expands into {} objects ({} references), too many for the heap; "
+              + "computing it with one BFS",
+          t,
+          nodes.size(),
+          edges[0]);
+      SUBGRAPH_FALLBACKS.incrementAndGet();
+      for (int i = 0; i < nodes.size(); i++) local[nodes.getInt(i)] = 0;
+      nodes.clear();
+      edges[0] = 0;
+      values.put(t, bfs.size(t));
+    }
+    computeBatch(refs, inbound, large, local, nodes, values);
+    return values;
+  }
+
+  /** Adds what {@code t} expands into (it, the expanded nodes, their frontier) to the batch. */
+  private static void collect(
+      IndexedRefs refs,
+      InboundCountReader inbound,
+      int t,
+      int[] local,
+      it.unimi.dsi.fastutil.ints.IntArrayList nodes,
+      long[] edges) {
+    if (local[t] != 0) return; // already in this batch (inside another source's subtree)
+    int head = nodes.size();
+    nodes.add(t);
+    local[t] = nodes.size();
+    for (; head < nodes.size(); head++) {
+      int u = nodes.getInt(head);
+      if (inbound.getInboundCount(u) > 1) continue; // frontier: not expanded
+      int k = refs.strongRefs(u);
+      edges[0] += k;
+      int[] r = refs.refs();
+      for (int j = 0; j < k; j++) {
+        int c = r[j];
+        if (local[c] == 0) {
+          nodes.add(c);
+          local[c] = nodes.size();
+        }
+      }
+    }
+  }
+
+  /** {@link MinRetainedSizes} on the batch; records every large object in it; clears the batch. */
+  private static void computeBatch(
+      IndexedRefs refs,
+      InboundCountReader inbound,
+      java.util.BitSet large,
+      int[] local,
+      it.unimi.dsi.fastutil.ints.IntArrayList nodes,
+      it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap values) {
+    int m = nodes.size();
+    if (m == 0) return;
+    int[] ss = new int[m + 1];
+    int[] shallow = new int[m];
+    int[] inb = new int[m];
+    it.unimi.dsi.fastutil.ints.IntArrayList su = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    for (int x = 0; x < m; x++) {
+      int u = nodes.getInt(x);
+      shallow[x] = refs.shallowSize(u);
+      inb[x] = inbound.getInboundCount(u);
+      if (inb[x] <= 1) {
+        int k = refs.strongRefs(u);
+        int[] r = refs.refs();
+        for (int j = 0; j < k; j++) su.add(local[r[j]] - 1);
+      }
+      ss[x + 1] = su.size();
+    }
+    long[] result = MinRetainedSizes.compute(m, ss, su.toIntArray(), shallow, inb);
+    for (int x = 0; x < m; x++) {
+      int u = nodes.getInt(x);
+      if (large.get(u)) values.put(u, result[x]);
+      local[u] = 0;
+    }
+    nodes.clear();
+  }
+
+  private static void report(ProgressCallback cb, int t, int n) {
+    if (cb != null && (t + 1) % Math.max(n / 100, 50_000) == 0) {
+      double progress = 0.3 + 0.7 * ((t + 1) / (double) n);
+      cb.onProgress(
+          progress,
+          String.format("Computing approximate retained sizes (%d%%)...", (int) (progress * 100)));
+    }
+  }
+
+  /** The per-object BFS on the INDEXED graph, with one reusable visited-stamp array. */
+  private static final class Bfs {
+    private final IndexedRefs refs;
+    private final InboundCountReader inbound;
+    private final int[] mark;
+    private int[] queue = new int[16];
+    private int stamp;
+
+    Bfs(IndexedRefs refs, InboundCountReader inbound, int n) {
+      this.refs = refs;
+      this.inbound = inbound;
+      this.mark = new int[n];
+    }
+
+    long size(int t) {
+      if (++stamp == 0) {
+        java.util.Arrays.fill(mark, 0);
+        stamp = 1;
+      }
+      int head = 0;
+      int tail = 0;
+      queue[tail++] = t;
+      mark[t] = stamp;
+      long total = 0;
+      while (head < tail) {
+        int u = queue[head++];
+        total += refs.shallowSize(u);
+        if (inbound.getInboundCount(u) > 1) {
+          continue; // shared: not expanded
+        }
+        int k = refs.strongRefs(u);
+        int[] r = refs.refs();
+        for (int i = 0; i < k; i++) {
+          int c = r[i];
+          if (mark[c] != stamp) {
+            mark[c] = stamp;
+            if (tail == queue.length) queue = java.util.Arrays.copyOf(queue, tail * 2);
+            queue[tail++] = c;
+          }
+        }
+      }
+      if (queue.length > 1 << 16 && tail < 1 << 12) {
+        queue = new int[16]; // do not keep one huge BFS's queue
+      }
+      return total;
+    }
   }
 
   /**
