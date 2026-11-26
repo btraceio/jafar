@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import io.jafar.hdump.test.SyntheticHeapDumpGenerator;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
@@ -17,6 +18,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -32,6 +37,9 @@ import tools.jackson.databind.ObjectMapper;
  * mapped after a collection too, through a static cache keyed by metadata class. The {@code
  * jfr_query} rows are resolved after the parse has closed, on the request thread, which used to
  * leave a thread-local slice of the file reachable for as long as that thread lived.
+ *
+ * <p>The server runs tool calls on a pool of long-lived threads, so the session is often used on
+ * one thread and closed on another; the {@code ...UsedOnAnotherThread...} tests do that.
  */
 class CloseReleasesMappedFileTest {
 
@@ -42,10 +50,22 @@ class CloseReleasesMappedFileTest {
 
   private JafarMcpServer server;
 
+  /** A thread that outlives each session, like the server's tool-call pool. */
+  private ExecutorService worker;
+
   @BeforeEach
   void setUp() {
     assumeTrue(Files.isReadable(MAPS), "needs /proc/self/maps (Linux)");
     server = new JafarMcpServer();
+    worker = Executors.newSingleThreadExecutor();
+  }
+
+  @AfterEach
+  void tearDown() throws InterruptedException {
+    if (worker != null) {
+      worker.shutdown();
+      worker.awaitTermination(10, TimeUnit.SECONDS);
+    }
   }
 
   @Test
@@ -81,6 +101,40 @@ class CloseReleasesMappedFileTest {
     call("handleHdumpClose", Map.of("closeAll", true));
 
     assertMapped(dump, false, "after hdump_close(closeAll)");
+  }
+
+  @Test
+  void jfrSessionUsedOnAnotherThreadIsUnmappedByJfrClose() throws Exception {
+    Path recording = copyOfTestRecording("other-thread.jfr");
+    String id = worker.submit(() -> openRecording(recording)).get();
+
+    call("handleJfrClose", Map.of("sessionId", id));
+
+    assertMapped(recording, false, "after jfr_close, with the session's thread alive");
+  }
+
+  @Test
+  void heapSessionUsedOnAnotherThreadIsUnmappedByHdumpClose() throws Exception {
+    Path dump = tempDir.resolve("other-thread.hprof");
+    SyntheticHeapDumpGenerator.generateMinimalHeapDump(dump, 200);
+    worker
+        .submit(
+            () -> {
+              String id =
+                  new ObjectMapper()
+                      .readTree(text(call("handleHdumpOpen", Map.of("path", dump.toString()))))
+                      .get("id")
+                      .asString();
+              call("handleHdumpSummary", Map.of("sessionId", id));
+              call("handleHdumpQuery", Map.of("sessionId", id, "query", "objects | head(10)"));
+              return id;
+            })
+        .get();
+    assertMapped(dump, true, "after hdump_query");
+
+    call("handleHdumpClose", Map.of("closeAll", true));
+
+    assertMapped(dump, false, "after hdump_close, with the session's thread alive");
   }
 
   /** Opens {@code recording} and runs the tools that kept a closed file mapped. */

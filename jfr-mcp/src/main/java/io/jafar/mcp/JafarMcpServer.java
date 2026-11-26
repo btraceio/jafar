@@ -22,6 +22,7 @@ import io.jafar.mcp.resource.JafarResources;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
 import io.jafar.mcp.session.HeapSessionRegistry;
+import io.jafar.mcp.session.MappedFileRelease;
 import io.jafar.mcp.session.McpCrossSessionContext;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
@@ -381,10 +382,14 @@ public final class JafarMcpServer {
   }
 
   void retainClientScopes(Set<String> liveScopes) {
+    int mapped = sessionRegistry.size() + heapSessionRegistry.size();
     sessionRegistry.retainScopes(liveScopes);
     heapSessionRegistry.retainScopes(liveScopes);
     pprofSessionRegistry.retainScopes(liveScopes);
     otlpSessionRegistry.retainScopes(liveScopes);
+    if (sessionRegistry.size() + heapSessionRegistry.size() < mapped) {
+      MappedFileRelease.afterClose();
+    }
   }
 
   /** Run server with HTTP/SSE transport (for web clients). */

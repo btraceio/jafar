@@ -144,16 +144,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata class (`TemporalNormalizer.NORM_CACHE`) kept the memory-mapped buffers of recordings
   that `jfr_summary` or `jfr_exceptions` had read reachable, so a closed `.jfr` stayed mapped, and
   on Windows could not be deleted, moved or overwritten, until the MCP server exited; `jcmd GC.run`
-  did not help. #206 removed that cache. Two causes remained. Resolving a constant-pool value
-  after its chunk was closed (as `jfr_query` does for its result rows, or any caller that keeps
-  events past `run()`) cached a slice of the file in the resolving thread's `ThreadLocal`, which
-  kept the file mapped until that thread exited; `RecordingStream.close()` now empties those
-  per-thread caches and a closed stream no longer caches. And a closed file stayed mapped until
-  the next garbage collection, since the JDK unmaps a buffer only after one: `jfr_close` and
-  `hdump_close` now request a collection after closing a session (`System.gc()`, which does
-  nothing under `-XX:+DisableExplicitGC`). The buffer is not unmapped at close directly: event
-  values resolve constant-pool entries from it lazily, and a read after an explicit unmap could
-  crash the JVM
+  did not help. #131 removed that cache. Three causes remained:
+  - Resolving a constant-pool value after its chunk was closed (as `jfr_query` does for its result
+    rows, or any caller that keeps events past `run()`) cached a slice of the file in the resolving
+    thread's `ThreadLocal`, which kept the file mapped until that thread exited.
+    `RecordingStream.close()` now empties every thread's cache, and a closed stream no longer
+    caches.
+  - A heap dump read on one thread and closed on another stayed mapped the same way: `HeapDump`
+    kept each thread's view of the buffer in a `ThreadLocal` that `close()` cleared only for the
+    closing thread. The MCP server runs tool calls on a pool of long-lived threads, so this was
+    the usual case. `close()` now releases every thread's view.
+  - A closed file stayed mapped until the next garbage collection, since the JDK unmaps a buffer
+    only after one. `jfr_close`, `hdump_close` and the release of a disconnected `--attach`
+    client's sessions now request a collection (`System.gc()`: a full, stop-the-world collection
+    with the default collector, which does nothing under `-XX:+DisableExplicitGC`).
+
+  The buffer is not unmapped at close directly: event values resolve constant-pool entries from it
+  lazily, and a read after an explicit unmap could crash the JVM
 - **Numbers in tool payloads, reports and shell output followed the JVM default locale (#224).**
   On a ru-RU or de-DE host `jfr_summary` returned `"pct": "66,6%"` and `"topMethod": "... (34,9%)"`,
   `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON
