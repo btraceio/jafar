@@ -131,6 +131,7 @@ Performance benchmarks and optimization reports.
 |----------|-------------|
 | [PerformanceReport.md](performance/PerformanceReport.md) | Comprehensive performance analysis and comparisons |
 | [BuildTimeBenchmarks.md](performance/BuildTimeBenchmarks.md) | Build-time code generation benchmarks |
+| [MultiGbQueries.md](performance/MultiGbQueries.md) | JfrPath query times on 1-4 GB recordings, warm and cold |
 
 **Start here if you want to:**
 - Understand Jafar's performance characteristics

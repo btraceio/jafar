@@ -140,6 +140,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **Filtered JfrPath queries threw an exception per event** - a filter resolves its field path
+  for every event it tests, and the path parser told a field name from an index by catching
+  `NumberFormatException` from `Integer.parseInt`. `events/bench.Common[bucket=7] | count()` on a
+  1 GB recording: 27.1-29.4 s -> 8.0-8.3 s. Same results. See
+  [doc/performance/MultiGbQueries.md](doc/performance/MultiGbQueries.md)
+- **`jfr-shell compare` kept hidden-class addresses in some frame names** - a hidden class
+  without a `$` in its name, such as Jafar's generated `UntypedDeserializer_<type>_<n>`, kept its
+  per-JVM `/0x...` suffix, so the same frame read as removed on one side and new on the other.
+  This also affected perf-ab attribution
 - **`jfr_compare` and `jfr-shell compare` treated a JVM-generated frame as a different frame in
   each recording.** Hidden classes carry a per-run address (`LambdaForm$MH/0x00007f2e141a1000`) and
   lambda classes a per-run number (`Foo$$Lambda$14`), so every such frame read as gone from one
