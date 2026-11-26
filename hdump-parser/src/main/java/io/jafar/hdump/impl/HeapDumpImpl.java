@@ -2444,6 +2444,10 @@ public final class HeapDumpImpl implements HeapDump {
         progressCallback != null ? progressCallback::onProgress : null;
     ensureAllObjectsLoaded(adaptedCallback);
 
+    // IN_MEMORY: build the cached reference graph once; the approximate sizes and the path
+    // expansion below both use it (no-op in INDEXED mode)
+    pathGraph();
+
     // Phase 1: Ensure approximate retained sizes computed for all objects
     if (!dominatorsComputed) {
       LOG.info("Computing approximate retained sizes for all {} objects...", objectCount);

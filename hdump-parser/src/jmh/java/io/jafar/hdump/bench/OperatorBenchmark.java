@@ -106,6 +106,17 @@ public class OperatorBenchmark {
     return dump.hasFullDominatorTree() ? 1 : 0;
   }
 
+  /**
+   * Hybrid mode as the shell would run it: approximate sizes for all objects, then exact dominators
+   * for the subgraph of the top 100 retainers and their paths to the roots.
+   */
+  @Benchmark
+  public long hybridDominators() {
+    ((io.jafar.hdump.impl.HeapDumpImpl) dump).computeHybridDominators(100, null, null);
+    lastOp = "hybrid";
+    return dump.hasDominators() ? 1 : 0;
+  }
+
   @Benchmark
   public long approximateRetainedSizes() {
     dump.computeDominators();

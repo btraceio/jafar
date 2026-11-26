@@ -217,6 +217,70 @@ class DominatorOracleTest {
     verifyAll(w, dir, 1 << 24);
   }
 
+  /**
+   * {@code HeapDumpImpl.computeExactForClasses}: the matching objects are expanded backwards to the
+   * GC roots (a root is included but not expanded further) and exact dominators are computed on
+   * that subgraph. Checks the subgraph itself (via {@code hasExactRetainedSize}) and its
+   * dominators.
+   */
+  @ParameterizedTest(name = "exact dominators for a class pattern seed={0}")
+  @ValueSource(longs = {1, 2, 3, 4})
+  void exactForClassesExpandsToRootPaths(long seed, @TempDir Path dir) throws IOException {
+    Random rnd = new Random(6000 + seed);
+    int n = 300 + rnd.nextInt(500);
+    GraphHeapDumpWriter w = randomGraph(rnd, n, 0.4, false, 4);
+    Path file = dir.resolve("graph.hprof");
+    w.write(file, 1 << 24);
+    int[][] adj = w.strongAdjacency();
+    List<List<Integer>> preds = new ArrayList<>();
+    for (int v = 0; v < n; v++) preds.add(new ArrayList<>());
+    for (int u = 0; u < n; u++) for (int t : adj[u]) preds.get(t).add(u);
+    boolean[] root = new boolean[n];
+    for (int r : w.rootNodes()) root[r] = true;
+
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
+      // expected subgraph: backward closure from every weak reference, not expanding roots
+      boolean[] in = new boolean[n];
+      java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
+      int seeds = 0;
+      for (int v = 0; v < n; v++) {
+        if (obj(dump, v).getHeapClass().getName().equals("java/lang/ref/WeakReference")) {
+          in[v] = true;
+          queue.add(v);
+          seeds++;
+        }
+      }
+      assertTrue(seeds > 0, "fixture has no weak references");
+      while (!queue.isEmpty()) {
+        int v = queue.poll();
+        if (root[v]) continue;
+        for (int p : preds.get(v)) {
+          if (!in[p]) {
+            in[p] = true;
+            queue.add(p);
+          }
+        }
+      }
+      ((HeapDumpImpl) dump).computeExactForClasses(Set.of("*WeakReference"), null);
+
+      int[][] sub = new int[n][];
+      for (int v = 0; v < n; v++) {
+        sub[v] = in[v] ? java.util.Arrays.stream(adj[v]).filter(t -> in[t]).toArray() : new int[0];
+      }
+      long[] shallow = shallowSizes(dump, w);
+      DominatorOracle o = new DominatorOracle(sub, w.rootNodes(), shallow);
+      Mismatches mm = new Mismatches("exact for classes");
+      for (int v = 0; v < n; v++) {
+        HeapObjectImpl obj = obj(dump, v);
+        mm.check(v, "inSubgraph", in[v], obj.hasExactRetainedSize());
+        if (!in[v]) continue;
+        mm.check(v, "idom", o.idom[v], nodeOf(obj.getDominator()));
+        if (o.reachable[v]) mm.check(v, "retainedSize", o.retained[v], obj.getRetainedSize());
+      }
+      mm.assertNone();
+    }
+  }
+
   /** The same object listed by several GC root records (as HotSpot does for thread locals). */
   @Test
   void duplicateRootRecords(@TempDir Path dir) throws IOException {
