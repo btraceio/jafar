@@ -6,9 +6,9 @@ import io.jafar.hdump.internal.BasicType;
 import io.jafar.hdump.internal.HeapTag;
 import io.jafar.hdump.internal.HprofReader;
 import io.jafar.hdump.internal.HprofTag;
-import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -65,8 +65,10 @@ public final class InboundIndexBuilder {
     int objectCount = addressToId32.size();
 
     // Build inbound counts by scanning heap dump
-    Int2IntOpenHashMap inboundCounts = new Int2IntOpenHashMap(objectCount);
-    inboundCounts.defaultReturnValue(0);
+    // One counter per id32 (4 bytes each; the id32 values are dense 0..objectCount-1)
+    int[] inboundCounts = new int[objectCount];
+    // Byte offsets of the object fields of each class's instance layout, by class address
+    Long2ObjectOpenHashMap<int[]> refOffsets = new Long2ObjectOpenHashMap<>();
 
     try (HprofReader reader = new HprofReader(heapDumpPath)) {
       reader.reset();
@@ -80,7 +82,8 @@ public final class InboundIndexBuilder {
         if (header == null) break;
 
         if (header.tag() == HprofTag.HEAP_DUMP || header.tag() == HprofTag.HEAP_DUMP_SEGMENT) {
-          scanReferencesFromHeapDump(reader, header, addressToId32, classesById, inboundCounts);
+          scanReferencesFromHeapDump(
+              reader, header, addressToId32, classesById, inboundCounts, refOffsets);
         } else {
           reader.skipRecordBody(header);
         }
@@ -105,12 +108,36 @@ public final class InboundIndexBuilder {
     writeInboundIndex(indexDir, objectCount, inboundCounts);
   }
 
+  private static final int[] NO_OFFSETS = new int[0];
+
+  /**
+   * Byte offsets, within an instance's data, of every object field of {@code cls}'s layout
+   * (subclass fields first, as HPROF writes them; all object fields, {@code referent} included).
+   */
+  private static int[] objectFieldOffsets(HeapClass cls, int idSize) {
+    if (cls == null) {
+      return NO_OFFSETS;
+    }
+    List<? extends HeapField> fields = cls.getAllInstanceFields();
+    int[] tmp = new int[fields.size()];
+    int count = 0;
+    int offset = 0;
+    for (HeapField field : fields) {
+      if (field.getType() == BasicType.OBJECT) {
+        tmp[count++] = offset;
+      }
+      offset += BasicType.sizeOf(field.getType(), idSize);
+    }
+    return java.util.Arrays.copyOf(tmp, count);
+  }
+
   private static void scanReferencesFromHeapDump(
       HprofReader reader,
       HprofReader.RecordHeader header,
       Long2IntOpenHashMap addressToId32,
       Long2ObjectMap<? extends HeapClass> classesById,
-      Int2IntOpenHashMap inboundCounts)
+      int[] inboundCounts,
+      Long2ObjectOpenHashMap<int[]> refOffsets)
       throws IOException {
 
     long endPos = header.bodyPosition() + header.length();
@@ -126,26 +153,19 @@ public final class InboundIndexBuilder {
           int dataSize = reader.readI4();
           long dataStart = reader.position();
 
-          // Extract outbound references from instance data
-          HeapClass heapClass = classesById.get(classAddress);
-          if (heapClass != null) {
-            // Get all instance fields including inherited
-            List<? extends HeapField> fields = heapClass.getAllInstanceFields();
-
-            // Read each field value and extract references
-            for (HeapField field : fields) {
-              if (field.getType() == BasicType.OBJECT) {
-                // This is an object reference field
-                long refAddress = reader.readId();
-                if (refAddress != 0) {
-                  int refId32 = addressToId32.get(refAddress);
-                  if (refId32 != -1) {
-                    inboundCounts.addTo(refId32, 1);
-                  }
-                }
-              } else {
-                // Skip primitive field value
-                reader.readValue(field.getType());
+          // Every object field of the class's layout (inherited included), read at its offset;
+          // as before, a class that is not known contributes nothing
+          int[] offsets = refOffsets.get(classAddress);
+          if (offsets == null) {
+            offsets = objectFieldOffsets(classesById.get(classAddress), reader.getIdSize());
+            refOffsets.put(classAddress, offsets);
+          }
+          for (int off : offsets) {
+            long refAddress = reader.readIdAt(dataStart + off);
+            if (refAddress != 0) {
+              int refId32 = addressToId32.get(refAddress);
+              if (refId32 != -1) {
+                inboundCounts[refId32]++;
               }
             }
           }
@@ -165,7 +185,7 @@ public final class InboundIndexBuilder {
             if (refAddress != 0) {
               int refId32 = addressToId32.get(refAddress);
               if (refId32 != -1) {
-                inboundCounts.addTo(refId32, 1);
+                inboundCounts[refId32]++;
               }
             }
           }
@@ -266,8 +286,8 @@ public final class InboundIndexBuilder {
     }
   }
 
-  private static void writeInboundIndex(
-      Path indexDir, int objectCount, Int2IntOpenHashMap inboundCounts) throws IOException {
+  private static void writeInboundIndex(Path indexDir, int objectCount, int[] inboundCounts)
+      throws IOException {
 
     Path indexFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME);
     Path tempFile = indexDir.resolve(IndexFormat.INBOUND_INDEX_NAME + ".tmp");
@@ -286,7 +306,7 @@ public final class InboundIndexBuilder {
       // Write entries (sequential by objectId32)
       for (int id32 = 0; id32 < objectCount; id32++) {
         out.writeInt(id32); // objectId32
-        out.writeInt(inboundCounts.get(id32)); // inboundCount (0 if not present)
+        out.writeInt(inboundCounts[id32]); // inboundCount
       }
     }
 

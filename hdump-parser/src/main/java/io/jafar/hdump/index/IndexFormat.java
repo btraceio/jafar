@@ -233,6 +233,25 @@ public final class IndexFormat {
   /** Object address mapping index filename. */
   public static final String OBJECTMAP_INDEX_NAME = "objectmap.idx";
 
+  /**
+   * Strong outbound references of every object as 32-bit ids, in compressed-sparse-row form: {@code
+   * strongrefs.idx} holds the header and then the ids (4 bytes each), {@code
+   * strongrefs-offsets.idx} the header and then {@code entryCount + 1} longs; the references of
+   * object {@code i} are ids {@code [offset[i], offset[i + 1])}. Same content as
+   * HeapObjectImpl.getStrongOutboundReferenceIds() mapped to id32 (references that name no object
+   * dropped). Built on first use, reused afterwards.
+   */
+  public static final String STRONGREFS_INDEX_NAME = "strongrefs.idx";
+
+  /** Offsets file of {@link #STRONGREFS_INDEX_NAME}. */
+  public static final String STRONGREFS_OFFSETS_INDEX_NAME = "strongrefs-offsets.idx";
+
+  /** Magic number for strongrefs.idx (ASCII: "JSRF"). */
+  public static final int STRONGREFS_INDEX_MAGIC = 0x4A535246;
+
+  /** Magic number for strongrefs-offsets.idx (ASCII: "JSRO"). */
+  public static final int STRONGREFS_OFFSETS_INDEX_MAGIC = 0x4A53524F;
+
   /** Class instances offset index filename. */
   public static final String CLASSINSTANCES_OFFSET_INDEX_NAME = "classinstances-offset.idx";
 

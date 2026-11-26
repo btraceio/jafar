@@ -125,9 +125,18 @@ final class DominatorOracle {
    * expanded -- this includes {@code t} itself.
    */
   static long[] approximateRetained(int[][] adj, long[] shallow) {
+    return approximateRetained(adj, adj, shallow);
+  }
+
+  /**
+   * As {@link #approximateRetained(int[][], long[])}, with inbound counts taken over {@code
+   * countAdj} (INDEXED mode's inbound.idx counts every object field, referent included) and
+   * expansion over {@code adj}.
+   */
+  static long[] approximateRetained(int[][] adj, int[][] countAdj, long[] shallow) {
     int n = adj.length;
     int[] inbound = new int[n];
-    for (int[] out : adj) for (int w : out) inbound[w]++;
+    for (int[] out : countAdj) for (int w : out) inbound[w]++;
     long[] result = new long[n];
     int[] stamp = new int[n];
     Arrays.fill(stamp, -1);

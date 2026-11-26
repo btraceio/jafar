@@ -85,7 +85,27 @@ public final class ObjectIndexReader implements AutoCloseable {
    * @param indexDir directory containing index files
    * @throws IOException if file cannot be opened or is corrupted
    */
+  private final boolean view; // shares another reader's mapping; close() leaves it alone
+
+  private ObjectIndexReader(CustomByteBuffer buffer, int entryCount, int formatVersion) {
+    this.buffer = buffer;
+    this.entryCount = entryCount;
+    this.formatVersion = formatVersion;
+    this.view = true;
+  }
+
+  /**
+   * A reader over the same mapping with its own buffer state (position and the scratch array a
+   * spliced buffer uses for values that straddle a splice), for use by one other thread.
+   */
+  public ObjectIndexReader view() {
+    CustomByteBuffer slice = buffer.slice(0, buffer.limit());
+    slice.order(ByteOrder.BIG_ENDIAN);
+    return new ObjectIndexReader(slice, entryCount, formatVersion);
+  }
+
   public ObjectIndexReader(Path indexDir) throws IOException {
+    this.view = false;
     Path indexFile = indexDir.resolve(IndexFormat.OBJECTS_INDEX_NAME);
 
     // Create spliced memory-mapped buffer (handles files > 2GB automatically)
@@ -156,6 +176,40 @@ public final class ObjectIndexReader implements AutoCloseable {
     return new ObjectMetadata(id32, fileOffset, dataSize, classId, arrayLength, flags, elementType);
   }
 
+  // ---- allocation-free field accessors (absolute reads; no range or id check) ----
+  // For hot loops that visit many entries; readObject() stays the checked, allocating form.
+  // Thread-safety is the buffer's: a SplicedMappedByteBuffer assembles values that straddle a
+  // splice in a shared scratch array, so use one reader per thread.
+
+  private static long entry(int objectId32) {
+    return IndexFormat.HEADER_SIZE + ((long) objectId32 * IndexFormat.OBJECT_ENTRY_SIZE);
+  }
+
+  /** File offset of the entry's instance or array data (0 for class entries). */
+  public long fileOffsetOf(int objectId32) {
+    return buffer.getLong(entry(objectId32) + 4);
+  }
+
+  /** Data size in bytes. */
+  public int dataSizeOf(int objectId32) {
+    return buffer.getInt(entry(objectId32) + 12);
+  }
+
+  /** 32-bit class id (-1 for primitive arrays). */
+  public int classIdOf(int objectId32) {
+    return buffer.getInt(entry(objectId32) + 16);
+  }
+
+  /** Array length, or -1 if not an array. */
+  public int arrayLengthOf(int objectId32) {
+    return buffer.getInt(entry(objectId32) + 20);
+  }
+
+  /** {@link IndexFormat#FLAG_IS_OBJECT_ARRAY} / {@link IndexFormat#FLAG_IS_PRIMITIVE_ARRAY}. */
+  public byte flagsOf(int objectId32) {
+    return buffer.get(entry(objectId32) + 24);
+  }
+
   /**
    * Returns the total number of objects in the index.
    *
@@ -177,6 +231,8 @@ public final class ObjectIndexReader implements AutoCloseable {
   @Override
   public void close() throws IOException {
     // CustomByteBuffer provides close() for resource cleanup
-    buffer.close();
+    if (!view) {
+      buffer.close();
+    }
   }
 }

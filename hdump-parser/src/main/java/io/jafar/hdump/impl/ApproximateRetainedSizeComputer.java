@@ -38,94 +38,91 @@ public final class ApproximateRetainedSizeComputer {
   private ApproximateRetainedSizeComputer() {}
 
   /**
-   * Computes approximate retained sizes for all objects using streaming iteration with persistent
-   * storage.
+   * INDEXED mode: {@link #computeMinRetainedSize} for every id32 in order, written to {@code
+   * writer}, without materialising objects.
    *
-   * <p><strong>Streaming Mode:</strong> Designed for large heap dumps (100M+ objects) that cannot
-   * fit in memory. Objects are processed one-at-a-time from an iterator without caching in
-   * objectsById.
+   * <p>Each BFS walks the on-disk strong-reference graph ({@link StrongRefsIndex}, through {@link
+   * IndexedRefs}), reads inbound counts from {@code inbound.idx} and shallow sizes from {@code
+   * objects.idx}, with one reusable visited-stamp array (4 bytes per id32) — no {@link
+   * HeapObjectImpl}, no LRU cache, no per-object sets. Values are those of the per-object BFS over
+   * loaded objects: same graph (references that name an object), same inbound counts, same shallow
+   * size formula. Class entries get 0, as before (a loaded class entry has shallow size 0 and no
+   * readable references).
    *
-   * <p><strong>Persistent Storage:</strong> Computed retained sizes are written to a
-   * RetainedSizeWriter which persists them to retained.idx for instant reuse on subsequent queries.
-   *
-   * <p><strong>Memory Characteristics:</strong>
-   *
-   * <ul>
-   *   <li>Heap usage: O(1) - only one object in memory during iteration
-   *   <li>Requires persistent inbound index (ensureInboundIndexBuilt must be called first)
-   *   <li>Writes sequential entries to retained.idx (objectId32:4 + retainedSize:8)
-   * </ul>
-   *
-   * @param dump the heap dump (provides access to inbound count reader)
-   * @param objectIterator streaming iterator over objects (NOT cached)
-   * @param totalObjects total object count for progress reporting
-   * @param gcRoots list of GC roots
-   * @param writer persistent storage for computed retained sizes
-   * @param progressCallback optional callback for progress updates (0.0 to 1.0)
+   * <p>Still one BFS per object, so a long singly linked chain costs quadratic time here; the
+   * all-at-once computation used in IN_MEMORY mode needs about 60 bytes per object of working
+   * arrays, which this mode does not assume it has.
    */
-  public static void computeAll(
+  static void computeAllIndexed(
       HeapDumpImpl dump,
-      Iterable<HeapObjectImpl> objectIterator,
-      int totalObjects,
-      List<GcRootImpl> gcRoots,
       io.jafar.hdump.index.RetainedSizeWriter writer,
       ProgressCallback progressCallback) {
-
-    // Indexed mode with streaming - must have inbound index
-    InboundCountReader inboundCountReader = dump.getInboundCountReader();
-    if (inboundCountReader == null) {
+    InboundCountReader inbound = dump.getInboundCountReader();
+    if (inbound == null) {
       throw new IllegalStateException(
           "Streaming mode requires persistent inbound index. Call ensureInboundIndexBuilt() first.");
     }
-
-    LOG.debug(
-        "Computing approximate retained sizes in streaming mode for {} objects", totalObjects);
-    InboundCountAccessor inboundCounts =
-        new IndexedInboundCountAccessor(inboundCountReader, dump.getAddressToId32());
-
     if (progressCallback != null) {
-      progressCallback.onProgress(0.3, "Computing approximate retained sizes (streaming)...");
+      progressCallback.onProgress(0.3, "Building reference graph index...");
     }
-
-    int computed = 0;
+    IndexedRefs refs = new IndexedRefs(dump, dump.strongRefsIndex());
+    final int n = refs.size();
+    int[] mark = new int[n];
+    int[] queue = new int[16];
+    int stamp = 0;
     int lastReportedPercent = 0;
-
-    for (HeapObjectImpl obj : objectIterator) {
-      long approxRetained = computeMinRetainedSize(obj, inboundCounts);
-
-      // Write to persistent index instead of setting on object
-      // Uses original id32 from addressToId32 (includes classes with retained size = 0)
-      try {
-        int objectId32 = dump.getAddressToId32().get(obj.getId());
-        writer.writeEntry(objectId32, approxRetained);
-      } catch (java.io.IOException e) {
-        throw new RuntimeException("Failed to write retained size to index", e);
-      }
-
-      computed++;
-
-      // Report progress every 1% or every 50K objects (whichever is less frequent)
-      if (progressCallback != null && computed % Math.max(totalObjects / 100, 50000) == 0) {
-        double progress = 0.3 + (0.7 * (computed / (double) totalObjects));
-        int percentComplete = (int) (progress * 100);
-        if (percentComplete > lastReportedPercent) {
-          progressCallback.onProgress(
-              progress,
-              String.format("Computing approximate retained sizes (%d%%)...", percentComplete));
-          lastReportedPercent = percentComplete;
+    int reportEvery = Math.max(n / 100, 50_000);
+    try {
+      for (int t = 0; t < n; t++) {
+        long size = 0;
+        if (!refs.isClassEntry(t)) {
+          if (++stamp == 0) { // wrapped: reset the stamps
+            java.util.Arrays.fill(mark, 0);
+            stamp = 1;
+          }
+          int head = 0;
+          int tail = 0;
+          queue[tail++] = t;
+          mark[t] = stamp;
+          while (head < tail) {
+            int u = queue[head++];
+            size += refs.shallowSize(u);
+            if (inbound.getInboundCount(u) > 1) {
+              continue; // shared: not expanded
+            }
+            int k = refs.strongRefs(u);
+            int[] r = refs.refs();
+            for (int i = 0; i < k; i++) {
+              int c = r[i];
+              if (mark[c] != stamp) {
+                mark[c] = stamp;
+                if (tail == queue.length) queue = java.util.Arrays.copyOf(queue, tail * 2);
+                queue[tail++] = c;
+              }
+            }
+          }
+          if (queue.length > 1 << 16 && tail < 1 << 12) {
+            queue = new int[16]; // do not keep one huge BFS's queue
+          }
+        }
+        writer.writeEntry(t, size);
+        if (progressCallback != null && (t + 1) % reportEvery == 0) {
+          double progress = 0.3 + 0.7 * ((t + 1) / (double) n);
+          int percent = (int) (progress * 100);
+          if (percent > lastReportedPercent) {
+            progressCallback.onProgress(
+                progress, String.format("Computing approximate retained sizes (%d%%)...", percent));
+            lastReportedPercent = percent;
+          }
         }
       }
-
-      if (computed % 1000000 == 0) {
-        LOG.debug("Computed {} / {} retained sizes (streaming)", computed, totalObjects);
-      }
+    } catch (java.io.IOException e) {
+      throw new RuntimeException("Failed to write retained size to index", e);
     }
-
     if (progressCallback != null) {
-      progressCallback.onProgress(
-          1.0, "Approximate retained size computation complete (streaming)");
+      progressCallback.onProgress(1.0, "Approximate retained size computation complete");
     }
-    LOG.info("Completed streaming retained size computation for {} objects", computed);
+    LOG.info("Completed indexed retained size computation for {} entries", n);
   }
 
   /**

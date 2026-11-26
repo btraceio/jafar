@@ -206,6 +206,13 @@ public interface HeapDump extends Closeable {
    * names along the path only. Instances of classes that shadow a field name keep their decoded
    * field values cached, as {@link HeapObject#getFieldValues()} does.
    *
+   * <p>In INDEXED mode the first call (or the first retained-size computation) writes the strong
+   * references of all objects to the index directory (about 8 bytes per object plus 4 per reference
+   * on disk, one pass over all objects) and reuses them afterwards; each call then runs one
+   * breadth-first search with two {@code int} arrays of one entry per object (8 bytes per object,
+   * released when it returns). Without a writable index directory the references are read from the
+   * dump instead.
+   *
    * @param obj the target object
    * @return list of path steps from GC root to target, or empty list if no path found
    */

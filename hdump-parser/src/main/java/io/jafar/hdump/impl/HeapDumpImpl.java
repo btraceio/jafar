@@ -1911,6 +1911,58 @@ public final class HeapDumpImpl implements HeapDump {
     return objectCount;
   }
 
+  // INDEXED mode: strong references by id32 on disk (built on first use, reused afterwards).
+  // Own lock: the dump's monitor is held for whole retained-size computations.
+  private volatile StrongRefsIndex strongRefsIndex;
+
+  private final Object strongRefsLock = new Object();
+  private boolean strongRefsUnavailable; // guarded by strongRefsLock
+  private volatile boolean closed;
+
+  /**
+   * INDEXED mode: the on-disk strong-reference graph, opened (or built, once per index directory:
+   * about 8 bytes per object plus 4 per reference on disk, one pass over all objects) on first use;
+   * null in IN_MEMORY mode, after close(), or when it cannot be written (read-only index directory,
+   * disk full) — callers then decode references from the dump.
+   */
+  StrongRefsIndex strongRefsIndex() {
+    StrongRefsIndex idx = strongRefsIndex;
+    if (idx != null || objectIndexReader == null || closed) {
+      return idx;
+    }
+    synchronized (strongRefsLock) {
+      if (strongRefsIndex == null && !strongRefsUnavailable && !closed) {
+        try {
+          long t = System.currentTimeMillis();
+          strongRefsIndex = StrongRefsIndex.openOrBuild(this, indexDir);
+          LOG.debug("Strong-reference index ready in {} ms", System.currentTimeMillis() - t);
+        } catch (IOException | RuntimeException e) {
+          strongRefsUnavailable = true;
+          LOG.warn(
+              "Strong-reference index unavailable in {} ({}); reading references from the dump",
+              indexDir,
+              e.toString());
+        }
+      }
+      return strongRefsIndex;
+    }
+  }
+
+  /** INDEXED mode: objects.idx reader; null in IN_MEMORY mode. */
+  ObjectIndexReader getObjectIndexReader() {
+    return objectIndexReader;
+  }
+
+  /** INDEXED mode: 32-bit class id to class address; null in IN_MEMORY mode. */
+  it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap getClassId32ToAddress() {
+    return classId32ToAddress;
+  }
+
+  /** INDEXED mode: 32-bit object id to address; null in IN_MEMORY mode. */
+  it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap getId32ToAddress() {
+    return id32ToAddress;
+  }
+
   /**
    * Returns the inbound count reader for indexed parsing mode. Package-private for use by
    * ApproximateRetainedSizeComputer.
@@ -2047,10 +2099,8 @@ public final class HeapDumpImpl implements HeapDump {
               new io.jafar.hdump.index.RetainedSizeWriter(indexDir, totalEntries);
 
           try {
-            // Stream through ALL id32 values (objects + classes) without caching
-            Iterable<HeapObjectImpl> streamingIterator = createStreamingObjectIterator();
-            ApproximateRetainedSizeComputer.computeAll(
-                this, streamingIterator, totalEntries, gcRoots, writer, progressCallback);
+            // All id32 values (objects + classes) in order, on the on-disk reference graph
+            ApproximateRetainedSizeComputer.computeAllIndexed(this, writer, progressCallback);
           } finally {
             writer.close(); // Atomic commit to retained.idx
           }
@@ -2127,171 +2177,6 @@ public final class HeapDumpImpl implements HeapDump {
 
     long elapsedMs = System.currentTimeMillis() - startTime;
     LOG.info("Loaded all {} objects in {} seconds", objectCount, elapsedMs / 1000.0);
-  }
-
-  /**
-   * Creates an iterable that streams through all objects WITHOUT caching them in objectsById.
-   *
-   * <p>Used for memory-efficient algorithms that need to process all objects once without keeping
-   * them in memory. This enables approximate retained size computation for heap dumps with 100M+
-   * objects that would cause OOM if fully cached.
-   *
-   * <p><strong>Memory Characteristics:</strong>
-   *
-   * <ul>
-   *   <li>Heap usage: O(1) - only one object in memory at a time
-   *   <li>Each object is reconstructed from index on-demand
-   *   <li>No caching in objectsById map
-   *   <li>Objects are GC-eligible immediately after iterator advances
-   * </ul>
-   *
-   * <p><strong>Performance Trade-offs:</strong>
-   *
-   * <ul>
-   *   <li>Slower than cached access (reconstructs each object)
-   *   <li>But enables unbounded heap size support
-   *   <li>Disk I/O is sequential through index, SSD-friendly
-   * </ul>
-   *
-   * @return iterable that lazy-loads each object exactly once
-   */
-  private Iterable<HeapObjectImpl> createStreamingObjectIterator() {
-    return () ->
-        new java.util.Iterator<HeapObjectImpl>() {
-          // CRITICAL: Iterate id32 in sequential order (0, 1, 2, ...) for RetainedSizeWriter
-          // Includes ALL id32 values even classes - classes will get retained size = 0
-          private int currentId32 = 0;
-          private final int maxId32 = id32ToAddress.size();
-
-          @Override
-          public boolean hasNext() {
-            return currentId32 < maxId32;
-          }
-
-          @Override
-          public HeapObjectImpl next() {
-            if (!hasNext()) {
-              throw new java.util.NoSuchElementException();
-            }
-            long address = id32ToAddress.get(currentId32);
-            currentId32++;
-
-            // For class addresses, return a minimal object (will get retained size = 0)
-            if (classAddresses.contains(address)) {
-              // Return minimal HeapObjectImpl for classes - retained size will be 0
-              HeapClassImpl cls = classesById.get(address);
-              HeapObjectImpl classObj = new HeapObjectImpl(address, cls, 0, 0, HeapDumpImpl.this);
-              classObj.setRetainedSize(0); // Classes have no retained size
-              return classObj;
-            }
-
-            // Load regular object WITHOUT adding to objectsById cache
-            return loadObjectWithoutCaching(address);
-          }
-        };
-  }
-
-  /**
-   * Loads an object from index WITHOUT caching in objectsById.
-   *
-   * <p>This method reconstructs a HeapObjectImpl from the index without adding it to the
-   * objectsById cache. Used by streaming algorithms to avoid OOM.
-   *
-   * <p><strong>Critical for Memory Efficiency:</strong> This is identical to
-   * getObjectByIdInternal() except it does NOT call objectsById.put(). For 114M objects, this
-   * difference prevents ~3.6GB HashMap overhead.
-   *
-   * @param objectId 64-bit object address
-   * @return heap object (not cached)
-   */
-  private HeapObjectImpl loadObjectWithoutCaching(long objectId) {
-    int id32 = addressToId32.get(objectId);
-    if (id32 == -1) {
-      throw new IllegalStateException("Object not found in addressToId32: " + objectId);
-    }
-
-    try {
-      ObjectIndexReader.ObjectMetadata meta = objectIndexReader.readObject(id32);
-
-      HeapClassImpl cls;
-
-      // Special handling for primitive arrays (classId == -1)
-      if (meta.classId == -1 && meta.isPrimitiveArray()) {
-        // Create synthetic class name for primitive array
-        String arrayClassName =
-            switch (meta.elementType) {
-              case BasicType.BOOLEAN -> "[Z";
-              case BasicType.CHAR -> "[C";
-              case BasicType.FLOAT -> "[F";
-              case BasicType.DOUBLE -> "[D";
-              case BasicType.BYTE -> "[B";
-              case BasicType.SHORT -> "[S";
-              case BasicType.INT -> "[I";
-              case BasicType.LONG -> "[J";
-              default -> "[?";
-            };
-
-        cls = classesByName.get(arrayClassName);
-        if (cls == null) {
-          // Create synthetic class for primitive array (these are cached since they're few)
-          cls = new HeapClassImpl(0, arrayClassName, this);
-          cls.setPrimitiveArrayType(meta.elementType);
-          classesByName.put(arrayClassName, cls);
-        }
-      } else {
-        // Regular object or object array - lookup class by address
-        long classAddress64 = classId32ToAddress.get(meta.classId);
-        if (classAddress64 == -1) {
-          throw new IOException("Unknown class ID: " + meta.classId);
-        }
-        cls = getClassByIdInternal(classAddress64);
-      }
-
-      // Create object with lazy loading support
-      HeapObjectImpl obj = new HeapObjectImpl(objectId, cls, meta.fileOffset, meta.dataSize, this);
-
-      // Compute shallowSize including object header overhead, matching in-memory mode formulas
-      int idSz = reader.getIdSize();
-      int shallowSz;
-      if (meta.isObjectArray()) {
-        shallowSz = idSz * 2 + 12 + meta.dataSize;
-      } else if (meta.isPrimitiveArray()) {
-        shallowSz = idSz + 12 + meta.dataSize;
-      } else {
-        shallowSz = idSz * 2 + 8 + meta.dataSize;
-      }
-      obj.setShallowSize(shallowSz);
-
-      if (meta.isArray()) {
-        obj.setArrayLength(meta.arrayLength);
-        if (meta.isObjectArray()) {
-          obj.setObjectArray(true);
-        } else if (meta.isPrimitiveArray()) {
-          // Apply primitive type from index
-          obj.setPrimitiveArrayType(meta.elementType);
-        }
-      }
-
-      // Load retained size from persistent index if available
-      if (retainedSizeReader != null) {
-        try {
-          long retainedSize = retainedSizeReader.getRetainedSize(id32);
-          obj.setRetainedSize(retainedSize);
-        } catch (IllegalArgumentException e) {
-          // Object ID out of range in retained index - this can happen if index is stale
-          LOG.warn("Retained size not found for object id32={}", id32);
-        }
-      }
-
-      // CRITICAL DIFFERENCE: No objectsById.put() here!
-      // This object will be GC-eligible as soon as caller releases reference
-
-      return obj;
-    } catch (Exception e) {
-      LOG.error(
-          "Failed to load object from index without caching: id={}, id32={}", objectId, id32, e);
-      throw new RuntimeException("Failed to load object", e);
-    }
   }
 
   /**
@@ -2713,6 +2598,13 @@ public final class HeapDumpImpl implements HeapDump {
     }
     if (retainedSizeReader != null) {
       retainedSizeReader.close();
+    }
+    synchronized (strongRefsLock) {
+      closed = true;
+      if (strongRefsIndex != null) {
+        strongRefsIndex.close();
+        strongRefsIndex = null;
+      }
     }
     if (classInstancesOffsetReader != null) {
       classInstancesOffsetReader.close();

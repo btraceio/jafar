@@ -267,6 +267,25 @@ public final class GraphHeapDumpWriter {
   }
 
   /**
+   * Every object reference of every node, {@code referent}/{@code discovered} included (what an
+   * HPROF reader that ignores reference semantics sees), in slot order.
+   */
+  public int[][] allAdjacency() {
+    int[][] adj = new int[nodeCount][];
+    for (int v = 0; v < nodeCount; v++) {
+      int cnt = slotCountOf(v);
+      int[] tmp = new int[cnt];
+      int k = 0;
+      for (int s = 0; s < cnt; s++) {
+        int t = slot(v, s);
+        if (t >= 0) tmp[k++] = t;
+      }
+      adj[v] = Arrays.copyOf(tmp, k);
+    }
+    return adj;
+  }
+
+  /**
    * Strong adjacency as the parser is expected to see it: slot targets that are real nodes (null
    * and dangling dropped), minus {@code referent}/{@code discovered} of weak references. Duplicates
    * and self-loops are kept; order is slot order.

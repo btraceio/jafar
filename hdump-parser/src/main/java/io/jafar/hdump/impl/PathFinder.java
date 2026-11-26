@@ -8,9 +8,8 @@ import io.jafar.hdump.api.HeapObject;
 import io.jafar.hdump.api.PathStep;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -160,9 +159,6 @@ public final class PathFinder {
     return path;
   }
 
-  /** Parent value of a BFS start object (GC root or static-field target). Ids are never 0. */
-  private static final long START = 0L;
-
   /** Queries answered by a fast path (graph or id BFS); lets tests prove the dispatch. */
   static final java.util.concurrent.atomic.AtomicLong FAST_PATH_QUERIES =
       new java.util.concurrent.atomic.AtomicLong();
@@ -183,60 +179,77 @@ public final class PathFinder {
    */
   private static List<PathStep> findShortestPathById(
       HeapDumpImpl dump, HeapObject target, List<GcRootImpl> gcRoots) {
-    long targetId = target.getId();
     FAST_PATH_QUERIES.incrementAndGet();
-    Long2LongOpenHashMap parent = new Long2LongOpenHashMap();
-    Long2ObjectOpenHashMap<String> startNames = new Long2ObjectOpenHashMap<>();
-    LongArrayList queue = new LongArrayList();
+    Long2IntOpenHashMap id32 = dump.getAddressToId32();
+    int targetNode = id32.get(target.getId());
+    if (targetNode < 0) {
+      return List.of();
+    }
+    IndexedRefs refs = new IndexedRefs(dump, dump.strongRefsIndex());
+    final int n = refs.size();
+    final int unvisited = -2;
+    final int start = -1;
+    int[] parent = new int[n];
+    Arrays.fill(parent, unvisited);
+    int[] queue = new int[n];
+    int tail = 0;
+    Int2ObjectOpenHashMap<String> startNames = new Int2ObjectOpenHashMap<>();
 
     for (GcRoot root : gcRoots) {
-      long id = root.getObjectId();
-      if (dump.getObjectByIdInternal(id) != null && !parent.containsKey(id)) {
-        parent.put(id, START);
-        queue.add(id);
+      int v = id32.get(root.getObjectId());
+      if (v >= 0 && parent[v] == unvisited) {
+        parent[v] = start;
+        queue[tail++] = v;
       }
     }
     for (HeapClass cls : dump.getClasses()) {
       for (HeapField field : cls.getStaticFields()) {
         if (!field.isObjectRef() || !(field.getStaticValue() instanceof Long refId)) continue;
-        long id = refId;
-        if (dump.getObjectByIdInternal(id) != null && !parent.containsKey(id)) {
-          parent.put(id, START);
-          startNames.put(id, "static " + cls.getName() + "." + field.getName());
-          queue.add(id);
+        int v = id32.get(refId.longValue());
+        if (v >= 0 && parent[v] == unvisited) {
+          parent[v] = start;
+          startNames.put(v, "static " + cls.getName() + "." + field.getName());
+          queue[tail++] = v;
         }
       }
     }
 
     boolean found = false;
-    for (int head = 0; head < queue.size(); head++) {
-      long cur = queue.getLong(head);
-      if (cur == targetId) {
+    for (int head = 0; head < tail; head++) {
+      int cur = queue[head];
+      if (cur == targetNode) {
         found = true;
         break;
       }
-      HeapObjectImpl obj = dump.getObjectByIdInternal(cur);
-      if (obj == null) {
-        throw new IllegalStateException(
-            "object 0x" + Long.toHexString(cur) + " could not be loaded from the index");
-      }
-      HeapClass cls = obj.getHeapClass();
-      if (!obj.isArray() && cls instanceof HeapClassImpl c && c.hasDuplicateInstanceFieldNames()) {
+      HeapClassImpl cls = refs.classOf(cur);
+      if (cls != null
+          && cls.hasDuplicateInstanceFieldNames()
+          && refs.arrayLengthOf(cur) < 0
+          && !refs.isClassEntry(cur)) {
+        HeapObjectImpl obj = dump.getObjectByIdInternal(dump.getId32ToAddress().get(cur));
+        if (obj == null) {
+          throw new IllegalStateException("object id32=" + cur + " could not be loaded");
+        }
+        int[] t = {tail};
         visitOutboundEdges(
             obj,
             (fieldName, ref) -> {
-              long id = ref.getId();
-              if (!parent.containsKey(id)) {
-                parent.put(id, cur);
-                queue.add(id);
+              int v = id32.get(ref.getId());
+              if (v >= 0 && parent[v] == unvisited) {
+                parent[v] = cur;
+                queue[t[0]++] = v;
               }
             });
+        tail = t[0];
         continue;
       }
-      for (long id : obj.getStrongOutboundReferenceIds()) {
-        if (!parent.containsKey(id) && dump.getObjectByIdInternal(id) != null) {
-          parent.put(id, cur);
-          queue.add(id);
+      int k = refs.strongRefs(cur);
+      int[] r = refs.refs();
+      for (int i = 0; i < k; i++) {
+        int v = r[i];
+        if (parent[v] == unvisited) {
+          parent[v] = cur;
+          queue[tail++] = v;
         }
       }
     }
@@ -244,16 +257,18 @@ public final class PathFinder {
       return List.of();
     }
 
-    LongArrayList ids = new LongArrayList();
-    for (long id = targetId; id != START; id = parent.get(id)) {
-      ids.add(id);
+    IntArrayList nodes = new IntArrayList();
+    for (int v = targetNode; v != start; v = parent[v]) {
+      nodes.add(v);
     }
-    List<PathStep> path = new ArrayList<>(ids.size());
+    it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap address = dump.getId32ToAddress();
+    List<PathStep> path = new ArrayList<>(nodes.size());
     HeapObject prev = null;
-    for (int i = ids.size() - 1; i >= 0; i--) {
-      long id = ids.getLong(i);
+    for (int i = nodes.size() - 1; i >= 0; i--) {
+      int v = nodes.getInt(i);
+      long id = address.get(v);
       HeapObject obj = i == 0 ? target : dump.getObjectByIdInternal(id);
-      String fieldName = prev == null ? startNames.get(id) : firstFieldReferencing(prev, id);
+      String fieldName = prev == null ? startNames.get(v) : firstFieldReferencing(prev, id);
       path.add(new PathStep(obj, fieldName));
       prev = obj;
     }
