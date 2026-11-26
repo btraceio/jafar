@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.BufferUnderflowException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A stream for reading JFR recording data with position tracking and context management.
@@ -32,11 +34,25 @@ public final class RecordingStream implements AutoCloseable {
    * allocating a ThreadLocal on short-lived wrapper instances that never call {@link
    * #threadLocalStreamSlice()}.
    *
-   * <p><b>Lifecycle:</b> each participating thread's entry is removed when {@link #close()} is
-   * called from that thread. Entries for other threads are removed when those threads exit. In
-   * practice, {@link RecordingStream} instances are chunk-scoped, so exposure is bounded.
+   * <p><b>Lifecycle:</b> a thread's entry outlives this stream: {@link #close()} can remove only
+   * the closing thread's entry, and a {@code ThreadLocalMap} keeps a stale entry's value strongly
+   * reachable until that thread exits or happens to expunge it. Constant-pool values are resolved
+   * lazily, on whatever thread reads them and often after the chunk was closed, so the entry holds
+   * a {@link Slot} rather than the slice: {@link #close()} empties every slot, and a stale entry no
+   * longer keeps the mapped file alive (#227).
    */
-  private volatile ThreadLocal<RecordingStream> threadLocalStreamCache;
+  private volatile ThreadLocal<Slot> threadLocalStreamCache;
+
+  /** The slots handed out by {@link #threadLocalStreamSlice()}; guarded by {@code this}. */
+  private List<Slot> slots;
+
+  /** Set by {@link #close()}; a closed stream no longer caches slices. */
+  private volatile boolean closed;
+
+  /** One thread's cached slice; emptied when the stream is closed. */
+  private static final class Slot {
+    volatile RecordingStream stream;
+  }
 
   /**
    * Constructs a new RecordingStream from a file path.
@@ -153,7 +169,10 @@ public final class RecordingStream implements AutoCloseable {
    * @return a reusable stream slice for the current thread
    */
   public RecordingStream threadLocalStreamSlice() {
-    ThreadLocal<RecordingStream> tl = threadLocalStreamCache;
+    if (closed) {
+      return newSlice();
+    }
+    ThreadLocal<Slot> tl = threadLocalStreamCache;
     if (tl == null) {
       synchronized (this) {
         tl = threadLocalStreamCache;
@@ -163,12 +182,34 @@ public final class RecordingStream implements AutoCloseable {
         }
       }
     }
-    RecordingStream s = tl.get();
+    Slot slot = tl.get();
+    if (slot == null) {
+      slot = new Slot();
+      synchronized (this) {
+        if (closed) {
+          return newSlice();
+        }
+        if (slots == null) {
+          slots = new ArrayList<>();
+        }
+        slots.add(slot);
+      }
+      tl.set(slot);
+    }
+    RecordingStream s = slot.stream;
     if (s == null) {
-      s = new RecordingStream(reader.slice(0, reader.length()), context, false);
-      tl.set(s);
+      s = newSlice();
+      slot.stream = s;
+      // close() sets closed before it empties the slots; one of the two sees the other's write
+      if (closed) {
+        slot.stream = null;
+      }
     }
     return s;
+  }
+
+  private RecordingStream newSlice() {
+    return new RecordingStream(reader.slice(0, reader.length()), context, false);
   }
 
   /**
@@ -359,9 +400,18 @@ public final class RecordingStream implements AutoCloseable {
 
   @Override
   public void close() {
-    // Remove the current thread's slice from the cache to avoid retaining references after close.
-    // Entries for other threads are not removable cross-thread; they are cleared when those
-    // threads exit or when the GC processes their ThreadLocalMap entries.
+    closed = true;
+    // Other threads' entries cannot be removed from here; emptying their slots is what stops them
+    // from keeping the slices, and with them the mapped file, reachable (see
+    // threadLocalStreamCache).
+    synchronized (this) {
+      if (slots != null) {
+        for (Slot slot : slots) {
+          slot.stream = null;
+        }
+        slots = null;
+      }
+    }
     if (threadLocalStreamCache != null) {
       threadLocalStreamCache.remove();
     }

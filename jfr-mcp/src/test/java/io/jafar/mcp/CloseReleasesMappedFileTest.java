@@ -29,7 +29,9 @@ import tools.jackson.databind.ObjectMapper;
  * collection itself: the close tools must.
  *
  * <p>{@code jfr_summary} and {@code jfr_exceptions} are the tools whose recording 0.29.0 kept
- * mapped after a collection too, through a static cache keyed by metadata class.
+ * mapped after a collection too, through a static cache keyed by metadata class. The {@code
+ * jfr_query} rows are resolved after the parse has closed, on the request thread, which used to
+ * leave a thread-local slice of the file reachable for as long as that thread lived.
  */
 class CloseReleasesMappedFileTest {
 
@@ -81,7 +83,7 @@ class CloseReleasesMappedFileTest {
     assertMapped(dump, false, "after hdump_close(closeAll)");
   }
 
-  /** Opens {@code recording} and runs the two tools 0.29.0 leaked on. */
+  /** Opens {@code recording} and runs the tools that kept a closed file mapped. */
   private String openRecording(Path recording) throws Exception {
     String id =
         new ObjectMapper()
@@ -92,6 +94,9 @@ class CloseReleasesMappedFileTest {
     args.put("sessionId", id);
     call("handleJfrSummary", args);
     call("handleJfrExceptions", args);
+    Map<String, Object> query = new HashMap<>(args);
+    query.put("query", "events/datadog.ExecutionSample | head(5)");
+    call("handleJfrQuery", query);
     return id;
   }
 
