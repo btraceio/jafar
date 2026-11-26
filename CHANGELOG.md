@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Work budgets** (`gradle/work-budgets.properties`, the `workTest` tasks of `parser-core` and
+  `parser-codegen`) - a ratchet gate on how much work a parse does, counted rather than timed:
+  chunks started and read, events read and decoded, varints read, values skipped, constant-pool
+  entries indexed and decoded, for eight untyped and typed entry points on `tck-test.jfr` and
+  `test-ap.jfr`. A test-only agent in `test-support` counts entries into named parser methods; no
+  parser code changes. Counts are exact and identical across runs, chunk-pool sizes and JDKs; a
+  count above its budget fails, one below fails with "re-tighten". Raising a count needs
+  `Work-Budget: <reason>` in the PR body (`scripts/work-budget-check.sh`, the `work-budget` job).
+  Catches algorithmic regressions such as a type filter decoding what it drops; constant-factor
+  ones change no counter. See [doc/plans/work-budgets.md](doc/plans/work-budgets.md)
 - **`perf-ab` workflow** (`.github/workflows/perf-ab.yml`, driver `scripts/perf_ab_run.sh`) - an
   advisory A/B performance report: a PR with the `perf-ab` label is benchmarked against its merge
   base on one runner, in base/head/head/base rounds (`QueryPushdownBenchmark`, 3 forks per round),
