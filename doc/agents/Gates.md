@@ -134,7 +134,8 @@ and one unfrozen one, in plain words:
   `java.util.Formatter` constructor without a `Locale`,
   `DateTimeFormatter.ofPattern(String)` and `ofLocalized*`,
   `DateTimeFormatterBuilder.toFormatter()`, `new SimpleDateFormat()`/`(String)`,
-  the no-argument `DateFormat` factories, `DecimalFormatSymbols` and
+  the `DateFormat` factories without a `Locale`, `DateTimeFormatter.ofLocalizedPattern`,
+  `DecimalFormatSymbols` and
   `DateFormatSymbols` without a `Locale`, and `Console`
   `readLine`/`readPassword(String, ...)` (the list is
   `ArchitectureRules.DEFAULT_LOCALE_MEMBERS`; the fire test requires every

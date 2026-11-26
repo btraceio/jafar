@@ -13,6 +13,7 @@ import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
 import io.jafar.arch.fixture.DefaultLocaleFormatFixture;
+import io.jafar.arch.fixture.ExplicitLocaleFormatFixture;
 import io.jafar.arch.fixture.NotAnInterfaceSpiFixture;
 import io.jafar.arch.fixture.PprofInternalReachInFixture;
 import io.jafar.arch.fixture.ReachIntoConsumersFixture;
@@ -112,7 +113,8 @@ class ArchRuleFireTest {
         loadWithFixture(
             "shell-core",
             DefaultLocaleFormatFixture.class,
-            DefaultLocaleFormatFixture.CustomStream.class);
+            DefaultLocaleFormatFixture.CustomStream.class,
+            ExplicitLocaleFormatFixture.class);
     assertFires(ArchitectureRules.ruleJ(), "j:", DefaultLocaleFormatFixture.class, modules);
     String msg =
         assertThrows(AssertionError.class, () -> ArchitectureRules.ruleJ().check(modules.classes()))
@@ -139,6 +141,10 @@ class ArchRuleFireTest {
           msg.contains(call.getDescription()),
           "rule (j) did not report " + call.getDescription() + ": " + msg);
     }
+    // ...and nothing that passes a Locale: a rule matching too broadly fails here
+    assertTrue(
+        !msg.contains("ExplicitLocaleFormatFixture"),
+        "rule (j) reported a call with an explicit Locale: " + msg);
     // ...and each other form: subtype owners, references, a lambda, the Formatter branch
     for (String expected :
         List.of(

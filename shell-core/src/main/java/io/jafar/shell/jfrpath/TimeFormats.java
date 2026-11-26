@@ -43,9 +43,9 @@ final class TimeFormats {
     if (format == null || format.isEmpty()) {
       return DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     }
-    // A user's pattern: Locale.US keeps the English names it always had on an English machine
-    // ("Tuesday, 13 August 2024"; Locale.ROOT abbreviates MMMM/EEEE and changes era, period and
-    // zone text) and gives the same output on every machine (issue #224)
+    // A user's pattern: Locale.US keeps what an en-US machine always printed ("Tuesday, 13 August
+    // 2024"; Locale.ROOT abbreviates MMMM/EEEE and changes era, period and zone text), and the
+    // language no longer depends on the machine (issue #224). The zone still does (SYSTEM_ZONE).
     return DateTimeFormatter.ofPattern(format, Locale.US);
   }
 

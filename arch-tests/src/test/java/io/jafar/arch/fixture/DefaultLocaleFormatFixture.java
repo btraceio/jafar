@@ -75,6 +75,7 @@ public final class DefaultLocaleFormatFixture {
     DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT);
     DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT);
     DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT, FormatStyle.SHORT);
+    DateTimeFormatter.ofLocalizedPattern("yMMM");
     b.toFormatter();
   }
 

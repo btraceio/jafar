@@ -935,7 +935,9 @@ Computes the min/max time span covered by events. Returns a single-row summary w
 - `path` - Time field to analyze (default: `startTime`)
 - `duration` - Duration field; if present, max is computed as `startTime + duration`
 - `format` - Output format string for `minTime`/`maxTime` (default: ISO local datetime). A
-  `java.time` pattern, formatted in US English on every machine (month, day, era and zone names)
+  `java.time` pattern, formatted with US English conventions on every machine: month, day, era
+  and zone names, the `AM`/`PM` marker, and Sunday-start weeks for `w`/`Y`/`e`. The time zone is
+  the machine's
 
 **Output fields**: `count`, `field`, `minEpochNanos`, `maxEpochNanos`, `minTime`, `maxTime`, `durationNanos`, `durationMs`, `duration`
 
@@ -961,7 +963,7 @@ Converts epoch-nanosecond fields to human-readable datetime strings. Can be used
 **Parameters**:
 - `path` - Time field to format (default: `startTime`)
 - `format` - Date format string (default: ISO local datetime). A `java.time` pattern, formatted
-  in US English on every machine (month, day, era and zone names)
+  with US English conventions on every machine, as for `timerange`
 
 **Examples**:
 ```

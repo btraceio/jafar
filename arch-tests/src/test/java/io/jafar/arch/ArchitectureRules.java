@@ -384,6 +384,7 @@ public final class ArchitectureRules {
               "ofLocalizedDateTime",
               java.time.format.FormatStyle.class,
               java.time.format.FormatStyle.class),
+          member(java.time.format.DateTimeFormatter.class, "ofLocalizedPattern", String.class),
           member(java.time.format.DateTimeFormatterBuilder.class, "toFormatter"));
 
   private static ArchCondition<JavaClass> notFormatWithTheDefaultLocale() {

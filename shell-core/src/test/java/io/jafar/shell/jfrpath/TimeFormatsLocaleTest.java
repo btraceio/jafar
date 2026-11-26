@@ -42,7 +42,7 @@ class TimeFormatsLocaleTest {
 
   @Test
   void fullNamesAreTheEnglishOnesAsBefore() {
-    // With Locale.ROOT this was "Tue, 13 Aug 2024": full names must stay full
+    // With Locale.ROOT this was "Tue, 13 Aug 2024 CE PM": full names must stay full
     String formatted =
         TimeFormats.getFormatter("EEEE, d MMMM yyyy G a")
             .format(LocalDateTime.of(2024, 8, 13, 15, 4));
