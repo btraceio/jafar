@@ -3,6 +3,7 @@ package io.jafar.parser.impl;
 import io.jafar.parser.api.JafarConfigurationException;
 import io.jafar.parser.api.JafarIOException;
 import io.jafar.parser.api.JfrType;
+import java.util.Locale;
 
 /** Utility class for common validation operations that throw appropriate exceptions. */
 public final class ValidationUtils {
@@ -68,7 +69,7 @@ public final class ValidationUtils {
       throws JafarConfigurationException {
     if (value == null) {
       throw new JafarConfigurationException(
-          String.format("Required parameter '%s' cannot be null", parameterName));
+          String.format(Locale.ROOT, "Required parameter '%s' cannot be null", parameterName));
     }
   }
 
@@ -83,7 +84,8 @@ public final class ValidationUtils {
       throws JafarConfigurationException {
     if (value == null || value.trim().isEmpty()) {
       throw new JafarConfigurationException(
-          String.format("Required parameter '%s' cannot be null or empty", parameterName));
+          String.format(
+              Locale.ROOT, "Required parameter '%s' cannot be null or empty", parameterName));
     }
   }
 }

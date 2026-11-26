@@ -1,13 +1,13 @@
 ---
 name: pr-writing
-description: Write commits, PR descriptions and the gate-checked PR-body statements for this repository. Use when writing a commit message, a PR description, or a comment on a PR — including the "what I did not verify" section and the statements the CI gates require (Java/Go parity, API-Break, Alloc-Budget).
+description: Write commits, PR descriptions and the gate-checked PR-body statements for this repository. Use when writing a commit message, a PR description, or a comment on a PR — including the "what I did not verify" section and the statements the CI gates require (Java/Go parity, API-Break, Alloc-Budget, Work-Budget).
 ---
 
 # Writing a PR
 
 Read [AGENTS.md](../../../AGENTS.md) first. The conventions are short; the load-bearing parts
-are the verification statement and the gate-checked statements — parity, API-Break and
-Alloc-Budget — because CI checks those.
+are the verification statement and the gate-checked statements — parity, API-Break,
+Alloc-Budget and Work-Budget — because CI checks those.
 
 ## Commits
 
@@ -102,6 +102,26 @@ without running anything, when the diff raises a value or a tolerance in
 Lowering a value, adding a new key, or leaving the file unchanged needs no statement. The
 gate, the allocation meter and the per-JDK keys are documented in
 [doc/agents/Gates.md](../../../doc/agents/Gates.md).
+
+## The Work-Budget statement
+
+A PR that raises a work budget must say so in the PR body:
+
+    Work-Budget: <non-empty reason>
+
+This is a blocking CI check (`scripts/work-budget-check.sh`, the `work-budget` job in
+`pr-tests.yml`, run on pull requests only, like the Alloc-Budget statement). The statement is
+matched with `^[[:space:]]*Work-Budget:[[:space:]]*[^[:space:]]`: `Work-Budget:` followed by
+spaces only is rejected.
+
+When it is needed: when `scripts/work-budget-check.sh --base origin/main` exits 1 — or, without
+running anything, when the diff raises a count in `gradle/work-budgets.properties`, or adds a key
+with a nonzero count to an entry point that already has keys. Lowering a count, adding a new
+entry point, or leaving the file unchanged needs no statement. The reason says what work the parse
+now does and why: "the time range now reads every chunk's constant pools, because …", not "budget
+updated". A raise is an algorithmic change, so say it in the PR description too. The counters,
+the agent that counts them and how to regenerate the file are in
+[doc/plans/work-budgets.md](../../../doc/plans/work-budgets.md).
 
 ## Scope
 

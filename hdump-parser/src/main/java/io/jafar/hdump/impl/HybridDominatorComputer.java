@@ -214,7 +214,8 @@ public final class HybridDominatorComputer {
       expandOnGraph(graph, gcRoots, interesting, expanded);
       LOG.info(
           "Expanded to {} objects ({}% of heap)",
-          expanded.size(), String.format("%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
+          expanded.size(),
+          String.format(Locale.ROOT, "%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
       return expanded;
     }
 
@@ -224,7 +225,8 @@ public final class HybridDominatorComputer {
       expandIndexed(dump, stored.view(), gcRoots, interesting, expanded);
       LOG.info(
           "Expanded to {} objects ({}% of heap)",
-          expanded.size(), String.format("%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
+          expanded.size(),
+          String.format(Locale.ROOT, "%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
       return expanded;
     }
 
@@ -241,7 +243,8 @@ public final class HybridDominatorComputer {
 
     LOG.info(
         "Expanded to {} objects ({}% of heap)",
-        expanded.size(), String.format("%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
+        expanded.size(),
+        String.format(Locale.ROOT, "%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
 
     return expanded;
   }

@@ -15,13 +15,14 @@ evidence behind each is in
    get switched off; ratchets let a low-expertise operator merge safely with
    zero judgment calls.
 2. **Escape hatches are reasoned and visible.** Breaking an API, raising an
-   allocation budget, adding an ArchUnit violation each require a PR-body
+   allocation or work budget, adding an ArchUnit violation each require a PR-body
    statement checked by a sibling of `scripts/parity-check.sh`. The harness
    cannot demand taste; it can demand a written reason at the exact moment the
    invariant bends.
 3. **Deterministic oracles only, measured not reasoned.** Gates assert on
-   bytes and names — allocation budgets in measured bytes, failure sets by
-   test name, format checks against golden dumps — never on wall time,
+   bytes and names — allocation budgets in measured bytes, work budgets in
+   counted calls, failure sets by test name, format checks against golden
+   dumps — never on wall time,
    sleep-based race checks, or "did not throw".
 4. **Layered cost.** PR-blocking gates run in minutes on synthetic fixtures;
    expensive nets (fuzzing sessions, JMH trends, real multi-GB recordings) run
@@ -35,7 +36,7 @@ executed (R4); the wall-time column records what those runs measured.
 | Gate | Checks | Run locally | Regenerate baseline | Escape hatch | CI job | Measured PR wall time |
 |---|---|---|---|---|---|---|
 | Doc links (R4) | Every relative link in the docs resolves; a new miss fails | `scripts/check-doc-links.sh` | none — the frozen allowlist inside the script shrinks as legacy misses are fixed; adding an entry requires fixing the document instead | none | `guardrails` | <1 s (0.8 s measured) |
-| Gate-script regression suite (R5) | The gates' own tests, including each gate's proof that it fires on bad input | `scripts/tests/run_all.sh` | none — the suite is the oracle; a gate with no fire test is not done | none | `guardrails` | 1 m 22 s local (9 test files, measured) |
+| Gate-script regression suite (R5) | The gates' own tests, including each gate's proof that it fires on bad input | `scripts/tests/run_all.sh` | none — the suite is the oracle; a gate with no fire test is not done | none | `guardrails` | 13 s local (16 test files, measured 2026-11-26) |
 | Parity (Java/Go untyped parsers) | A production change to one untyped parser is stated for the other side in the PR body | `scripts/parity-check.sh --base origin/main` (local mode; CI reads the PR body) | none | `Parity: not applicable — <reason>` in the PR body | `parity` | <1 s local (measured); the CI job adds only two `gh pr view` calls |
 | Typed parity (build-time/runtime generators) | A production change to one typed handler generator (`jafar-processor`, or `parser-codegen`'s `CodeGenerator`/`CodeGeneratorDeserializerFactory`/`FieldMapping`) is stated for the other in the PR body; `BuildTimeRuntimeParityTest` holds their values equal on the generated fixtures | `scripts/typed-parity-check.sh --base origin/main` (local mode; CI reads the PR body); `./gradlew :jafar-processor:test --tests '*BuildTimeRuntimeParityTest'` | none | `Typed-Parity: not applicable — <reason>` in the PR body | `typed-parity` (statement); `tests` (the value test, inside `:jafar-processor:test`) | <1 s local (measured); the CI job adds only two `gh pr view` calls |
 | Formatting (Spotless) | Every Java file is formatted; runs on every Gradle build | `./gradlew spotlessCheck` | `./gradlew spotlessApply` rewrites the files — no baseline to regenerate | none | inside every Gradle invocation in `tests` | 9.5 s warm, local (measured) |
@@ -44,6 +45,7 @@ executed (R4); the wall-time column records what those runs measured.
 | Architecture boundaries (ArchUnit freeze) | The frozen rules in `arch-tests`: nothing outside the parser plane depends on parser internals, nothing outside `hdump-parser` depends on hdump internals, `api` packages never depend on their module's implementation packages, parser modules and `shell-core` never depend on consumer modules, parser implementation code declares no mutable static field, `api` packages never expose implementation types in public or protected signatures, nothing outside `pprof-parser`/`otlp-parser` depends on their internals, the six ServiceLoader SPI types remain interfaces, and SPI packages never depend on their implementations | `./gradlew :arch-tests:test` | `./gradlew :arch-tests:test -ParchFreeze` — only to shrink the committed violation store, or to record a deliberate grandfathering that shows up in the store diff | none — a new violation must be fixed | `tests` (JDK 21 cell, inside `./gradlew build`) | 45.5 s local, warm daemon (`./gradlew :arch-tests:test --rerun`, measured); 35–46 s across runs |
 | Clean code (PMD) | Every Java module's main sources pass the curated ruleset `config/pmd/ruleset.xml`: no empty catch blocks, no empty control statements, no constructors calling overridable methods, no dead locals/fields/methods. A member that is invisible to the analysis on purpose (reflection-driven, updater-driven, a template-method ctor) suppresses at the member with `@SuppressWarnings("PMD.<Rule>")` and a comment saying why | `./gradlew pmdMain` | none — the ruleset ships green by policy; a rule that fires on the tree does not ship, and a finding is fixed or suppressed with its reason, never waved through | the in-code `@SuppressWarnings("PMD.<Rule>")` plus reason comment | `tests` (both matrix cells, inside every Gradle `check`) | 59 s all modules cold (measured); 14–28 s single module warm |
 | Allocation budgets | Every public parse entry point (untyped JFR unfiltered and type-filtered, typed JFR, hdump, pprof, otlp) allocates, per fixed fixture, at most the bytes recorded in `gradle/allocation-budgets.properties` on its own JDK cell — chunk-pool decode threads included | `./gradlew :parser-core:allocationTest :parser-codegen:allocationTest :hdump-parser:test :pprof-parser:test :otlp-parser:test :parser-core:allocationTest8 :parser-codegen:allocationTest8` | edit `gradle/allocation-budgets.properties` (re-measure per the recipe in its comments); lowering a value is free, a raise needs the statement | `Alloc-Budget: <non-empty reason>` in the PR body | `tests` (both matrix cells) + `alloc-budget` (statement, pull_request only) | the four allocation tasks ~4 s each warm (measured; ~17 s combined); hdump/pprof/otlp add no task — their budget tests run inside the modules' existing `test` suites |
+| Work budgets | Every untyped and typed JFR parse entry point (generic and generated untyped reader, unfiltered, type-filtered, `countEvents`, header start times, a start-time range that skips a chunk; typed) does, per fixed fixture, exactly the work recorded in `gradle/work-budgets.properties`: chunks started and read, events read and decoded, varints read, values skipped, constant-pool entries indexed and decoded — counted by a test-only agent, not timed. Above fails; below fails "re-tighten" | `./gradlew :parser-core:workTest --rerun :parser-codegen:workTest --rerun` | `./gradlew :parser-core:workTest :parser-codegen:workTest -Pjafar.work.update --rerun` rewrites the lines in place; lowering a value is free, a raise needs the statement | `Work-Budget: <non-empty reason>` in the PR body | `tests` (JDK 21 cell, inside `./gradlew build`) + `work-budget` (statement, pull_request only) | 3.8 s warm for both tasks with `--rerun`, run in parallel (measured); `scripts/work-budget-check.sh` <1 s |
 | Golden value dumps | Every corpus fixture — JFR: the committed two-chunk `tck-test.jfr` plus the two generated recordings; hdump, pprof, otlp: their deterministic builders' fixtures — is rendered to a sorted, value-complete canonical dump and compared against a committed digest plus per-type counts; the JFR digests cover events, constants and metadata | `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' --rerun`; `./gradlew :hdump-parser:cleanTest :pprof-parser:cleanTest :hdump-parser:test --tests '*Golden*' :pprof-parser:test --tests '*Golden*' --no-build-cache`; `./gradlew :otlp-parser:cleanTest :otlp-parser:test --tests '*Golden*' --no-build-cache` (the `cleanTest` + `--no-build-cache` pairs work around the same `--rerun` cache lie the allocation gate records) | `-Pjafar.golden.update --rerun` per fixture: `./gradlew :parser-core:test --tests '*JfrGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :hdump-parser:test --tests '*HdumpGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :pprof-parser:test --tests '*PprofGoldenDumpTest' -Pjafar.golden.update --rerun`, `./gradlew :otlp-parser:test --tests '*OtlpGoldenDumpTest' -Pjafar.golden.update --rerun` | none — an intended value change regenerates the golden and the diff *is* the review; a real recording that replaced a generated fixture is refused, never compared (the D1 skip below) | `tests` (JDK 21 cell, inside `./gradlew build`) | JFR suite 3.7–4.1 s warm (measured); hdump+pprof ~1.8 s combined, otlp ~1.8 s (measured) |
 | Jazzer regression corpus | The committed inputs under `parser-core/src/test/resources/io/jafar/parser/fuzz/UntypedParserFuzzTestInputs/parseUntyped/` replay through the `@FuzzTest` target inside ordinary `:parser-core:test`; the cause-chain oracle fails on any `Error` anywhere in the chain and on any root cause that is neither `io.jafar.*` nor `IOException`, and bounds each input's runtime (the hang oracle) | `./gradlew :parser-core:test --tests 'io.jafar.parser.fuzz.*' --rerun` | none — the corpus is the committed seeds; a new input is a hand-minimized crash file from a fuzz session, committed like any other change | the known-escapes allowlist below — a pinned escape, never a PR-body statement | `tests` (JDK 21 cell, inside `:parser-core:test`) | ~6 s warm (measured) |
 | Adversarial recordings | The six `adv-*` seeds regenerate byte-identically from the committed enum — drift fails naming the seed and the regen command — and each seed's parse delivers one pinned specific outcome: a named exception class plus message fragment, or an exact delivered-event count ("did not crash" is not an outcome) | `./gradlew :test-recordings:generateAdversarialRecordings :test-recordings:test` | `./gradlew :test-recordings:generateAdversarialRecordings` | none — drift is fixed, or the case is deliberately rebuilt and re-pinned in the diff | `tests` (JDK 21 cell: drift in `:test-recordings:test`, pinned outcomes in `:parser-core:test`) | ~2 s warm (measured) |
@@ -87,8 +89,8 @@ rather than a code path.
 ## Architecture boundaries (ArchUnit freeze)
 
 **The rules.** The `arch-tests` module
-(`arch-tests/src/test/java/io/jafar/arch/`) runs nine frozen ArchUnit rules,
-in plain words:
+(`arch-tests/src/test/java/io/jafar/arch/`) runs nine frozen ArchUnit rules
+and one unfrozen one, in plain words:
 
 - **(a)** only the parser plane (`parser-core`, `parser-codegen`) may depend
   on `io.jafar.parser.impl..` or `io.jafar.parser.internal_api..`;
@@ -122,7 +124,33 @@ in plain words:
   `io.jafar.shell.backend..` outside `..backend.impl..` never depend on
   `io.jafar.shell.backend.impl..`, and classes in
   `io.jafar.shell.core.llm..` never depend on `io.jafar.shell.llm..` —
-  backends are discovered, never hard-wired.
+  backends are discovered, never hard-wired;
+- **(j)** no class formats with the JVM default locale. Forbidden, whether
+  called, used as a method reference or reached through a subtype of the
+  owner: `String.format(String, ...)`, `String.formatted(...)`,
+  `PrintStream`/`PrintWriter`/`Console` `printf`/`format(String, ...)`,
+  `MessageFormat.format(String, ...)` and `new MessageFormat(String)`, the
+  no-argument `NumberFormat` factories (`getInstance`, `getNumberInstance`,
+  `getPercentInstance`, `getIntegerInstance`, `getCurrencyInstance`,
+  `getCompactNumberInstance`), `new DecimalFormat()`/`(String)`, any
+  `java.util.Formatter` constructor without a `Locale`,
+  `DateTimeFormatter.ofPattern(String)` and `ofLocalized*`,
+  `DateTimeFormatterBuilder.toFormatter()`, `new SimpleDateFormat()`/`(String)`,
+  the `DateFormat` factories without a `Locale`, `DecimalFormatSymbols` and
+  `DateFormatSymbols` without a `Locale`, and `Console`
+  `readLine`/`readPassword(String, ...)` (the list is
+  `ArchitectureRules.DEFAULT_LOCALE_MEMBERS`; the fire test requires every
+  entry to be reported from a fixture). Pass a `Locale` —
+  `Locale.ROOT` for anything a program, an agent or a bug report reads. On a
+  ru-RU or de-DE host those calls wrote `"47,8%"` next to the JSON number
+  `47.8` (issue #224); under ar-EG `%d` wrote Arabic-Indic digits.
+  `toLowerCase()`/`toUpperCase()` without a locale are a different bug class
+  and not covered. Rule (j) is **not frozen**: there is no grandfathered
+  debt, so its test checks the rule directly and any new call fails the build.
+  It covers the classified modules' main classes like the other rules; the
+  `parser-core` multi-release overlays (`src/java9|13|21`), `test-*` modules
+  and the separate `demo/` build are outside it, so a change there is checked
+  by hand (all of them were clean when the rule was added, except `demo/`).
 
 **Membership comes from class dirs.** Every covered module's *compiled*
 classes are imported from `<module>/build/classes/java/main`, and module
@@ -299,6 +327,45 @@ measured build and the CI build differ in vendor and patch level. The tolerances
 the measured build-to-build spread is 16–64 bytes); if a CI cell reds on a
 budget key, the first move is to re-measure on the CI image and adjust the
 value — with an `Alloc-Budget:` statement if the change is a raise.
+
+## Work budgets
+
+**What is budgeted.** `gradle/work-budgets.properties` records, per parse entry point and fixture,
+the exact counts of eight kinds of work one parse does — `chunks.started`, `chunks.read`,
+`events.read`, `events.decoded`, `varints.read`, `values.skipped`, `constants.indexed`,
+`constants.decoded` — for eight cells: the generic untyped reader unfiltered, type-filtered
+(`jdk.GCHeapSummary`), `countEvents()`, header handlers with start times on `test-ap.jfr`, and a
+start-time range that skips the first of `tck-test.jfr`'s two chunks; the generated untyped reader
+unfiltered and type-filtered; and the typed parse. It is the time-free counterpart of the allocation
+gate: it catches algorithmic regressions — a filter decoding what it drops, a range that stops
+skipping chunks, a header count that reads payloads — that leave every result the same. The design,
+the method behind each counter and the evidence are in
+[work-budgets.md](../plans/work-budgets.md).
+
+**How it counts.** A test-only `java.lang.instrument` agent (`test-support/src/agent`, jar
+`test-support/build/work-agent/jafar-work-agent-*.jar`, ASM bundled) inserts a counter call at
+method entries and call sites listed once in `io.jafar.testsupport.work.WorkProbes`. No parser main
+source changes, so neither parity gate applies. Classes parser-codegen generates at runtime are not
+instrumented; their work counts at the stable call that runs them. A probe the agent cannot place
+fails the run (`jafar.work.errors`), and `WorkProbesTest` in `:test-support:test` requires every
+probe to be placed exactly once in the compiled parser classes — a renamed method fails loudly, it
+never leaves a counter at 0 (R3).
+
+**No tolerance, no pins.** Counts are exact. The `workTest` tasks pin neither the processor count
+nor the JIT: the counts were identical over 5 runs, at `-Pjafar.activeProcessorCount=1` and `=16`
+(the matrix flag reaches `workTest`), and on JDK 25 as on JDK 21; each cell also parses three times
+in-JVM and fails if the three counts differ. So there is one cell per entry point, in the JDK 21
+`build`, and no JDK 8 task. Every run prints `work <entry> runs=[…] … availableProcessors=<n>
+vm=<vendor> <version>` and `work <key> measured=<n> budget=<b>` per counter (R3, R9).
+
+**Raising a budget.** `scripts/work-budget-check.sh --base origin/main` compares the file against
+the base ref: raising a value, or adding a nonzero key to an entry point that has keys at base,
+requires `Work-Budget: <non-empty reason>` in the PR body. Lowering a value, adding a new entry
+point, adding a zero key or leaving the file unchanged passes; deleting the file is refused.
+
+**R8 — what it cannot catch.** Constant-factor regressions change no counter (the varint inlining
+of #250 is the example), nor does work confined to generated classes that never reaches a probe, or
+a decode path added outside the probed methods. See section 8 of the design doc.
 
 ## Format correctness: golden dumps, the fuzz corpus, adversarial recordings
 

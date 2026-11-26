@@ -418,7 +418,10 @@ public final class ApproximateRetainedSizeComputer {
       double progress = 0.3 + 0.7 * ((t + 1) / (double) n);
       cb.onProgress(
           progress,
-          String.format("Computing approximate retained sizes (%d%%)...", (int) (progress * 100)));
+          String.format(
+              Locale.ROOT,
+              "Computing approximate retained sizes (%d%%)...",
+              (int) (progress * 100)));
     }
   }
 
@@ -551,7 +554,8 @@ public final class ApproximateRetainedSizeComputer {
         if (percentComplete > lastReportedPercent) {
           progressCallback.onProgress(
               progress,
-              String.format("Computing approximate retained sizes (%d%%)...", percentComplete));
+              String.format(
+                  Locale.ROOT, "Computing approximate retained sizes (%d%%)...", percentComplete));
           lastReportedPercent = percentComplete;
         }
       }

@@ -1,5 +1,6 @@
 package io.jafar.mcp.bridge;
 
+import java.util.Locale;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
@@ -121,7 +122,7 @@ final class JsonRpc {
         case '\t' -> out.append("\\t");
         default -> {
           if (c < 0x20) {
-            out.append(String.format("\\u%04x", (int) c));
+            out.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
           } else {
             out.append(c);
           }

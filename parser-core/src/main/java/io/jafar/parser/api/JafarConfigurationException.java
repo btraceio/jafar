@@ -1,5 +1,7 @@
 package io.jafar.parser.api;
 
+import java.util.Locale;
+
 /**
  * Exception thrown when there are issues with Jafar parser configuration, such as missing or
  * invalid annotations, incorrect interface definitions, etc.
@@ -56,7 +58,8 @@ public class JafarConfigurationException extends JafarParseException {
   public static JafarConfigurationException missingAnnotation(
       Class<?> clazz, String annotationType) {
     return new JafarConfigurationException(
-        String.format("Missing @%s annotation on class", annotationType), clazz.getName());
+        String.format(Locale.ROOT, "Missing @%s annotation on class", annotationType),
+        clazz.getName());
   }
 
   /**
@@ -81,6 +84,7 @@ public class JafarConfigurationException extends JafarParseException {
   public static JafarConfigurationException invalidFieldMapping(
       Class<?> clazz, String fieldName, String reason) {
     return new JafarConfigurationException(
-        String.format("Invalid field mapping for '%s': %s", fieldName, reason), clazz.getName());
+        String.format(Locale.ROOT, "Invalid field mapping for '%s': %s", fieldName, reason),
+        clazz.getName());
   }
 }

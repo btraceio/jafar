@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -364,7 +365,7 @@ public final class ScriptRunner {
 
     @Override
     public String toString() {
-      return String.format("Line %d: %s%n  Command: %s", lineNumber, message, line);
+      return String.format(Locale.ROOT, "Line %d: %s%n  Command: %s", lineNumber, message, line);
     }
   }
 }

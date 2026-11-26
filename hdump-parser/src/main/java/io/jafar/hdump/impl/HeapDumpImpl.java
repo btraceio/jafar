@@ -32,6 +32,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -2107,7 +2108,7 @@ public final class HeapDumpImpl implements HeapDump {
           // Create progress callback that prints to stderr
           ApproximateRetainedSizeComputer.ProgressCallback progressCallback =
               (progress, message) -> {
-                System.err.printf("\r%s: %.1f%%", message, progress * 100);
+                System.err.printf(Locale.ROOT, "\r%s: %.1f%%", message, progress * 100);
                 System.err.flush();
               };
 
@@ -2249,7 +2250,8 @@ public final class HeapDumpImpl implements HeapDump {
                   ? (progress, message) -> progressCallback.onProgress(progress, message)
                   : (progress, message) ->
                       LOG.debug(
-                          "Index building {}: {}%", message, String.format("%.1f", progress * 100));
+                          "Index building {}: {}%",
+                          message, String.format(Locale.ROOT, "%.1f", progress * 100));
 
           InboundIndexBuilder.buildInboundIndex(
               path, indexDir, addressToId32, classesById, indexBuilderCallback);
@@ -2503,7 +2505,7 @@ public final class HeapDumpImpl implements HeapDump {
     // Phase 4: Compute exact dominators for subgraph
     LOG.info(
         "Computing exact dominators for {} objects ({}% of heap)...",
-        expanded.size(), String.format("%.2f", expanded.size() * 100.0 / objectCount));
+        expanded.size(), String.format(Locale.ROOT, "%.2f", expanded.size() * 100.0 / objectCount));
     HybridDominatorComputer.computeExactForSubgraph(this, gcRoots, expanded, progressCallback);
 
     LOG.info(
