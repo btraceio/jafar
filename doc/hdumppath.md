@@ -24,7 +24,7 @@ Query heap object instances.
 ```
 objects                                    # All objects
 objects/java.lang.String                   # String objects only
-objects/instanceof/java.util.Map           # Map implementations
+objects/instanceof/java.util.AbstractMap   # Map implementations that extend AbstractMap
 objects/java.util.*                        # Glob pattern matching
 ```
 
@@ -195,11 +195,26 @@ classes/java.lang.reflect.*                # Reflection classes
 ```
 
 ### Instanceof (Subclass Matching)
-Include subclasses and implementations:
+Include subclasses:
 ```
-objects/instanceof/java.util.Map           # HashMap, TreeMap, ConcurrentHashMap, etc.
-objects/instanceof/java.io.Serializable    # All serializable objects
+objects/instanceof/java.util.AbstractMap   # HashMap, TreeMap, ConcurrentHashMap, etc.
+objects/instanceof/java.util.HashMap       # HashMap, LinkedHashMap and other subclasses
 ```
+
+`instanceof` follows **superclasses only**. A heap dump records each class's superclass but not
+the interfaces it implements (HotSpot's `HPROF_GC_CLASS_DUMP` record has no interface list), so
+`instanceof/java.util.Map` cannot find `HashMap`. Name a class the implementations extend
+(`java.util.AbstractMap`, `java.util.AbstractCollection`, `java.util.AbstractList`,
+`java.util.AbstractSet`), or use a glob (`objects/java.util.*Map`). Classes that implement the
+interface directly without extending such a class (for example `java.util.Hashtable`) are not
+matched by the abstract class either.
+
+`instanceof` fails instead of returning nothing when:
+
+- no class of that name is in the dump: `instanceof/com.example.Missing: no class named ...`
+- the class looks like an interface (no instances, no instance fields, no subclasses in the dump):
+  the message explains the limitation above. An abstract class with no fields and no subclasses
+  in the dump looks the same and gets the same message.
 
 ### Array Types
 Query array instances using Java notation or JVM descriptor format:
@@ -617,7 +632,11 @@ Enrich collection objects with capacity and waste metrics. Reads internal fields
 collection types to compute how much memory is wasted by over-allocation.
 
 Supported collections: `HashMap`, `LinkedHashMap`, `HashSet`, `LinkedHashSet`, `ArrayList`,
-`ConcurrentHashMap`, `ArrayDeque`.
+`ConcurrentHashMap`, `ArrayDeque`, and their subclasses: a subclass is analyzed as its nearest
+supported superclass, through the fields it inherits (`instanceof/java.util.HashMap | waste()`
+covers anonymous and custom `HashMap` subclasses). Any other object gets `null` in every added
+column. `sortBy` and `top` put rows with a `null` value last in both directions, so such rows do
+not head a `top(10, wastedBytes)` list.
 
 ```
 # Analyze all HashMap instances for waste
@@ -875,10 +894,10 @@ gcroots | groupBy(type) | top(10, count)
 
 ```
 # Find Map implementations
-objects/instanceof/java.util.Map | groupBy(class) | top(10, count)
+objects/instanceof/java.util.AbstractMap | groupBy(class) | top(10, count)
 
 # Collection analysis
-objects/instanceof/java.util.Collection | groupBy(class, agg=sum) | top(10, sum)
+objects/instanceof/java.util.AbstractCollection | groupBy(class, agg=sum) | top(10, sum)
 ```
 
 ### Heap Diff (Cross-Session Comparison)

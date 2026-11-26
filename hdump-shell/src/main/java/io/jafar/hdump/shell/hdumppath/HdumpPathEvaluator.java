@@ -1750,22 +1750,31 @@ public final class HdumpPathEvaluator {
       }
       requireField(results, op.orderBy(), "top");
 
-      // Create comparator that compares actual values with null-safe handling
+      // top() defaults to descending (largest first). Rows without a value sort last in both
+      // directions: reversing a nulls-last comparator would rank them first (issue #225, where
+      // waste() rows with null wastedBytes headed the "top waste" list).
       Comparator<Map<String, Object>> cmp =
-          (m1, m2) -> {
-            Object v1 = getField(m1, op.orderBy());
-            Object v2 = getField(m2, op.orderBy());
-            return compareValues(v1, v2);
-          };
-
-      // top() defaults to descending (largest first) - reverse for ascending if needed
-      if (op.descending()) {
-        cmp = cmp.reversed();
-      }
+          nullsLastBy(m -> getField(m, op.orderBy()), op.descending());
       stream = stream.sorted(cmp);
     }
 
     return stream.limit(op.n()).collect(Collectors.toList());
+  }
+
+  /**
+   * Orders rows by {@code key}, ascending or descending, with rows whose key is null always last.
+   */
+  private static Comparator<Map<String, Object>> nullsLastBy(
+      Function<Map<String, Object>, Object> key, boolean descending) {
+    return (m1, m2) -> {
+      Object v1 = key.apply(m1);
+      Object v2 = key.apply(m2);
+      if (v1 == null || v2 == null) {
+        return v1 == null ? (v2 == null ? 0 : 1) : -1;
+      }
+      int c = compareValues(v1, v2);
+      return descending ? -c : c;
+    };
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -2085,10 +2094,7 @@ public final class HdumpPathEvaluator {
 
       requireField(results, sf.field(), "sortBy");
       Comparator<Map<String, Object>> fieldCmp =
-          (m1, m2) -> compareValues(getField(m1, sf.field()), getField(m2, sf.field()));
-      if (sf.descending()) {
-        fieldCmp = fieldCmp.reversed();
-      }
+          nullsLastBy(m -> getField(m, sf.field()), sf.descending());
       cmp = cmp == null ? fieldCmp : cmp.thenComparing(fieldCmp);
     }
 
@@ -2162,7 +2168,51 @@ public final class HdumpPathEvaluator {
       }
     }
 
+    if (includeSubclasses) {
+      checkInstanceofTarget(pattern, baseClass.orElse(null), result);
+    }
     return result;
+  }
+
+  /**
+   * Fails loudly when {@code instanceof/<type>} cannot match anything (issue #225). HPROF class
+   * records carry only the superclass, never the implemented interfaces (see the
+   * HPROF_GC_CLASS_DUMP layout in HotSpot's {@code heapDumper.cpp}), so subtype matching walks
+   * superclass chains only. An interface is in the dump as a class of its own: no instance fields,
+   * instance size 0, no instances, and no class names it as a superclass. Such a target would
+   * silently match nothing, as would a name that is not in the dump at all.
+   */
+  private static void checkInstanceofTarget(String pattern, HeapClass base, Set<String> matched) {
+    String shown = ClassNameUtil.toHumanReadable(pattern);
+    if (matched.isEmpty()) {
+      throw new IllegalArgumentException(
+          "instanceof/"
+              + shown
+              + ": no class "
+              + (pattern.contains("*") || pattern.contains("?") ? "matches" : "named")
+              + " '"
+              + shown
+              + "' in this heap dump");
+    }
+    if (base != null
+        && matched.size() == 1
+        && !base.isArray()
+        && base.getInstanceCount() == 0
+        && base.getInstanceSize() == 0
+        && base.getInstanceFields().isEmpty()) {
+      throw new IllegalArgumentException(
+          "instanceof/"
+              + shown
+              + ": '"
+              + shown
+              + "' has no instances, no instance fields and no subclasses in this heap dump, which"
+              + " is what an interface looks like. A heap dump records each class's superclass but"
+              + " not the interfaces it implements, so instanceof cannot match through an"
+              + " interface. Use a class the implementations extend (for example"
+              + " java.util.AbstractMap instead of java.util.Map) or a glob such as"
+              + " objects/java.util.*Map. (An abstract class with no fields and no subclasses"
+              + " here also gets this message.)");
+    }
   }
 
   private static void addSubclasses(HeapDump dump, String className, Set<String> result) {
@@ -2286,7 +2336,8 @@ public final class HdumpPathEvaluator {
     for (Map<String, Object> row : results) {
       Object idObj = row.get("id");
       if (idObj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = new AliasMap();
+        copy.putAll(row);
         CollectionWasteAnalyzer.addNullWasteColumns(copy);
         enriched.add(copy);
         continue;
@@ -2296,13 +2347,16 @@ public final class HdumpPathEvaluator {
           idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
       HeapObject obj = dump.getObjectById(id).orElse(null);
       if (obj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = new AliasMap();
+        copy.putAll(row);
         CollectionWasteAnalyzer.addNullWasteColumns(copy);
         enriched.add(copy);
         continue;
       }
 
-      Map<String, Object> enrichedRow = new LinkedHashMap<>(row);
+      // AliasMap keeps "class"/"shallow"/"retained" resolvable downstream
+      Map<String, Object> enrichedRow = new AliasMap();
+      enrichedRow.putAll(row);
       if (!CollectionWasteAnalyzer.analyze(obj, enrichedRow, refSize)) {
         CollectionWasteAnalyzer.addNullWasteColumns(enrichedRow);
       }

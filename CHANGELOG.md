@@ -126,6 +126,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **HdumpPath: `instanceof/<interface>` silently matched nothing, and `waste()` gave subclasses
+  null columns that headed `top()` lists (#225).** A heap dump records each class's superclass but
+  not its interfaces (HotSpot's `HPROF_GC_CLASS_DUMP` has no interface list), so
+  `objects/instanceof/java.util.Map` returned 0 objects on a heap with thousands of maps. It now
+  fails and says why when the named class looks like an interface (in the dump, with no
+  instances, no instance fields and no subclasses), and `instanceof` on a name not in the dump
+  fails with `no class named ...`. Jafar's own hints recommended these queries; `hdump_report`,
+  the `hdump_query` tool description, the MCP help and the docs now use `java.util.AbstractMap`,
+  `java.util.AbstractCollection` and globs. `waste()` analyzes a subclass of a supported
+  collection (an anonymous `HashMap`, say) through the fields it inherits, where it used to
+  return null columns; `top()` and `sortBy(... desc)` put rows with a null value last instead of
+  first; and rows after `waste()` keep the `class`/`shallow`/`retained` aliases
 - **HdumpPath: `groupBy(class, agg=sum)` summed object ids, and operators over a missing column
   returned results that read as measurements (#226).** Without `value=`, `sum`/`avg`/`min`/`max`
   took the first numeric column of an object row, which is `id`: on a heap with three `Foo` objects

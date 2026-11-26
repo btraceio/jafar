@@ -564,7 +564,7 @@ public final class HdumpPath {
    * <pre>
    * objects/java.util.LinkedHashMap | cacheStats()
    * objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
-   * objects/instanceof/java.util.Map | cacheStats() | top(10, costPerEntry)
+   * objects/instanceof/java.util.AbstractMap | cacheStats() | top(10, costPerEntry)
    * </pre>
    */
   public record CacheStatsOp() implements PipelineOp {}

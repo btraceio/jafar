@@ -409,9 +409,8 @@ public final class HeapReportGenerator {
             "Run waste() for exact per-object figures",
             wastedEstimate,
             wastedCollections,
-            "Inspect with: objects/instanceof/java.util.Map | waste() | sortBy(wastedBytes desc)",
-            "objects/instanceof/java.util.Map | waste() | filter(wastedBytes > 1MB)"
-                + " | top(10, wastedBytes)"));
+            "Inspect with: objects/java.util.* | waste() | sortBy(wastedBytes desc)",
+            "objects/java.util.* | waste() | filter(wastedBytes > 1MB) | top(10, wastedBytes)"));
   }
 
   // ---- Utilities ----

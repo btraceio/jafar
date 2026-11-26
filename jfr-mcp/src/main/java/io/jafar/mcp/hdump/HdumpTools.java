@@ -244,7 +244,7 @@ public final class HdumpTools {
             + "TYPE SPECIFIERS (after /)\n"
             + "  objects/java.lang.String\n"
             + "  objects/java.util.*                        (glob)\n"
-            + "  objects/instanceof/java.util.Map           (subtypes)\n"
+            + "  objects/instanceof/java.util.AbstractMap   (subclasses; superclasses only, no interfaces)\n"
             + "  objects/int[]  or  objects/[I              (arrays)\n\n"
             + "PREDICATES   [field op value]\n"
             + "  ops: =  !=  >  >=  <  <=  ~(regex)\n"
@@ -588,7 +588,7 @@ public final class HdumpTools {
         objects | top(10, retained)
         classes | top(20, instanceCount)
         objects/java.lang.String | count
-        objects/instanceof/java.util.Map | waste() | top(10, wastedBytes)
+        objects/java.util.* | waste() | top(10, wastedBytes)
         duplicates | sortBy(wastedBytes desc) | top(20)
         gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)
         checkLeaks(detector="duplicate-strings")
@@ -619,7 +619,8 @@ public final class HdumpTools {
         Type specifiers:
         - `objects/java.lang.String`                — exact class
         - `objects/java.util.*`                     — glob pattern
-        - `objects/instanceof/java.util.Map`        — subtypes (polymorphic)
+        - `objects/instanceof/java.util.AbstractMap` — subclasses. Superclasses only: a heap dump records no
+          implemented interfaces, so `instanceof/java.util.Map` fails with an explanation
         - `objects/int[]` or `objects/[I`           — array types
 
         ## classes
@@ -709,7 +710,7 @@ public final class HdumpTools {
         Apply predicates after type expansion:
         ```
         objects | filter(shallow > 1MB)
-        objects/instanceof/java.util.Map | filter(shallow > 100K and class ~ "HashMap")
+        objects/instanceof/java.util.AbstractMap | filter(shallow > 100K and class ~ "HashMap")
         ```
 
         ## Examples
@@ -838,7 +839,7 @@ public final class HdumpTools {
         objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
 
         # High fill ratio caches
-        objects/instanceof/java.util.Map | cacheStats() | sortBy(costPerEntry desc) | top(10)
+        objects/instanceof/java.util.AbstractMap | cacheStats() | sortBy(costPerEntry desc) | top(10)
         ```
 
         ## Thread Memory Attribution
@@ -932,9 +933,9 @@ public final class HdumpTools {
         1. Find LRU caches:
            `objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)`
         2. Expensive caches (high cost per entry):
-           `objects/instanceof/java.util.Map | cacheStats() | sortBy(costPerEntry desc) | top(10)`
+           `objects/instanceof/java.util.AbstractMap | cacheStats() | sortBy(costPerEntry desc) | top(10)`
         3. Overfilled caches:
-           `objects/instanceof/java.util.Map | cacheStats() | filter(fillRatio > 0.9)`
+           `objects/instanceof/java.util.AbstractMap | cacheStats() | filter(fillRatio > 0.9)`
 
         ## Workflow 6: Quick Health Check
         Run `hdump_report` — it executes all analyses and returns severity-ranked findings.
