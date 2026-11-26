@@ -76,4 +76,26 @@ class JsonLinesTest {
         "{\"type\":\"jdk.FileRead\",\"i\":42,\"d\":1.5,\"b\":true,\"s\":\"text\",\"n\":null}",
         json(m));
   }
+
+  @Test
+  void arraysSerializeAsJsonArrays() {
+    // #196: a jdk-backend stackTrace carries an Object[] of frame maps; it rendered as
+    // "frames":"[Ljava.lang.Object;@6f2b958e"
+    Map<String, Object> frame = new LinkedHashMap<>();
+    frame.put("lineNumber", 42);
+    frame.put("type", "Interpreted");
+    Map<String, Object> trace = new LinkedHashMap<>();
+    trace.put("truncated", false);
+    trace.put("frames", new Object[] {frame, null});
+    Map<String, Object> m = new LinkedHashMap<>();
+    m.put("stackTrace", trace);
+    m.put("bytes", new int[] {1, 2});
+    String json = JsonLines.toJson("test.Traced", m);
+    assertTrue(
+        json.contains(
+            "\"stackTrace\":{\"truncated\":false,\"frames\":[{\"lineNumber\":42,\"type\":\"Interpreted\"},null]}"),
+        json);
+    assertTrue(json.contains("\"bytes\":[1,2]"), json);
+    assertFalse(json.contains("[Ljava"), json);
+  }
 }

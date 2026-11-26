@@ -166,13 +166,23 @@ class LiveEventDecoderTest {
     assertTrue(
         frames instanceof Object[] array && array.length > 0,
         "flattened trace carries the frames value: " + structMap);
+    // #196: the frames are the untyped model the jafar backend produces, an Object[] of
+    // flattened frame maps, not the JDK's raw RecordedFrame objects
+    for (Object frame : (Object[]) frames) {
+      assertTrue(frame instanceof Map, "frame flattened to a map: " + frame);
+      assertFalse(frame instanceof jdk.jfr.consumer.RecordedObject, String.valueOf(frame));
+      assertTrue(((Map<?, ?>) frame).containsKey("method"), String.valueOf(frame));
+    }
+    // ...and two conversions of the same event now compare equal by content
+    Object again =
+        ((Map<?, ?>) LiveEventDecoder.decodeFields(event).get("stackTrace")).get("frames");
+    assertTrue(java.util.Arrays.deepEquals((Object[]) frames, (Object[]) again));
     // Shape pin for the file-backend contract — NOT a regression test for btraceio/jafar#187:
     // the reported get-on-stackTrace failure could not be reproduced on any JDK build tested, and
     // per JDK source RecordedEvent.getStackTrace() runs through the very same getValue lookup as
     // the generic route (getTyped = hasField + getValue + type check on JDK 17-26), so no
     // dedicated struct route exists to pin. The projection-equality between two separate
-    // conversions is guarded by liveDecodeCarriesTheSameStackTraceValue. The frames wart itself
-    // (raw Object[] of RecordedFrame in an untyped map) is tracked as btraceio/jafar#196.
+    // conversions is guarded by liveDecodeCarriesTheSameStackTraceValue.
   }
 
   @Test
@@ -184,8 +194,7 @@ class LiveEventDecoderTest {
     assertTrue(decoded.get("stackTrace") instanceof Map, "live decode flattens the struct");
     // The live path rewrites startTime/duration; every other field, stackTrace included, must
     // carry the same value the file-backend conversion produces. Projected equality because the
-    // frames value is the raw Object[] pass-through (btraceio/jafar#196), whose object identity
-    // differs between separate conversions.
+    // frames value is an Object[], and arrays compare by identity in Map.equals.
     assertEquals(projected(plain.get("stackTrace")), projected(decoded.get("stackTrace")));
     assertFalse(String.valueOf(decoded.get("stackTrace")).startsWith("<unconvertible:"));
   }
@@ -221,5 +230,18 @@ class LiveEventDecoderTest {
       return projected(LiveEventDecoder.convertValue(struct));
     }
     return value;
+  }
+
+  @Test
+  void convertValueFlattensObjectArraysAndKeepsPrimitiveArrays() {
+    // #196: arrays follow the jafar backend's untyped model (Values.resolvedDeep)
+    int[] ints = {1, 2, 3};
+    assertSame(ints, LiveEventDecoder.convertValue(ints), "primitive arrays stay as they are");
+    Object[] in = {"a", null, 7L, new Object[] {"nested"}, List.of("x")};
+    Object out = LiveEventDecoder.convertValue(in);
+    assertTrue(out instanceof Object[], String.valueOf(out));
+    assertNotSame(in, out, "an object array is converted element by element, not passed through");
+    assertArrayEquals(
+        new Object[] {"a", null, 7L, new Object[] {"nested"}, List.of("x")}, (Object[]) out);
   }
 }
