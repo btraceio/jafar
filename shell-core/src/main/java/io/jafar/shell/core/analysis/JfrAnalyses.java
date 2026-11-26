@@ -1,6 +1,7 @@
 package io.jafar.shell.core.analysis;
 
 import io.jafar.parser.api.Values;
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.findings.Finding;
 import io.jafar.shell.core.findings.Findings;
 import io.jafar.shell.core.findings.JfrFindings;
@@ -51,6 +52,46 @@ public final class JfrAnalyses {
   }
 
   /**
+   * The event counts of the analysis running on this thread, by session: an analysis asks for them
+   * once per detector and once per nested analysis ({@code diagnose} runs five others), and each
+   * count reads the whole recording, so they are counted once per top-level call. {@code null}
+   * outside an analysis.
+   */
+  private final ThreadLocal<Map<JFRSession, Map<String, Long>>> analysisCounts =
+      new ThreadLocal<>();
+
+  /** Runs {@code analysis} with its event counts shared by everything it calls on this thread. */
+  private <T> T withEventCounts(java.util.concurrent.Callable<T> analysis) throws Exception {
+    if (analysisCounts.get() != null) {
+      return analysis.call(); // nested: share the outer analysis's counts
+    }
+    analysisCounts.set(new java.util.IdentityHashMap<>());
+    try {
+      return analysis.call();
+    } finally {
+      analysisCounts.remove();
+    }
+  }
+
+  /**
+   * The number of events of each type in {@code target}'s recording: counted once per top-level
+   * analysis (see {@link #withEventCounts}), and afresh on every call outside one.
+   */
+  private Map<String, Long> eventCounts(AnalysisTarget target) throws Exception {
+    Map<JFRSession, Map<String, Long>> counts = analysisCounts.get();
+    if (counts == null) {
+      return evaluator.countAllEventTypes(target.session());
+    }
+    Map<String, Long> known = counts.get(target.session());
+    if (known == null) {
+      // Unmodifiable: every caller in the analysis gets the same map.
+      known = java.util.Collections.unmodifiableMap(evaluator.countAllEventTypes(target.session()));
+      counts.put(target.session(), known);
+    }
+    return known;
+  }
+
+  /**
    * What is in this recording: event totals, the dominant types, and the highlights that decide
    * where to look next.
    *
@@ -58,6 +99,11 @@ public final class JfrAnalyses {
    * difference between O(file) and O(types x file) on a large recording.
    */
   public Map<String, Object> summary(AnalysisTarget target, Progress progress) throws Exception {
+    return withEventCounts(() -> summaryCounted(target, progress));
+  }
+
+  private Map<String, Object> summaryCounted(AnalysisTarget target, Progress progress)
+      throws Exception {
     {
       Map<String, Object> result = new LinkedHashMap<>();
 
@@ -67,7 +113,7 @@ public final class JfrAnalyses {
 
       // Single-pass count of all event types — O(file_size) instead of O(N × file_size)
       progress.step(0, 2, "Counting events...");
-      Map<String, Long> rawCounts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> rawCounts = eventCounts(target);
       progress.step(1, 2, "Aggregating...");
 
       Map<String, Long> eventCounts = new LinkedHashMap<>();
@@ -388,6 +434,11 @@ public final class JfrAnalyses {
 
   public Map<String, Object> exceptions(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
+    return withEventCounts(() -> exceptionsCounted(target, args, progress));
+  }
+
+  private Map<String, Object> exceptionsCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
     int minCount = args.get("minCount") instanceof Number n ? n.intValue() : 1;
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
@@ -516,7 +567,7 @@ public final class JfrAnalyses {
       "jdk.JavaExceptionThrow", "datadog.ExceptionSample", "jdk.ExceptionStatistics"
     };
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       for (String type : candidateTypes) {
         if (counts.getOrDefault(type, 0L) > 0) return type;
       }
@@ -624,6 +675,11 @@ public final class JfrAnalyses {
 
   public Map<String, Object> hotmethods(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
+    return withEventCounts(() -> hotmethodsCounted(target, args, progress));
+  }
+
+  private Map<String, Object> hotmethodsCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 20;
     boolean includeNative = args.get("includeNative") instanceof Boolean b ? b : true;
@@ -717,7 +773,7 @@ public final class JfrAnalyses {
       "jdk.ExecutionSample", "datadog.ExecutionSample", "jdk.NativeMethodSample"
     };
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       for (String type : candidateTypes) {
         if (counts.getOrDefault(type, 0L) > 0) return type;
       }
@@ -728,7 +784,7 @@ public final class JfrAnalyses {
 
   String detectQueueTimeEventType(AnalysisTarget target) {
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       return counts.getOrDefault("datadog.QueueTime", 0L) > 0 ? "datadog.QueueTime" : null;
     } catch (Exception ignored) {
       return null;
@@ -743,7 +799,7 @@ public final class JfrAnalyses {
       "jdk.ObjectAllocationOutsideTLAB"
     };
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       for (String type : candidateTypes) {
         if (counts.getOrDefault(type, 0L) > 0) return type;
       }
@@ -764,6 +820,11 @@ public final class JfrAnalyses {
 
   public Map<String, Object> use(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
+    return withEventCounts(() -> useCounted(target, args, progress));
+  }
+
+  private Map<String, Object> useCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     boolean includeInsights = args.get("includeInsights") instanceof Boolean b ? b : true;
@@ -1584,6 +1645,11 @@ public final class JfrAnalyses {
 
   public Map<String, Object> tsa(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
+    return withEventCounts(() -> tsaCounted(target, args, progress));
+  }
+
+  private Map<String, Object> tsaCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     int topThreads = args.get("topThreads") instanceof Number n ? n.intValue() : 10;
@@ -2230,6 +2296,11 @@ public final class JfrAnalyses {
   }
 
   public Map<String, Object> diagnose(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
+    return withEventCounts(() -> diagnoseCounted(target, args, progress));
+  }
+
+  private Map<String, Object> diagnoseCounted(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     Boolean includeAnalysis = args.get("includeAnalysis") instanceof Boolean b ? b : true;
     String depth = args.get("depth") instanceof String d ? d : "full";
