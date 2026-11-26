@@ -610,6 +610,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vars --info` show `<hidden, ends in "TAIL">`. The stored value is unchanged
 
 ### Changed
+- **`count()` without a filter reads event headers only, and analyses count once** - an
+  unfiltered `count()` and `countAllEventTypes` count from the event headers
+  (`UntypedJafarParser.countEvents`) instead of decoding every event, and each top-level
+  analysis (`diagnose`, `summary`, `exceptions`, `hotmethods`, `use`, `tsa`) counts the recording
+  once instead of once per detector and nested analysis (10 times in one `diagnose`). Phase 0 of
+  [doc/plans/jfr-sidecar-index.md](doc/plans/jfr-sidecar-index.md)
 - **Varints are decoded by a loop the JIT inlines, and a header's `startTime` costs less.** The
   unrolled decoder (354 bytes of bytecode) was too large to inline, and in its compiled body the
   reads of bytes 2 to 9 stayed calls, so every multi-byte varint, a `startTime` among them, paid

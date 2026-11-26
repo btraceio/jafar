@@ -1,7 +1,7 @@
 # JFR sidecar index: persisted per-chunk statistics for a recording
 
-Status: design accepted 2026-11-26; every decision in section 14 was taken as recommended. No
-production code exists yet; phase 0 (section 13) is next. Step 4 of "JFR as a query engine"; steps 1
+Status: design accepted 2026-11-26; every decision in section 14 was taken as recommended. Phase 0
+(section 13, tasks 0.1 and 0.2) is implemented; no index code exists yet. Step 4 of "JFR as a query engine"; steps 1
 and 2 (type filter, time-range chunk pruning) are implemented
 ([jfrpath-predicate-pushdown.md](jfrpath-predicate-pushdown.md), sections 10 and 11). The numbers
 in section 3.3 come from throwaway code that was not committed; every other number is cited.
