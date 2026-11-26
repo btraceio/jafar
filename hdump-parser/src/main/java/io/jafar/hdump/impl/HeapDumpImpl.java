@@ -1647,7 +1647,6 @@ public final class HeapDumpImpl implements HeapDump {
   /** The slots handed out by {@link #getThreadLocalReader()}; guarded by itself. */
   private final List<ReaderSlot> readerSlots = new ArrayList<>();
 
-
   /** How many threads' views this dump holds; for tests. */
   int readerSlotCount() {
     synchronized (readerSlots) {
