@@ -138,8 +138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does every fixed `DateTimeFormatter.ofPattern`. A `timerange(format=...)`/`asDateTime(format=...)`
   pattern is formatted in `Locale.US` on every machine: with `MMM` or `EEE` it printed "Aug." and
   "Di." under de-DE and Cyrillic names under ru-RU. Output is unchanged on an en-US machine; other
-  English locales now get the US conventions too (`PM` rather than `pm`/`p.m.`, Sunday-start
-  week numbers for `w`/`Y`/`e`, US zone abbreviations). The time zone is still the machine's. Under a
+  English locales now get the US conventions too (`PM` rather than `pm`/`p.m.`, US week numbering
+  for `w`/`W`/`Y`/`e`/`c`, US zone abbreviations). The time zone is still the machine's. Under a
   locale with non-ASCII digits (ar-EG, fa-IR, ...) jafar-processor's `%d` template generated
   `requireStorage(metadata, metaField, ٠, ...)`, which does not compile; it now writes ASCII
   digits. Arch rule (j) fails the build on a new default-locale call (`doc/agents/Gates.md`)

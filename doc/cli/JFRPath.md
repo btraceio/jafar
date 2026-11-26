@@ -936,7 +936,8 @@ Computes the min/max time span covered by events. Returns a single-row summary w
 - `duration` - Duration field; if present, max is computed as `startTime + duration`
 - `format` - Output format string for `minTime`/`maxTime` (default: ISO local datetime). A
   `java.time` pattern, formatted with US English conventions on every machine: month, day, era
-  and zone names, the `AM`/`PM` marker, and Sunday-start weeks for `w`/`Y`/`e`. The time zone is
+  and zone names, the `AM`/`PM` marker, and US week numbering for `w`/`W`/`Y`/`e`/`c` (weeks start
+  on Sunday; week 1 is the one containing 1 January). The time zone is
   the machine's
 
 **Output fields**: `count`, `field`, `minEpochNanos`, `maxEpochNanos`, `minTime`, `maxTime`, `durationNanos`, `durationMs`, `duration`
