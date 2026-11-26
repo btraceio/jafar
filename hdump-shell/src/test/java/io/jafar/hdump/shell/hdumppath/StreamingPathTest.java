@@ -281,4 +281,60 @@ class StreamingPathTest {
     // the count has one type
     assertInstanceOf(Long.class, inMemory("objects | groupBy(class)").get(0).get("count"));
   }
+
+  @Test
+  void groupByDefaultFieldIsOnePerGroupAndNeverAnIdentifier(@TempDir Path dir) throws IOException {
+    // Two JAVA_FRAME roots: the first points at an object that is not in the dump (no shallowSize,
+    // only threadSerial/frameNumber), the second at the HashMap. Per-row default fields added the
+    // thread serial into the shallow-size sum.
+    Path hprof =
+        new MinimalHprofBuilder()
+            .addClass(1, "java/lang/Object")
+            .addClass(
+                3,
+                "java/util/HashMap",
+                1,
+                new Field("table", TYPE_OBJECT),
+                new Field("size", TYPE_INT))
+            .addInstance(100, 3, fieldData().ref(0).i32(0).bytes())
+            .addJavaFrameRoot(999_999, 6, 2)
+            .addJavaFrameRoot(100, 7, 3)
+            .write(dir);
+    try (HeapSession s = HeapSession.open(hprof)) {
+      double shallow =
+          ((Number)
+                  HdumpPathEvaluator.evaluate(
+                          s, HdumpPathParser.parse("objects/java.util.HashMap | sum(shallow)"))
+                      .get(0)
+                      .get("shallow"))
+              .doubleValue();
+      Map<String, Object> row =
+          HdumpPathEvaluator.evaluate(
+                  s, HdumpPathParser.parse("gcroots/JAVA_FRAME | groupBy(type, agg=sum)"))
+              .get(0);
+      assertEquals(shallow, ((Number) row.get("sum")).doubleValue(), row.toString());
+    }
+  }
+
+  @Test
+  void groupByCountIsNamedCountWhateverValueSays() {
+    // Was named "shallow" (and formatted as bytes); top(3, count) then failed
+    List<Map<String, Object>> rows =
+        inMemory("objects | groupBy(class, agg=count, value=shallow) | top(3, count)");
+    assertEquals(3, rows.size());
+    assertTrue(rows.get(0).containsKey("count"), rows.get(0).toString());
+  }
+
+  @Test
+  void groupByWithoutFieldsSortedByKeyDoesNotFail() {
+    // Was ArrayIndexOutOfBoundsException (no group field to sort by)
+    assertEquals(1, inMemory("objects | groupBy(agg=sum, sortBy=key)").size());
+    assertEquals(1, run("objects | groupBy(agg=sum, sortBy=key)").size());
+  }
+
+  @Test
+  void groupByNullKeysSortLastDescendingToo() {
+    List<Map<String, Object>> desc = inMemory("objects | groupBy(arrayLength, sortBy=key)");
+    assertNull(desc.get(desc.size() - 1).get("arrayLength"), desc.toString());
+  }
 }

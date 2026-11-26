@@ -48,9 +48,12 @@ public final class MinimalHprofBuilder {
 
   private record GcRoot(long objectId) {}
 
+  private record JavaFrameRoot(long objectId, int threadSerial, int frameNumber) {}
+
   private final List<ClassDef> classes = new ArrayList<>();
   private final List<Instance> instances = new ArrayList<>();
   private final List<GcRoot> roots = new ArrayList<>();
+  private final List<JavaFrameRoot> frameRoots = new ArrayList<>();
   private final List<ObjArray> arrays = new ArrayList<>();
   private final List<PrimArray> primArrays = new ArrayList<>();
 
@@ -125,6 +128,12 @@ public final class MinimalHprofBuilder {
 
   public static FieldData fieldData() {
     return new FieldData();
+  }
+
+  /** Adds a ROOT_JAVA_FRAME GC root (the object id need not exist in the dump). */
+  public MinimalHprofBuilder addJavaFrameRoot(long objectId, int threadSerial, int frameNumber) {
+    frameRoots.add(new JavaFrameRoot(objectId, threadSerial, frameNumber));
+    return this;
   }
 
   /** Adds a ROOT_UNKNOWN GC root for the given object. */
@@ -211,6 +220,14 @@ public final class MinimalHprofBuilder {
       h.writeInt(arr.length);
       h.writeByte(arr.elemType);
       h.write(new byte[arr.length * fieldWidth(arr.elemType)]);
+    }
+
+    // ROOT_JAVA_FRAME: id, u4 thread serial, u4 frame number
+    for (JavaFrameRoot root : frameRoots) {
+      h.writeByte(0x03);
+      h.writeLong(root.objectId);
+      h.writeInt(root.threadSerial);
+      h.writeInt(root.frameNumber);
     }
 
     // ROOT_UNKNOWN for every registered root

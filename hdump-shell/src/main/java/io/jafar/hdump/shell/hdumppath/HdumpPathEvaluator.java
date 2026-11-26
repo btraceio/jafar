@@ -112,9 +112,10 @@ public final class HdumpPathEvaluator {
 
   /**
    * The column a {@code groupBy} aggregates when it has no {@code value=}: {@code shallowSize}
-   * where the rows carry it (objects), otherwise the first numeric column that is not an
-   * identifier. Never {@code id}: summing object ids is meaningless, and it is what {@code
-   * groupBy(class, agg=sum)} used to return.
+   * where the rows carry it (objects), otherwise the first numeric column that is not an identifier
+   * ({@code id}, {@code objectId}, a GC root's {@code threadSerial} or {@code frameNumber}).
+   * Summing object ids is meaningless, and it is what {@code groupBy(class, agg=sum)} used to
+   * return.
    */
   static String defaultAggregationField(Map<String, Object> row) {
     if (row.get(ObjectFields.SHALLOW_SIZE) instanceof Number) {
@@ -124,7 +125,9 @@ public final class HdumpPathEvaluator {
       String k = e.getKey();
       if (e.getValue() instanceof Number
           && !ObjectFields.ID.equals(k)
-          && !GcRootFields.OBJECT_ID.equals(k)) {
+          && !GcRootFields.OBJECT_ID.equals(k)
+          && !GcRootFields.THREAD_SERIAL.equals(k)
+          && !GcRootFields.FRAME_NUMBER.equals(k)) {
         return k;
       }
     }
@@ -362,10 +365,6 @@ public final class HdumpPathEvaluator {
   }
 
   /**
-   * Streaming evaluation from a filtered stream for groupBy operations. Accumulates groups as we
-   * stream to avoid materializing all objects.
-   */
-  /**
    * The one {@code groupBy} implementation, for materialized rows and for the streaming path alike,
    * so both give the same result (they were two implementations that disagreed on NaN, empty
    * groups, the {@code sortBy=value} column, null order and the count's type). Groups come out in
@@ -374,7 +373,6 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> groupRows(
       Stream<Map<String, Object>> rows, GroupByOp op) {
     Map<List<Object>, GroupAccumulator> groups = new LinkedHashMap<>();
-    long[] counter = {0};
 
     rows.forEach(
         map -> {
@@ -388,8 +386,6 @@ public final class HdumpPathEvaluator {
           // Get or create accumulator for this group
           GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(k, op));
           acc.accumulate(map, op);
-
-          counter[0]++;
         });
 
     // Convert groups to result maps
@@ -401,6 +397,9 @@ public final class HdumpPathEvaluator {
       // Translate "key" or "value" to actual column name
       String sortColumn;
       if ("key".equals(op.sortBy())) {
+        if (op.groupFields().isEmpty()) {
+          return results; // groupBy(agg=...) without fields: one group, no key to sort by
+        }
         sortColumn = op.groupFields().get(0); // Sort by first group field
       } else if ("value".equals(op.sortBy())) {
         // Use same logic as toResultMap() to determine actual column name
@@ -496,6 +495,9 @@ public final class HdumpPathEvaluator {
     private double sum = 0.0;
     private double min = Double.POSITIVE_INFINITY;
     private double max = Double.NEGATIVE_INFINITY;
+    // Without value=: the field this group aggregates, fixed by the first row that offers one, so
+    // rows with different columns (a GC root whose object is unresolvable) are skipped, not mixed
+    private String defaultField;
 
     GroupAccumulator(List<Object> key, GroupByOp op) {
       this.key = key;
@@ -509,9 +511,11 @@ public final class HdumpPathEvaluator {
       if (op.valueExpr() != null) {
         value = op.valueExpr().evaluate(row);
       } else if (op.aggregation() != AggOp.COUNT) {
-        // Same default as the in-memory path: shallowSize, never an id
-        String field = defaultAggregationField(row);
-        value = field != null ? row.get(field) : null;
+        // shallowSize where rows carry it, never an identifier; one field per group
+        if (defaultField == null) {
+          defaultField = defaultAggregationField(row);
+        }
+        value = defaultField != null ? row.get(defaultField) : null;
       } else {
         value = null;
       }
@@ -1787,6 +1791,11 @@ public final class HdumpPathEvaluator {
    * avg, etc.).
    */
   private static String getAggregationColumnName(GroupByOp op) {
+    // A count is a count of rows, whatever value= says: naming it after a memory field broke
+    // "groupBy(class, count(shallow)) | top(3, count)" and made the formatter print it as bytes
+    if (op.aggregation() == AggOp.COUNT) {
+      return "count";
+    }
     // Try to extract field name from valueExpr
     String fieldName = extractFieldNameFromExpr(op.valueExpr());
 
