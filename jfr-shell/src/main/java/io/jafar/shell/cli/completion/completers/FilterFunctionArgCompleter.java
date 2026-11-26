@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -63,9 +64,9 @@ public final class FilterFunctionArgCompleter implements ContextCompleter {
 
     // First parameter: field names from the event type
     if (paramIndex == 0) {
-      String lowerPartial = partial.toLowerCase();
+      String lowerPartial = partial.toLowerCase(Locale.ROOT);
       for (String fieldName : metadata.getFieldNames(eventType)) {
-        if (fieldName.toLowerCase().startsWith(lowerPartial)) {
+        if (fieldName.toLowerCase(Locale.ROOT).startsWith(lowerPartial)) {
           candidates.add(noSpace(jlineWordPrefix + fieldName));
         }
       }
@@ -85,7 +86,7 @@ public final class FilterFunctionArgCompleter implements ContextCompleter {
     switch (param.type()) {
       case ENUM -> {
         for (String val : param.enumValues()) {
-          if (val.toLowerCase().startsWith(partial.toLowerCase())) {
+          if (val.toLowerCase(Locale.ROOT).startsWith(partial.toLowerCase(Locale.ROOT))) {
             candidates.add(noSpace(jlineWordPrefix + val));
           }
         }

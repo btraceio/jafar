@@ -815,7 +815,7 @@ public final class JfrAnalyses {
         || methodName.contains(">::")
         || methodName.contains("::")
         || methodName.startsWith("_")
-        || methodName.toLowerCase().contains("atomic");
+        || methodName.toLowerCase(Locale.ROOT).contains("atomic");
   }
 
   public Map<String, Object> use(AnalysisTarget target, Map<String, Object> args, Progress progress)

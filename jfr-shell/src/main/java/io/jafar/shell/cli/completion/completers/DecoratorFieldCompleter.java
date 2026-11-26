@@ -5,6 +5,7 @@ import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -39,11 +40,11 @@ public final class DecoratorFieldCompleter implements ContextCompleter {
       return;
     }
 
-    String lowerPartial = partial.toLowerCase();
+    String lowerPartial = partial.toLowerCase(Locale.ROOT);
     List<String> fieldNames = metadata.getFieldNames(decoratorEventType);
 
     for (String fieldName : fieldNames) {
-      if (fieldName.toLowerCase().startsWith(lowerPartial)) {
+      if (fieldName.toLowerCase(Locale.ROOT).startsWith(lowerPartial)) {
         // Include the $decorator. prefix in the candidate value
         candidates.add(noSpace(decoratorPrefix + fieldName));
       }

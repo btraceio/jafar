@@ -89,7 +89,7 @@ public final class InteractiveMenu {
     if (input == null || input.isBlank()) {
       return defaultValue;
     }
-    return input.trim().toLowerCase().startsWith("y");
+    return input.trim().toLowerCase(Locale.ROOT).startsWith("y");
   }
 
   /**
