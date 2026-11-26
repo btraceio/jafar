@@ -41,9 +41,13 @@ final class CompareOutput {
     }
 
     out.append("\nEvent rates (per second)\n");
-    out.append(
-        String.format(
-            Locale.ROOT, "  %-32s %12s %12s %9s%n", "", "baseline", "candidate", "delta"));
+    if (result.metrics().isEmpty()) {
+      out.append("  none: event rates need two JFR recordings\n");
+    } else {
+      out.append(
+          String.format(
+              Locale.ROOT, "  %-32s %12s %12s %9s%n", "", "baseline", "candidate", "delta"));
+    }
     for (Map<String, Object> metric : result.metrics()) {
       Object deltaPct = metric.get("deltaPct");
       out.append(
@@ -79,6 +83,22 @@ final class CompareOutput {
   }
 
   private static void side(StringBuilder out, String label, RecordingProfile profile) {
+    if (!profile.isJfr()) {
+      out.append(
+          String.format(
+              Locale.ROOT,
+              "%s %s: %s %s (%s, %s), %,d %s over %.1fs%n",
+              label,
+              profile.recordingPath(),
+              profile.format(),
+              profile.eventType(),
+              profile.samplerKind(),
+              profile.sampleTypeReason(),
+              profile.sampleCount(),
+              profile.countsKnown() ? "samples" : "sample records",
+              profile.durationSeconds()));
+      return;
+    }
     out.append(
         String.format(
             Locale.ROOT,
