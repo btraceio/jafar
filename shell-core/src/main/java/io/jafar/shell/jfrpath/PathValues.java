@@ -200,14 +200,9 @@ final class PathValues {
       String seg = segs.get(si);
       int b = seg.indexOf('[');
       if (b < 0) {
-        // No brackets - check if segment is a numeric index
-        try {
-          int index = Integer.parseInt(seg);
-          tokens.add(index);
-        } catch (NumberFormatException e) {
-          // Not a number, add as string
-          tokens.add(seg);
-        }
+        // No brackets: a numeric segment is an index, anything else a field name
+        Integer index = parseIndex(seg);
+        tokens.add(index != null ? index : seg);
         continue;
       }
       String name = seg.substring(0, b);
@@ -232,16 +227,34 @@ final class PathValues {
           Slice sl = parseSlice("[" + inside + "]");
           if (sl != null) tokens.add(sl);
         } else {
-          try {
-            tokens.add(Integer.parseInt(inside));
-          } catch (Exception ignore) {
-            // not a numeric token; skip it
-          }
+          Integer index = parseIndex(inside);
+          if (index != null) tokens.add(index); // not a numeric token: skip it
         }
         i = e + 1;
       }
     }
     return tokens;
+  }
+
+  /**
+   * {@code s} as {@link Integer#parseInt} reads it (an optional sign, then decimal digits), or
+   * {@code null} where parseInt would throw. Checked before parsing because this runs for every
+   * path segment of every event a filter tests: a field name is the common case, and a thrown
+   * {@link NumberFormatException} per segment dominated filtered queries.
+   */
+  static Integer parseIndex(String s) {
+    int n = s.length();
+    int i = n > 0 && (s.charAt(0) == '-' || s.charAt(0) == '+') ? 1 : 0;
+    if (i == n) return null;
+    for (int j = i; j < n; j++) {
+      // Character.digit, not '0'..'9': parseInt accepts every Unicode decimal digit
+      if (Character.digit(s.charAt(j), 10) < 0) return null;
+    }
+    try {
+      return Integer.parseInt(s);
+    } catch (NumberFormatException overflow) {
+      return null;
+    }
   }
 
   static String baseName(String seg) {
