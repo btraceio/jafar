@@ -20,11 +20,13 @@ import org.slf4j.LoggerFactory;
  *   <li>Starts BFS from a target object
  *   <li>Stops expanding at objects with multiple inbound references (shared objects)
  *   <li>Sums shallow sizes of exclusively reachable objects
- *   <li>Under-estimates by ~10-20% but runs ~5× faster than exact dominator computation
+ *   <li>Under-estimates: everything behind a shared object is left out
  * </ul>
  *
- * <p><strong>Performance:</strong> O(V + E) per object where V = reachable objects, E = edges. Much
- * faster than O(N²) exact dominator computation for targeted queries.
+ * <p><strong>Performance:</strong> {@link #computeMinRetainedSize} is a BFS per object, O(V + E) of
+ * the visited part. In IN_MEMORY mode {@code computeAll} computes the same values for all objects
+ * at once in O((N + E) log E) ({@link MinRetainedSizes}); a per-object BFS for all objects is
+ * quadratic on singly linked chains. The INDEXED (streaming) mode still runs one BFS per object.
  *
  * <p><strong>Accuracy:</strong> Conservative under-estimate. Good enough for leak detection where
  * order-of-magnitude accuracy is sufficient.
@@ -166,18 +168,23 @@ public final class ApproximateRetainedSizeComputer {
         progressCallback.onProgress(0.3, "Computing approximate retained sizes...");
       }
     } else {
-      // In-memory mode: build inbound counts from object map
+      // In-memory mode: all objects at once on the int graph (same definition, near-linear).
       if (progressCallback != null) {
-        progressCallback.onProgress(0.0, "Building inbound reference counts...");
+        progressCallback.onProgress(0.0, "Building reference graph...");
       }
-      LOG.debug("Computing inbound reference counts for {} objects...", totalObjects);
-      Long2IntOpenHashMap inboundCountMap =
-          buildInboundReferenceCounts(objectsById, totalObjects, progressCallback);
-      inboundCounts = new InMemoryInboundCountAccessor(inboundCountMap);
-
+      HeapGraph graph = HeapGraph.build(objectsById);
       if (progressCallback != null) {
         progressCallback.onProgress(0.3, "Computing approximate retained sizes...");
       }
+      long[] sizes = MinRetainedSizes.compute(graph);
+      for (int v = 0; v < sizes.length; v++) {
+        graph.nodes[v].setRetainedSize(sizes[v]);
+      }
+      if (progressCallback != null) {
+        progressCallback.onProgress(1.0, "Approximate retained size computation complete");
+      }
+      LOG.debug("Completed approximate retained size computation for {} objects", sizes.length);
+      return;
     }
 
     LOG.debug("Computing approximate retained sizes...");
@@ -282,57 +289,6 @@ public final class ApproximateRetainedSizeComputer {
    */
   public static long computeMinRetainedSize(HeapObject target, Long2IntOpenHashMap inboundCounts) {
     return computeMinRetainedSize(target, new InMemoryInboundCountAccessor(inboundCounts));
-  }
-
-  /**
-   * Builds a map of object ID to inbound reference count.
-   *
-   * <p>Iterates through all objects and counts how many times each object is referenced. This is a
-   * one-time O(V + E) operation where V = objects, E = references.
-   *
-   * @param objectsById map of all objects in the heap
-   * @param totalObjects total number of objects for progress reporting
-   * @param progressCallback optional callback for progress updates
-   * @return map from object ID to inbound reference count
-   */
-  private static Long2IntOpenHashMap buildInboundReferenceCounts(
-      Long2ObjectMap<HeapObjectImpl> objectsById,
-      int totalObjects,
-      ProgressCallback progressCallback) {
-    // Pre-size map to avoid rehashing with 114M+ entries (fixes OOM)
-    // Each entry ~16 bytes, so 114M entries = ~1.8GB
-    Long2IntOpenHashMap counts = new Long2IntOpenHashMap(totalObjects);
-    counts.defaultReturnValue(0);
-
-    int processed = 0;
-    int lastReportedPercent = 0;
-    // Hoist constant outside the loop — recomputing per iteration wastes time for 100M+ objects
-    int reportingInterval =
-        totalObjects > 10_000_000 ? totalObjects / 100 : Math.max(totalObjects / 20, 100000);
-
-    for (HeapObjectImpl obj : objectsById.values()) {
-      // Use direct long[] access instead of Stream to avoid 1.14B allocations
-      long[] refIds = obj.getStrongOutboundReferenceIds();
-      for (int i = 0; i < refIds.length; i++) {
-        counts.addTo(refIds[i], 1);
-      }
-
-      processed++;
-
-      if (progressCallback != null && processed % reportingInterval == 0) {
-        double progress = 0.3 * (processed / (double) totalObjects);
-        int percentComplete = (int) (progress * 100);
-        if (percentComplete > lastReportedPercent) {
-          progressCallback.onProgress(
-              progress,
-              String.format(
-                  "Scanning object references from heap dump (%d%%)...", percentComplete));
-          lastReportedPercent = percentComplete;
-        }
-      }
-    }
-
-    return counts;
   }
 
   /**

@@ -1,6 +1,7 @@
 package io.jafar.hdump.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -13,6 +14,7 @@ import io.jafar.hdump.test.GraphHeapDumpWriter;
 import io.jafar.hdump.test.GraphHeapDumpWriter.RootType;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -286,6 +288,47 @@ class DominatorOracleTest {
     }
   }
 
+  /**
+   * An unreachable cycle of once-referenced objects with a long once-referenced chain hanging off
+   * it (an orphaned singly linked list whose head keeps an owner back-pointer). Every cycle member
+   * expands the cycle and the whole chain; every chain node expands its suffix.
+   */
+  @Test
+  void longChainBelowCycle(@TempDir Path dir) throws IOException {
+    GraphHeapDumpWriter small = cycleWithTail(3, 2_000);
+    small.addRoot(small.addInstance(), RootType.JAVA_FRAME);
+    verifyAll(small, dir, 1 << 24);
+
+    int tail = 200_000;
+    GraphHeapDumpWriter w = cycleWithTail(2, tail);
+    Path file = dir.resolve("cycle-tail.hprof");
+    w.write(file, 1 << 22);
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
+      long[] shallow = shallowSizes(dump, w);
+      int n = w.nodeCount(); // nodes 0..1 cycle, 2..n-1 the chain
+      long[] suffix = new long[n + 1];
+      for (int i = n - 1; i >= 2; i--) suffix[i] = suffix[i + 1] + shallow[i];
+      long all = suffix[2] + shallow[0] + shallow[1];
+      assertTimeoutPreemptively(Duration.ofSeconds(60), () -> dump.computeDominators());
+      Mismatches mm = new Mismatches("chain below cycle");
+      for (int v = 0; v < n; v++) {
+        long expected = v < 2 ? all : suffix[v];
+        mm.check(v, "approx", expected, obj(dump, v).getRetainedSizeIfAvailable());
+      }
+      mm.assertNone();
+    }
+  }
+
+  /** Nodes {@code 0 .. cycle-1} form a cycle; node 0 also references the chain's first node. */
+  private static GraphHeapDumpWriter cycleWithTail(int cycle, int tail) {
+    GraphHeapDumpWriter w = new GraphHeapDumpWriter(2);
+    for (int i = 0; i < cycle + tail; i++) w.addInstance();
+    for (int i = 0; i < cycle; i++) w.addEdge(i, (i + 1) % cycle);
+    w.addEdge(0, cycle);
+    for (int i = cycle; i + 1 < cycle + tail; i++) w.addEdge(i, i + 1);
+    return w;
+  }
+
   @Test
   void diamondLadder(@TempDir Path dir) throws IOException {
     GraphHeapDumpWriter w = new GraphHeapDumpWriter(2);
@@ -487,6 +530,21 @@ class DominatorOracleTest {
         assertEquals(target, nodeOf(path.get(path.size() - 1).object()));
         for (int i = 0; i < path.size(); i++) assertEquals(i, nodeOf(path.get(i).object()));
       }
+    }
+
+    // Approximate (minimum) retained size: every node is referenced once, so each one expands the
+    // whole tail. A per-object BFS is quadratic here (2*10^10 visits); the all-objects computation
+    // must finish well inside the test timeout and give the suffix sums.
+    try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.IN_MEMORY)) {
+      long[] shallow = shallowSizes(dump, w);
+      long[] suffix = new long[n + 1];
+      for (int i = n - 1; i >= 0; i--) suffix[i] = suffix[i + 1] + shallow[i];
+      assertTimeoutPreemptively(Duration.ofSeconds(60), () -> dump.computeDominators());
+      Mismatches mm = new Mismatches("chain approximate");
+      for (int v = 0; v < n; v++) {
+        mm.check(v, "approx", suffix[v], obj(dump, v).getRetainedSizeIfAvailable());
+      }
+      mm.assertNone();
     }
   }
 
