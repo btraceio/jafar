@@ -69,7 +69,8 @@ of field maps, and a primitive array stays a primitive array, the same container
 backend's resolved values. Leaf values follow the JDK API: symbols are plain strings, simple types
 are collapsed (`type="Native"`) and ints are `Integer`, so a `tail` filter written against the Jafar
 wrapped form (`method/name/string`, `type/description`) matches nothing; write
-`method/name="..."` and `type="Native"`. Before #196 these paths passed the JDK's raw
+`method/name="..."` and `type="Native"`, which the Jafar-side filter matcher also accepts, so
+the same filter works on both backends. Before #196 these paths passed the JDK's raw
 `RecordedFrame` objects through, and `tail --format json` printed
 `"frames":"[Ljava.lang.Object;@…"`.
 

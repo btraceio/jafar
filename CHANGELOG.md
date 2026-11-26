@@ -142,7 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Live `tail` passed struct arrays through as raw JDK objects (#196).** `stackTrace.frames` was
   an `Object[]` of `jdk.jfr.consumer.RecordedFrame`, so `tail --format json` printed
-  `"frames":"[Ljava.lang.Object;@44f75083"`, the table format the same identity string, and a
+  `"frames":"[Ljava.lang.Object;@44f75083"`, the table format the same identity string once a
+  pipeline lifted the array to the top level (`select(stackTrace/frames)`), and a
   `tail` filter on `stackTrace/frames[0]/...` matched nothing. Object arrays are now converted
   element by element into the containers of the `jafar` backend's resolved values (an `Object[]`
   of field maps; primitive arrays unchanged; leaf values stay the JDK API's, see
