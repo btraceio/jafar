@@ -366,4 +366,3 @@ the wins section 3.2 shows.
   (`EventCountCache.java:80`), not reproduced.
 - `hdump-parser`'s missing identity check was read from `HeapDumpImpl.checkValidIndexes`; I did not
   check whether another layer guards it.
-- The pushdown doc has no section 12; its addenda end at section 11.
