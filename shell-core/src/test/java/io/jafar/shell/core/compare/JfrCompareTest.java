@@ -304,6 +304,30 @@ class JfrCompareTest {
   }
 
   @Test
+  void classNamesAreDottedAfterTheirStableName() {
+    // JFR stores class names as the JVM does, java/lang/String; the key is java.lang.String.
+    CompareResult result =
+        compare(
+            samples(
+                Map.of(
+                    List.of(
+                        "java/lang/String.indexOf",
+                        "java/lang/invoke/LambdaForm$MH/0x00007f2e141a1000.invoke",
+                        "m/Main.main"),
+                    100L)),
+            samples(Map.of(List.of("m/Other.run"), 100L)),
+            SELF_AND_INCLUSIVE);
+    assertEquals(
+        Map.of(
+            "java.lang.String.indexOf", 100L,
+            "java.lang.invoke.LambdaForm$MH.invoke", 100L,
+            "m.Main.main", 100L),
+        result.baseline().inclusiveFrameCounts());
+    assertEquals(
+        "java.lang.String.indexOf", row(result.frames(), "java.lang.String.indexOf").get("method"));
+  }
+
+  @Test
   void accessorsRenumberedBetweenBuildsAreOneFrame() {
     // Seen in a perf-ab run: the same accessor was access$400 in the base build and access$300
     // in the head build, and read as -53 and +57 points.

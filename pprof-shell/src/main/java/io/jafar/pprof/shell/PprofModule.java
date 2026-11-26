@@ -125,6 +125,11 @@ public final class PprofModule implements ShellModule {
   }
 
   @Override
+  public io.jafar.shell.core.compare.ProfileReader profileReader() {
+    return new PprofProfileReader();
+  }
+
+  @Override
   public int getPriority() {
     return 0;
   }

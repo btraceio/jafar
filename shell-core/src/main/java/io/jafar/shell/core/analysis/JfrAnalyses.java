@@ -303,6 +303,18 @@ public final class JfrAnalyses {
   }
 
   public List<String> extractFrames(Map<String, Object> event, String direction, Integer maxDepth) {
+    return extractFrames(event, direction, maxDepth, this::extractMethodName);
+  }
+
+  /**
+   * As {@link #extractFrames(Map, String, Integer)}, naming each frame with {@code frameName}; a
+   * frame it names {@code null} is dropped.
+   */
+  public List<String> extractFrames(
+      Map<String, Object> event,
+      String direction,
+      Integer maxDepth,
+      java.util.function.Function<Object, String> frameName) {
     List<String> frames = new ArrayList<>();
 
     Object stackTrace = event.get("stackTrace");
@@ -340,7 +352,7 @@ public final class JfrAnalyses {
 
     // Extract method names from frames
     for (Object frame : frameArray) {
-      String methodName = extractMethodName(frame);
+      String methodName = frameName.apply(frame);
       if (methodName != null) {
         frames.add(methodName);
       }
@@ -360,8 +372,18 @@ public final class JfrAnalyses {
     return frames;
   }
 
-  @SuppressWarnings("unchecked")
   public String extractMethodName(Object frame) {
+    return extractFrameName(
+        frame,
+        (className, methodName) -> className.isEmpty() ? methodName : className + "." + methodName);
+  }
+
+  /**
+   * A frame's class and method names, unwrapped, passed to {@code naming}; {@code null} when the
+   * frame has neither. Either name is {@code ""} when absent.
+   */
+  @SuppressWarnings("unchecked")
+  public String extractFrameName(Object frame, java.util.function.BinaryOperator<String> naming) {
     if (frame == null) {
       return null;
     }
@@ -419,7 +441,7 @@ public final class JfrAnalyses {
       return null;
     }
 
-    return className.isEmpty() ? methodName : className + "." + methodName;
+    return naming.apply(className, methodName);
   }
 
   public Object unwrapValue(Object obj) {
@@ -809,6 +831,14 @@ public final class JfrAnalyses {
   }
 
   public boolean isNativeMethod(String methodName) {
+    return isNativeFrame(methodName);
+  }
+
+  /**
+   * Whether a frame name looks like a native (C/C++) frame rather than a Java one. Static, so the
+   * comparison can classify frames of any format with the same rule.
+   */
+  public static boolean isNativeFrame(String methodName) {
     if (methodName == null) return false;
     // C++ mangled names typically have < > :: or start with special chars
     return methodName.contains("<")

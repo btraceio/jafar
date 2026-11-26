@@ -1118,6 +1118,21 @@ class ShellArtifactTest {
     }
   }
 
+  /**
+   * {@code jafar-shell compare} in the jar users get: it used to print the unified usage and exit
+   * 2, because only show, metadata, chunks and constants were routed to jfr-shell's command line.
+   */
+  @Test
+  void compareRunsThroughTheJar(@TempDir Path dir) throws Exception {
+    String recording =
+        Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath().toString();
+    Run run = runJarRaw(dir, "", "compare", recording, recording, "--limit", "3");
+    assertEquals(0, run.exit(), () -> run.out() + run.err());
+    assertTrue(
+        run.out().contains("Baseline  " + recording + ": datadog.ExecutionSample"), run.out());
+    assertTrue(run.out().contains("[INFO] No regression above the noise floor"), run.out());
+  }
+
   @Test
   void routesOnlyJfrInvocationsToJfrCommandLine() {
     assertFalse(Main.isJfrCommandLine(new String[] {"script", "-"}));

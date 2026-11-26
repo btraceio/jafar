@@ -106,7 +106,9 @@ public final class JafarPrompts {
               Compare %s (baseline) against %s (candidate).
 
               1. jfr_open both, giving each a clear alias.
-              2. Call jfr_compare with baselineSessionId and candidateSessionId.
+              2. Call jfr_compare with baselineSessionId and candidateSessionId. If either side \
+              is a pprof profile, open it with pprof_open instead and call profile_compare with \
+              {format, sessionId} for each side.
               3. Read the `comparability` block before anything else. If it reports different \
               execution-sample event types, very different durations, or low sample counts, say \
               so in your answer and temper every conclusion accordingly.
