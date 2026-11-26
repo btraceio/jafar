@@ -6,10 +6,15 @@ import io.jafar.hdump.api.HeapDump;
 import io.jafar.hdump.api.HeapField;
 import io.jafar.hdump.api.HeapObject;
 import io.jafar.hdump.api.PathStep;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
@@ -71,6 +76,13 @@ public final class PathFinder {
       if (root.getObjectId() == targetId) {
         return List.of(new PathStep(target, null));
       }
+    }
+
+    if (dump instanceof HeapDumpImpl impl) {
+      HeapGraph graph = impl.pathGraph();
+      return graph != null
+          ? findShortestPathOnGraph(impl, graph, target, gcRoots)
+          : findShortestPathById(impl, target, gcRoots);
     }
 
     // BFS from GC roots, tracking the incoming edge (parent + field name) per object
@@ -146,6 +158,220 @@ public final class PathFinder {
     // Reverse to get path from root to target
     Collections.reverse(path);
     return path;
+  }
+
+  /** Parent value of a BFS start object (GC root or static-field target). Ids are never 0. */
+  private static final long START = 0L;
+
+  /** Queries answered by a fast path (graph or id BFS); lets tests prove the dispatch. */
+  static final java.util.concurrent.atomic.AtomicLong FAST_PATH_QUERIES =
+      new java.util.concurrent.atomic.AtomicLong();
+
+  /**
+   * The same BFS as the generic path — same start order, same neighbour order, same tie breaking —
+   * but over object ids and the cached strong-reference id arrays: no field-value maps are built
+   * (they are cached per object, so the generic BFS keeps a decoded map for every object it
+   * visits), no boxing, no per-element strings. Field names are resolved only for the objects on
+   * the path found.
+   *
+   * <p>Equivalence with {@link #visitOutboundEdges}: for an instance, the strong reference ids are
+   * the non-null object fields in {@link HeapClassImpl#getAllInstanceFields()} order, without
+   * {@code referent}/{@code discovered} on {@code Reference} subclasses — the field-value map in
+   * the same order, as long as no two fields share a name. Classes with a shadowed field name use
+   * {@link #visitOutboundEdges} itself. For an object array, the ids are the non-null elements in
+   * index order. Ids that name no object are skipped, as the generic path never sees them.
+   */
+  private static List<PathStep> findShortestPathById(
+      HeapDumpImpl dump, HeapObject target, List<GcRootImpl> gcRoots) {
+    long targetId = target.getId();
+    FAST_PATH_QUERIES.incrementAndGet();
+    Long2LongOpenHashMap parent = new Long2LongOpenHashMap();
+    Long2ObjectOpenHashMap<String> startNames = new Long2ObjectOpenHashMap<>();
+    LongArrayList queue = new LongArrayList();
+
+    for (GcRoot root : gcRoots) {
+      long id = root.getObjectId();
+      if (dump.getObjectByIdInternal(id) != null && !parent.containsKey(id)) {
+        parent.put(id, START);
+        queue.add(id);
+      }
+    }
+    for (HeapClass cls : dump.getClasses()) {
+      for (HeapField field : cls.getStaticFields()) {
+        if (!field.isObjectRef() || !(field.getStaticValue() instanceof Long refId)) continue;
+        long id = refId;
+        if (dump.getObjectByIdInternal(id) != null && !parent.containsKey(id)) {
+          parent.put(id, START);
+          startNames.put(id, "static " + cls.getName() + "." + field.getName());
+          queue.add(id);
+        }
+      }
+    }
+
+    boolean found = false;
+    for (int head = 0; head < queue.size(); head++) {
+      long cur = queue.getLong(head);
+      if (cur == targetId) {
+        found = true;
+        break;
+      }
+      HeapObjectImpl obj = dump.getObjectByIdInternal(cur);
+      if (obj == null) {
+        throw new IllegalStateException(
+            "object 0x" + Long.toHexString(cur) + " could not be loaded from the index");
+      }
+      HeapClass cls = obj.getHeapClass();
+      if (!obj.isArray() && cls instanceof HeapClassImpl c && c.hasDuplicateInstanceFieldNames()) {
+        visitOutboundEdges(
+            obj,
+            (fieldName, ref) -> {
+              long id = ref.getId();
+              if (!parent.containsKey(id)) {
+                parent.put(id, cur);
+                queue.add(id);
+              }
+            });
+        continue;
+      }
+      for (long id : obj.getStrongOutboundReferenceIds()) {
+        if (!parent.containsKey(id) && dump.getObjectByIdInternal(id) != null) {
+          parent.put(id, cur);
+          queue.add(id);
+        }
+      }
+    }
+    if (!found) {
+      return List.of();
+    }
+
+    LongArrayList ids = new LongArrayList();
+    for (long id = targetId; id != START; id = parent.get(id)) {
+      ids.add(id);
+    }
+    List<PathStep> path = new ArrayList<>(ids.size());
+    HeapObject prev = null;
+    for (int i = ids.size() - 1; i >= 0; i--) {
+      long id = ids.getLong(i);
+      HeapObject obj = i == 0 ? target : dump.getObjectByIdInternal(id);
+      String fieldName = prev == null ? startNames.get(id) : firstFieldReferencing(prev, id);
+      path.add(new PathStep(obj, fieldName));
+      prev = obj;
+    }
+    return path;
+  }
+
+  /**
+   * {@link #findShortestPathById} on the dump's cached int graph: the same start order, neighbour
+   * order and tie breaking (graph rows are the strong reference ids that name an object, in order),
+   * with an {@code int[]} parent array instead of hash lookups per edge.
+   */
+  private static List<PathStep> findShortestPathOnGraph(
+      HeapDumpImpl dump, HeapGraph g, HeapObject target, List<GcRootImpl> gcRoots) {
+    FAST_PATH_QUERIES.incrementAndGet();
+    int targetNode = g.nodeOf(target.getId());
+    if (targetNode < 0) {
+      return List.of();
+    }
+    final int n = g.size();
+    final int unvisited = -2;
+    final int start = -1;
+    int[] parent = new int[n];
+    Arrays.fill(parent, unvisited);
+    int[] queue = new int[n];
+    int tail = 0;
+    Int2ObjectOpenHashMap<String> startNames = new Int2ObjectOpenHashMap<>();
+
+    for (GcRoot root : gcRoots) {
+      int v = g.nodeOf(root.getObjectId());
+      if (v >= 0 && parent[v] == unvisited) {
+        parent[v] = start;
+        queue[tail++] = v;
+      }
+    }
+    for (HeapClass cls : dump.getClasses()) {
+      for (HeapField field : cls.getStaticFields()) {
+        if (!field.isObjectRef() || !(field.getStaticValue() instanceof Long refId)) continue;
+        int v = g.nodeOf(refId);
+        if (v >= 0 && parent[v] == unvisited) {
+          parent[v] = start;
+          startNames.put(v, "static " + cls.getName() + "." + field.getName());
+          queue[tail++] = v;
+        }
+      }
+    }
+
+    final int[] ss = g.succStart;
+    final int[] su = g.succ;
+    final java.util.BitSet shadowed = g.shadowedFieldNodes;
+    boolean found = false;
+    for (int head = 0; head < tail; head++) {
+      int cur = queue[head];
+      if (cur == targetNode) {
+        found = true;
+        break;
+      }
+      if (shadowed.get(cur)) {
+        int[] t = {tail};
+        visitOutboundEdges(
+            g.nodes[cur],
+            (fieldName, ref) -> {
+              int v = g.nodeOf(ref.getId());
+              if (v >= 0 && parent[v] == unvisited) {
+                parent[v] = cur;
+                queue[t[0]++] = v;
+              }
+            });
+        tail = t[0];
+        continue;
+      }
+      for (int e = ss[cur], end = ss[cur + 1]; e < end; e++) {
+        int v = su[e];
+        if (parent[v] == unvisited) {
+          parent[v] = cur;
+          queue[tail++] = v;
+        }
+      }
+    }
+    if (!found) {
+      return List.of();
+    }
+
+    IntArrayList nodes = new IntArrayList();
+    for (int v = targetNode; v != start; v = parent[v]) {
+      nodes.add(v);
+    }
+    List<PathStep> path = new ArrayList<>(nodes.size());
+    HeapObject prev = null;
+    for (int i = nodes.size() - 1; i >= 0; i--) {
+      int v = nodes.getInt(i);
+      HeapObject obj = i == 0 ? target : g.nodes[v];
+      String fieldName =
+          prev == null ? startNames.get(v) : firstFieldReferencing(prev, g.nodes[v].getId());
+      path.add(new PathStep(obj, fieldName));
+      prev = obj;
+    }
+    return path;
+  }
+
+  /**
+   * The name {@link #visitOutboundEdges} gives the first reference from {@code from} to {@code id}.
+   */
+  private static String firstFieldReferencing(HeapObject from, long id) {
+    if (from instanceof HeapObjectImpl impl && impl.isArray()) {
+      // the first element holding id; the same "[i]" name visitOutboundEdges gives, without
+      // resolving every element of a possibly large array
+      int index = impl.indexOfArrayElement(id);
+      return index >= 0 ? "[" + index + "]" : null;
+    }
+    String[] name = {null};
+    visitOutboundEdges(
+        from,
+        (fieldName, ref) -> {
+          if (name[0] == null && ref.getId() == id) {
+            name[0] = fieldName;
+          }
+        });
+    return name[0];
   }
 
   /**

@@ -149,16 +149,44 @@ final class HeapClassImpl implements HeapClass {
 
   /** Returns true if this class is {@code java.lang.ref.Reference} or a subclass of it. */
   boolean isReferenceSubclass() {
-    if (referenceSubclass == -1) {
-      referenceSubclass = 0;
+    int cached = referenceSubclass;
+    if (cached == -1) {
+      // Computed into a local and published once: a concurrent caller must never see a
+      // provisional 0 for a Reference subclass.
+      cached = 0;
       for (HeapClass c = this; c != null; c = c.getSuperClass()) {
         if (REFERENCE_CLASS_NAME.equals(c.getName())) {
-          referenceSubclass = 1;
+          cached = 1;
           break;
         }
       }
+      referenceSubclass = cached;
     }
-    return referenceSubclass == 1;
+    return cached == 1;
+  }
+
+  // -1 = not computed, 0 = no, 1 = yes
+  private volatile int duplicateFieldNames = -1;
+
+  /**
+   * Returns true if two instance fields of this class (own or inherited) share a name — a subclass
+   * field shadowing a superclass field. {@link HeapObject#getFieldValues()} keeps one entry per
+   * name, so for such classes it is not a field-by-field view of the instance data.
+   */
+  boolean hasDuplicateInstanceFieldNames() {
+    int cached = duplicateFieldNames;
+    if (cached == -1) {
+      java.util.Set<String> seen = new java.util.HashSet<>();
+      cached = 0;
+      for (HeapField f : getAllInstanceFields()) {
+        if (!seen.add(f.getName())) {
+          cached = 1;
+          break;
+        }
+      }
+      duplicateFieldNames = cached;
+    }
+    return cached == 1;
   }
 
   @Override

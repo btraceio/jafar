@@ -10,18 +10,34 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
  * are the {@link HeapObjectImpl#getStrongOutboundReferenceIds() strong outbound references} that
  * name an object of the same map, in compressed-sparse-row form: the successors of node {@code v}
  * are {@code succ[succStart[v] .. succStart[v + 1])}, in reference order, duplicates and self loops
- * kept. The id-to-node index is only used while building.
+ * kept. The id-to-node index is kept only when asked for.
  */
 final class HeapGraph {
 
   final HeapObjectImpl[] nodes; // node -> object
   final int[] succStart; // length nodes + 1
   final int[] succ;
+  final Long2IntOpenHashMap indexOf; // object id -> node (-1 if absent); null unless kept
+  // Instances whose class shadows a field name (HeapClassImpl.hasDuplicateInstanceFieldNames);
+  // null unless the index is kept.
+  final java.util.BitSet shadowedFieldNodes;
 
-  private HeapGraph(HeapObjectImpl[] nodes, int[] succStart, int[] succ) {
+  private HeapGraph(
+      HeapObjectImpl[] nodes,
+      int[] succStart,
+      int[] succ,
+      Long2IntOpenHashMap indexOf,
+      java.util.BitSet shadowedFieldNodes) {
     this.nodes = nodes;
     this.succStart = succStart;
     this.succ = succ;
+    this.indexOf = indexOf;
+    this.shadowedFieldNodes = shadowedFieldNodes;
+  }
+
+  /** Node of {@code id}, or -1. Only on a graph built with {@code keepIndex}. */
+  int nodeOf(long id) {
+    return indexOf.get(id);
   }
 
   int size() {
@@ -29,6 +45,11 @@ final class HeapGraph {
   }
 
   static HeapGraph build(Long2ObjectMap<HeapObjectImpl> objectsById) {
+    return build(objectsById, false);
+  }
+
+  /** Builds the graph; with {@code keepIndex} the id-to-node index is kept for {@link #nodeOf}. */
+  static HeapGraph build(Long2ObjectMap<HeapObjectImpl> objectsById, boolean keepIndex) {
     final int n = objectsById.size();
     HeapObjectImpl[] nodes = new HeapObjectImpl[n];
     Long2IntOpenHashMap indexOf = new Long2IntOpenHashMap(n);
@@ -58,6 +79,18 @@ final class HeapGraph {
       }
       succStart[v + 1] = pos;
     }
-    return new HeapGraph(nodes, succStart, succ);
+    java.util.BitSet shadowed = null;
+    if (keepIndex) {
+      shadowed = new java.util.BitSet();
+      for (int v = 0; v < n; v++) {
+        HeapObjectImpl obj = nodes[v];
+        if (!obj.isArray()
+            && obj.getHeapClass() instanceof HeapClassImpl c
+            && c.hasDuplicateInstanceFieldNames()) {
+          shadowed.set(v);
+        }
+      }
+    }
+    return new HeapGraph(nodes, succStart, succ, keepIndex ? indexOf : null, shadowed);
   }
 }

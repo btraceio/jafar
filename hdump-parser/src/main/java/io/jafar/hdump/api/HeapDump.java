@@ -199,6 +199,10 @@ public interface HeapDump extends Closeable {
    * carries the object at that position and the field name of the reference from the previous step
    * ({@code null} for the GC root).
    *
+   * <p>In IN_MEMORY mode the first call builds a graph of the strong references of all objects
+   * (about 25-45 bytes per object plus 4 bytes per reference) and keeps it for later calls until
+   * {@link #close()}; later calls only traverse it.
+   *
    * @param obj the target object
    * @return list of path steps from GC root to target, or empty list if no path found
    */

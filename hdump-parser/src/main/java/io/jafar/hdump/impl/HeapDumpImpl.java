@@ -2570,6 +2570,37 @@ public final class HeapDumpImpl implements HeapDump {
     return dominated;
   }
 
+  // Strong-reference graph reused by path queries (IN_MEMORY mode only; built on first query,
+  // dropped by close()). Own lock: building must not wait for a dominator computation.
+  private volatile HeapGraph pathGraph;
+  private final Object pathGraphLock = new Object();
+
+  /** The cached path graph if one has been built, without building it. */
+  HeapGraph cachedPathGraph() {
+    return pathGraph;
+  }
+
+  /**
+   * The strong-reference graph of all objects, built on first use and kept for later queries;
+   * {@code null} in INDEXED mode, where objects are not all in memory.
+   */
+  HeapGraph pathGraph() {
+    if (objectIndexReader != null) {
+      return null;
+    }
+    HeapGraph g = pathGraph;
+    if (g == null) {
+      synchronized (pathGraphLock) {
+        g = pathGraph;
+        if (g == null) {
+          g = HeapGraph.build(objectsByIdUnbounded, true);
+          pathGraph = g;
+        }
+      }
+    }
+    return g;
+  }
+
   @Override
   public List<PathStep> findPathToGcRoot(HeapObject obj) {
     return PathFinder.findShortestPath(this, obj, gcRoots);
@@ -2643,6 +2674,10 @@ public final class HeapDumpImpl implements HeapDump {
     }
     if (classInstancesDataReader != null) {
       classInstancesDataReader.close();
+    }
+
+    synchronized (pathGraphLock) {
+      pathGraph = null;
     }
 
     // Clear object caches to free memory

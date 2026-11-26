@@ -434,6 +434,29 @@ final class HeapObjectImpl implements HeapObject {
     }
   }
 
+  /**
+   * Index of the first element of this object array that references {@code id}, or -1 (also for
+   * instances and primitive arrays). Reads the element ids without resolving them to objects.
+   */
+  int indexOfArrayElement(long id) {
+    if (!isObjectArray || arrayLength <= 0 || id == 0) {
+      return -1;
+    }
+    HprofReader reader = dump.getThreadLocalReader();
+    long savedPos = reader.position();
+    try {
+      reader.position(dataPosition);
+      for (int i = 0; i < arrayLength; i++) {
+        if (reader.readId() == id) {
+          return i;
+        }
+      }
+      return -1;
+    } finally {
+      reader.position(savedPos);
+    }
+  }
+
   @Override
   public String getStringValue() {
     if (heapClass == null || !"java/lang/String".equals(heapClass.getName())) {

@@ -172,7 +172,12 @@ public final class ApproximateRetainedSizeComputer {
       if (progressCallback != null) {
         progressCallback.onProgress(0.0, "Building reference graph...");
       }
-      HeapGraph graph = HeapGraph.build(objectsById);
+      // Reuse the path-query graph when one exists (same nodes and edges) instead of holding two.
+      HeapGraph cached = dump.cachedPathGraph();
+      HeapGraph graph =
+          cached != null && cached.size() == objectsById.size()
+              ? cached
+              : HeapGraph.build(objectsById);
       if (progressCallback != null) {
         progressCallback.onProgress(0.3, "Computing approximate retained sizes...");
       }
