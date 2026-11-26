@@ -24,6 +24,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -1606,6 +1607,9 @@ public final class HeapDumpImpl implements HeapDump {
         if (closed) {
           return reader.createView();
         }
+        // a dead thread's entry is gone with it; without pruning, a dump open for hours would keep
+        // one slot, and its view, per thread of the server's pool that ever read it
+        readerSlots.removeIf(ReaderSlot::orphaned);
         readerSlots.add(slot);
       }
       threadLocalReader.set(slot);
@@ -1637,8 +1641,22 @@ public final class HeapDumpImpl implements HeapDump {
   /** Set by {@link #close()}; a closed dump no longer caches views. */
   private volatile boolean closed;
 
+  /** How many threads' views this dump holds; for tests. */
+  int readerSlotCount() {
+    synchronized (readerSlots) {
+      return readerSlots.size();
+    }
+  }
+
   private static final class ReaderSlot {
     volatile HprofReader view;
+    final WeakReference<Thread> owner = new WeakReference<>(Thread.currentThread());
+
+    /** Whether the thread this slot belongs to has exited, taking its entry with it. */
+    boolean orphaned() {
+      Thread thread = owner.get();
+      return thread == null || !thread.isAlive();
+    }
   }
 
   String getString(long id) {

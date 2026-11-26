@@ -155,8 +155,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     closing thread. The MCP server runs tool calls on a pool of long-lived threads, so this was
     the usual case. `close()` now releases every thread's view.
   - A closed file stayed mapped until the next garbage collection, since the JDK unmaps a buffer
-    only after one. `jfr_close`, `hdump_close` and the release of a disconnected `--attach`
-    client's sessions now request a collection (`System.gc()`: a full, stop-the-world collection
+    only after one. `jfr_close` and `hdump_close` now request a collection, and so does the
+    `--attach` server when it releases the sessions of clients that disconnected (which it does
+    when the next client connects) (`System.gc()`: a full, stop-the-world collection
     with the default collector, which does nothing under `-XX:+DisableExplicitGC`).
 
   The buffer is not unmapped at close directly: event values resolve constant-pool entries from it

@@ -5,6 +5,7 @@ import io.jafar.parser.api.ParserContext;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.ref.WeakReference;
 import java.nio.BufferUnderflowException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -52,6 +53,13 @@ public final class RecordingStream implements AutoCloseable {
   /** One thread's cached slice; emptied when the stream is closed. */
   private static final class Slot {
     volatile RecordingStream stream;
+    final WeakReference<Thread> owner = new WeakReference<>(Thread.currentThread());
+
+    /** Whether the thread this slot belongs to has exited, taking its entry with it. */
+    boolean orphaned() {
+      Thread thread = owner.get();
+      return thread == null || !thread.isAlive();
+    }
   }
 
   /**
@@ -192,6 +200,9 @@ public final class RecordingStream implements AutoCloseable {
         if (slots == null) {
           slots = new ArrayList<>();
         }
+        // a dead thread's entry is gone with it; without pruning, a long-lived stream would keep
+        // one slot, and its slice, per thread that ever used it
+        slots.removeIf(Slot::orphaned);
         slots.add(slot);
       }
       tl.set(slot);
@@ -206,6 +217,11 @@ public final class RecordingStream implements AutoCloseable {
       }
     }
     return s;
+  }
+
+  /** How many threads' slots this stream holds; for tests. */
+  synchronized int cachedSlotCount() {
+    return slots == null ? 0 : slots.size();
   }
 
   private RecordingStream newSlice() {

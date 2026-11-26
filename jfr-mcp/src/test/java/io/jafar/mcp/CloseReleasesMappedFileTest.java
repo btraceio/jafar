@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.jafar.hdump.test.SyntheticHeapDumpGenerator;
+import io.jafar.shell.core.RequestScope;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -135,6 +137,26 @@ class CloseReleasesMappedFileTest {
     call("handleHdumpClose", Map.of("closeAll", true));
 
     assertMapped(dump, false, "after hdump_close, with the session's thread alive");
+  }
+
+  @Test
+  void releasingADisconnectedClientsSessionsUnmapsTheirFiles() throws Exception {
+    Path recording = copyOfTestRecording("disconnected.jfr");
+    Path dump = tempDir.resolve("disconnected.hprof");
+    SyntheticHeapDumpGenerator.generateMinimalHeapDump(dump, 200);
+    RequestScope.set("gone");
+    try {
+      openRecording(recording);
+      call("handleHdumpOpen", Map.of("path", dump.toString()));
+    } finally {
+      RequestScope.clear();
+    }
+
+    // What the --attach server does when a client connects: drop the sessions of clients that left
+    server.retainClientScopes(Set.of());
+
+    assertMapped(recording, false, "after releasing the disconnected client's sessions");
+    assertMapped(dump, false, "after releasing the disconnected client's sessions");
   }
 
   /** Opens {@code recording} and runs the tools that kept a closed file mapped. */
