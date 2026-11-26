@@ -251,6 +251,10 @@ public final class TailRunner {
     if (v instanceof java.util.Collection<?> c) {
       return "list(size=" + c.size() + ")";
     }
+    if (v != null && v.getClass().isArray()) {
+      // an Object[] of frame maps or a primitive array: "[Ljava.lang.Object;@…" otherwise (#196)
+      return "list(size=" + java.lang.reflect.Array.getLength(v) + ")";
+    }
     if (v instanceof Iterable<?> it) {
       int n = 0;
       for (Object ignored : it) {

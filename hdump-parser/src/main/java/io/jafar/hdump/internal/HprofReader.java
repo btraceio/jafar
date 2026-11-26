@@ -201,6 +201,14 @@ public final class HprofReader implements Closeable {
     return idSize == 4 ? readU4() : readI8();
   }
 
+  /**
+   * Reads an object ID at an absolute file position without moving this reader's position.
+   * Thread-safety is that of the reader: use a per-thread view for concurrent reads.
+   */
+  public long readIdAt(long pos) {
+    return idSize == 4 ? buffer.getInt(pos) & 0xFFFFFFFFL : buffer.getLong(pos);
+  }
+
   /** Reads a float value. */
   public float readFloat() {
     return buffer.getFloat();

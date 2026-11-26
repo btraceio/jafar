@@ -151,6 +151,11 @@ public interface HeapDump extends Closeable {
    * <p>Optional capability — implementations without full dominator tree support throw {@link
    * UnsupportedOperationException}; check {@link #hasFullDominatorTree()} after computing.
    *
+   * <p>For dumps parsed in INDEXED mode the tree is computed on the on-disk reference index without
+   * loading objects; the exact retained sizes replace the index's {@code retained.idx} (so they are
+   * also what a later open of the dump reads), and dominator relationships are kept per dump, about
+   * 12 bytes per object.
+   *
    * @param progressCallback optional callback for progress updates (may be null)
    */
   default void computeFullDominatorTree(HeapDumpParser.ProgressCallback progressCallback) {
@@ -198,6 +203,20 @@ public interface HeapDump extends Closeable {
    * <p>Uses BFS traversal from GC roots to find the shortest reference path. Each {@link PathStep}
    * carries the object at that position and the field name of the reference from the previous step
    * ({@code null} for the GC root).
+   *
+   * <p>In IN_MEMORY mode the first call builds a graph of the strong references of all objects
+   * (about 25-45 bytes per object plus 4 bytes per reference) and a breadth-first tree holding one
+   * shortest path per object (4 bytes per object, plus a name per object referenced from a static
+   * field), and keeps both until {@link #close()}. Later calls walk that tree and resolve the field
+   * names along the path only. Instances of classes that shadow a field name keep their decoded
+   * field values cached, as {@link HeapObject#getFieldValues()} does.
+   *
+   * <p>In INDEXED mode the first call (or the first retained-size computation) writes the strong
+   * references of all objects to the index directory (about 8 bytes per object plus 4 per reference
+   * on disk, one pass over all objects) and reuses them afterwards; each call then runs one
+   * breadth-first search with two {@code int} arrays of one entry per object (8 bytes per object,
+   * released when it returns). Without a writable index directory the references are read from the
+   * dump instead.
    *
    * @param obj the target object
    * @return list of path steps from GC root to target, or empty list if no path found

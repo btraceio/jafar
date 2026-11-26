@@ -238,6 +238,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `objects/<class> | groupBy(class) | stats(shallow)` had reported `count: 0` for a class with
   419 012 instances, because group rows carry only the key and the count. The suggestion is now
   `objects/<class> | stats(shallow)`. `groupBy(class)` itself did group correctly
+- **Live `tail` passed struct arrays through as raw JDK objects (#196).** `stackTrace.frames` was
+  an `Object[]` of `jdk.jfr.consumer.RecordedFrame`, so `tail --format json` printed
+  `"frames":"[Ljava.lang.Object;@44f75083"`, the table format the same identity string once a
+  pipeline lifted the array to the top level (`select(stackTrace/frames)`), and a
+  `tail` filter on `stackTrace/frames[0]/...` matched nothing. Object arrays are now converted
+  element by element into the containers of the `jafar` backend's resolved values (an `Object[]`
+  of field maps; primitive arrays unchanged; leaf values stay the JDK API's, see
+  `doc/cli/Backends.md`); JSON writes them as arrays and the table as `list(size=N)`. The JDK
+  backend's `EventSource` returns the same shape; shell `events/...` queries do not use it
 - **`jfr_compare` and `jfr-shell compare` treated a JVM-generated frame as a different frame in
   each recording.** Hidden classes carry a per-run address (`LambdaForm$MH/0x00007f2e141a1000`) and
   lambda classes a per-run number (`Foo$$Lambda$14`), so every such frame read as gone from one

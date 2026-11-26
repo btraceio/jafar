@@ -92,4 +92,18 @@ class TailRunnerFormatContractTest {
         java.util.Set.of("startTime", "duration"),
         java.util.Set.copyOf(LiveEventDecoder.NON_DATA_KEYS));
   }
+
+  @Test
+  void tableSummarizesArraysLikeLists() {
+    // #196: a top-level array (e.g. after select(stackTrace.frames)) printed as
+    // "frames=[Ljava.lang.Object;@7daf6ecc"
+    Map<String, Object> m = new LinkedHashMap<>();
+    m.put("frames", new Object[] {Map.of("lineNumber", 1), Map.of("lineNumber", 2)});
+    m.put("bytes", new int[] {1, 2, 3});
+    String line = TailRunner.format("jdk.ExecutionSample", 0L, m, TailRunner.Format.TABLE);
+    assertTrue(line.contains("frames=list(size=2)"), line);
+    assertTrue(line.contains("bytes=list(size=3)"), line);
+    assertFalse(line.contains("[Ljava"), line);
+    assertFalse(line.contains("[I@"), line);
+  }
 }

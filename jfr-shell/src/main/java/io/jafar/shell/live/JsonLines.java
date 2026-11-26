@@ -49,6 +49,16 @@ final class JsonLines {
         appendValue(sb, e.getValue());
       }
       sb.append('}');
+    } else if (v.getClass().isArray()) {
+      // Object[] of converted elements or a primitive array (LiveEventDecoder.convertValue): a JSON
+      // array, not String.valueOf's "[Ljava.lang.Object;@6f2b958e" (issue #196)
+      sb.append('[');
+      int n = java.lang.reflect.Array.getLength(v);
+      for (int i = 0; i < n; i++) {
+        if (i > 0) sb.append(',');
+        appendValue(sb, java.lang.reflect.Array.get(v, i));
+      }
+      sb.append(']');
     } else if (v instanceof Iterable<?> it) {
       sb.append('[');
       boolean first = true;

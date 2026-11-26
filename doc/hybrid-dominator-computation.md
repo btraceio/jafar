@@ -112,10 +112,11 @@ Multiple heuristics to find objects worth exact analysis:
 - Typically expands interesting set by 5-10× (still <1% of heap)
 
 ### Phase 4: Exact Computation (Subgraph Only)
-- Runs full Cooper-Harvey-Kennedy dominator algorithm
+- Runs the full Lengauer-Tarjan dominator algorithm (`DominatorTreeComputer`)
 - Only on filtered subgraph (100K-1M objects vs 100M total)
-- **Time**: O(N²) worst-case on subgraph size (acceptable when N is small)
-- **Memory**: ~150 bytes per subgraph object
+- **Time**: O(E log N) on the subgraph (N objects, E references)
+- **Memory**: roughly 70 bytes per subgraph object plus 4 bytes per reference, transient (see the
+  `DominatorTreeComputer` class documentation)
 
 ## Performance Characteristics
 
@@ -338,6 +339,6 @@ Potential improvements for future versions:
 
 ## References
 
-- Cooper, Harvey, Kennedy (2006): "A Simple, Fast Dominance Algorithm"
+- Lengauer, Tarjan (1979): "A Fast Algorithm for Finding Dominators in a Flowgraph"
 - Eclipse MAT: Minimum retained size approximation
 - Jafar documentation: `hdump-parser/README.md`

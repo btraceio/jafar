@@ -68,6 +68,9 @@ final class HeapObjectImpl implements HeapObject {
   }
 
   HeapObjectImpl getDominator() {
+    if (dominator == null && dump != null) {
+      return dump.indexedDominatorOf(id); // INDEXED full tree: held by the dump, not the object
+    }
     return dominator;
   }
 
@@ -167,154 +170,47 @@ final class HeapObjectImpl implements HeapObject {
   }
 
   /**
-   * Extracts outbound reference IDs from instance fields. Only reads object reference fields,
-   * skipping primitives for efficiency.
+   * Reads the non-null object ids at {@code offsets} (relative to the instance data) with absolute
+   * reads, in offset order. The reader's position is not used or changed.
    */
-  private long[] extractInstanceReferences() {
-    if (heapClass == null) {
+  private long[] readIds(HprofReader reader, int[] offsets) {
+    int count = offsets.length;
+    if (count == 0) {
       return EMPTY_LONG_ARRAY;
     }
-
-    // Get all fields including inherited
-    List<HeapField> allFields = heapClass.getAllInstanceFields();
-    if (allFields.isEmpty()) {
-      return EMPTY_LONG_ARRAY;
-    }
-
-    // Count object reference fields first
-    int refFieldCount = 0;
-    for (HeapField field : allFields) {
-      if (field.getType() == BasicType.OBJECT) {
-        refFieldCount++;
+    long[] ids = new long[count];
+    int k = 0;
+    for (int off : offsets) {
+      long id = reader.readIdAt(dataPosition + off);
+      if (id != 0) {
+        ids[k++] = id;
       }
     }
-
-    if (refFieldCount == 0) {
-      return EMPTY_LONG_ARRAY;
+    if (k == count) {
+      return ids;
     }
-
-    // Thread-local reader has its own position state — no lock needed
-    HprofReader reader = dump.getThreadLocalReader();
-    long savedPos = reader.position();
-    try {
-      reader.position(dataPosition);
-
-      long[] refIds = new long[refFieldCount];
-      int refIndex = 0;
-
-      for (HeapField field : allFields) {
-        int type = field.getType();
-        if (type == BasicType.OBJECT) {
-          long refId = reader.readId();
-          if (refId != 0) {
-            refIds[refIndex++] = refId;
-          }
-        } else {
-          reader.skip(BasicType.sizeOf(type, reader.getIdSize()));
-        }
-      }
-
-      if (refIndex < refFieldCount) {
-        long[] trimmed = new long[refIndex];
-        System.arraycopy(refIds, 0, trimmed, 0, refIndex);
-        return trimmed;
-      }
-      return refIds;
-    } finally {
-      reader.position(savedPos);
-    }
+    return k == 0 ? EMPTY_LONG_ARRAY : java.util.Arrays.copyOf(ids, k);
   }
 
-  /**
-   * Like {@link #extractInstanceReferences()} but skips the {@code referent} and {@code discovered}
-   * fields. Only called for {@code java.lang.ref.Reference} subclasses.
-   */
-  private long[] extractStrongInstanceReferences() {
-    if (heapClass == null) return EMPTY_LONG_ARRAY;
-    List<HeapField> allFields = heapClass.getAllInstanceFields();
-    if (allFields.isEmpty()) return EMPTY_LONG_ARRAY;
-
-    int refFieldCount = 0;
-    for (HeapField field : allFields) {
-      if (field.getType() == BasicType.OBJECT && isStrongReferenceField(field.getName())) {
-        refFieldCount++;
-      }
-    }
-    if (refFieldCount == 0) return EMPTY_LONG_ARRAY;
-
-    HprofReader reader = dump.getThreadLocalReader();
-    long savedPos = reader.position();
-    try {
-      reader.position(dataPosition);
-      long[] refIds = new long[refFieldCount];
-      int refIndex = 0;
-      for (HeapField field : allFields) {
-        int type = field.getType();
-        if (type == BasicType.OBJECT) {
-          long refId = reader.readId();
-          if (refId != 0 && isStrongReferenceField(field.getName())) {
-            refIds[refIndex++] = refId;
-          }
-        } else {
-          reader.skip(BasicType.sizeOf(type, reader.getIdSize()));
-        }
-      }
-      if (refIndex < refFieldCount) {
-        long[] trimmed = new long[refIndex];
-        System.arraycopy(refIds, 0, trimmed, 0, refIndex);
-        return trimmed;
-      }
-      return refIds;
-    } finally {
-      reader.position(savedPos);
-    }
-  }
-
-  /**
-   * Returns {@code true} if the field name represents a strong reference on a {@code
-   * java.lang.ref.Reference} subclass. The {@code referent} and {@code discovered} fields are
-   * excluded because they are not strong reachability edges.
-   */
-  private static boolean isStrongReferenceField(String name) {
-    return !"referent".equals(name) && !"discovered".equals(name);
-  }
-
-  /**
-   * Extracts outbound reference IDs from object array elements. Reads the contiguous block of
-   * object IDs from the array.
-   */
-  private long[] extractArrayReferences() {
-    if (!isObjectArray || arrayLength == 0) {
+  /** Object ids referenced by the elements of an object array, nulls skipped, in index order. */
+  private long[] readArrayIds(HprofReader reader) {
+    if (!isObjectArray || arrayLength <= 0) {
       return EMPTY_LONG_ARRAY;
     }
-
-    HprofReader reader = dump.getThreadLocalReader();
-    long savedPos = reader.position();
-    try {
-      reader.position(dataPosition);
-
-      long[] tempIds = new long[arrayLength];
-      int refCount = 0;
-
-      for (int i = 0; i < arrayLength; i++) {
-        long refId = reader.readId();
-        if (refId != 0) {
-          tempIds[refCount++] = refId;
-        }
+    int idSize = reader.getIdSize();
+    long[] ids = new long[arrayLength];
+    int k = 0;
+    long pos = dataPosition;
+    for (int i = 0; i < arrayLength; i++, pos += idSize) {
+      long id = reader.readIdAt(pos);
+      if (id != 0) {
+        ids[k++] = id;
       }
-
-      if (refCount == 0) {
-        return EMPTY_LONG_ARRAY;
-      }
-      if (refCount < arrayLength) {
-        long[] trimmed = new long[refCount];
-        System.arraycopy(tempIds, 0, trimmed, 0, refCount);
-        return trimmed;
-      }
-      return tempIds;
-    } finally {
-      reader.position(savedPos);
     }
+    if (k == arrayLength) {
+      return ids;
+    }
+    return k == 0 ? EMPTY_LONG_ARRAY : java.util.Arrays.copyOf(ids, k);
   }
 
   /**
@@ -322,18 +218,25 @@ final class HeapObjectImpl implements HeapObject {
    * or eagerly during parse.
    */
   void extractOutboundReferences() {
+    if (cachedOutboundRefIds == null) {
+      extractOutboundReferences(dump.getThreadLocalReader());
+    }
+  }
+
+  /**
+   * As {@link #extractOutboundReferences()}, reading through {@code reader} (absolute reads only),
+   * so the parser can pass its own reader without a thread-local lookup per object.
+   */
+  void extractOutboundReferences(HprofReader reader) {
     if (cachedOutboundRefIds != null) {
       return; // Already cached
     }
-
     if (isArray()) {
-      if (isObjectArray) {
-        cachedOutboundRefIds = extractArrayReferences();
-      } else {
-        cachedOutboundRefIds = EMPTY_LONG_ARRAY; // Primitive array
-      }
+      cachedOutboundRefIds = isObjectArray ? readArrayIds(reader) : EMPTY_LONG_ARRAY;
+    } else if (heapClass == null) {
+      cachedOutboundRefIds = EMPTY_LONG_ARRAY;
     } else {
-      cachedOutboundRefIds = extractInstanceReferences();
+      cachedOutboundRefIds = readIds(reader, heapClass.refOffsets(reader.getIdSize()));
     }
   }
 
@@ -361,7 +264,8 @@ final class HeapObjectImpl implements HeapObject {
       cachedStrongOutboundRefIds = getOutboundReferenceIds();
       return cachedStrongOutboundRefIds;
     }
-    cachedStrongOutboundRefIds = extractStrongInstanceReferences();
+    HprofReader reader = dump.getThreadLocalReader();
+    cachedStrongOutboundRefIds = readIds(reader, heapClass.strongRefOffsets(reader.getIdSize()));
     return cachedStrongOutboundRefIds;
   }
 
@@ -429,6 +333,29 @@ final class HeapObjectImpl implements HeapObject {
       }
 
       return elements;
+    } finally {
+      reader.position(savedPos);
+    }
+  }
+
+  /**
+   * Index of the first element of this object array that references {@code id}, or -1 (also for
+   * instances and primitive arrays). Reads the element ids without resolving them to objects.
+   */
+  int indexOfArrayElement(long id) {
+    if (!isObjectArray || arrayLength <= 0 || id == 0) {
+      return -1;
+    }
+    HprofReader reader = dump.getThreadLocalReader();
+    long savedPos = reader.position();
+    try {
+      reader.position(dataPosition);
+      for (int i = 0; i < arrayLength; i++) {
+        if (reader.readId() == id) {
+          return i;
+        }
+      }
+      return -1;
     } finally {
       reader.position(savedPos);
     }
