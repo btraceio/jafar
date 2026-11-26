@@ -157,8 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A closed file stayed mapped until the next garbage collection, since the JDK unmaps a buffer
     only after one. `jfr_close` and `hdump_close` now request a collection, and so does the
     `--attach` server when it releases the sessions of clients that disconnected (which it does
-    when the next client connects) (`System.gc()`: a full, stop-the-world collection
-    with the default collector, which does nothing under `-XX:+DisableExplicitGC`).
+    when the next client connects). The request is `System.gc()`: a full, stop-the-world
+    collection with the default collector, which does nothing under `-XX:+DisableExplicitGC`.
 
   The buffer is not unmapped at close directly: event values resolve constant-pool entries from it
   lazily, and a read after an explicit unmap could crash the JVM
