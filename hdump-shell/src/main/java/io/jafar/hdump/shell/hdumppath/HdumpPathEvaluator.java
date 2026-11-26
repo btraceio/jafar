@@ -7,7 +7,6 @@ import io.jafar.hdump.util.ClassNameUtil;
 import io.jafar.shell.core.AllocationAggregator;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.QueryEvaluator;
-import io.jafar.shell.core.RowSorter;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.SessionResolver;
@@ -366,8 +365,14 @@ public final class HdumpPathEvaluator {
    * Streaming evaluation from a filtered stream for groupBy operations. Accumulates groups as we
    * stream to avoid materializing all objects.
    */
-  private static List<Map<String, Object>> evaluateObjectsStreamingGroupByFromStream(
-      Stream<Map<String, Object>> rows, long totalObjects, GroupByOp op) {
+  /**
+   * The one {@code groupBy} implementation, for materialized rows and for the streaming path alike,
+   * so both give the same result (they were two implementations that disagreed on NaN, empty
+   * groups, the {@code sortBy=value} column, null order and the count's type). Groups come out in
+   * first-seen order; {@code sortBy=key|value} then sorts them, rows without a value last.
+   */
+  private static List<Map<String, Object>> groupRows(
+      Stream<Map<String, Object>> rows, GroupByOp op) {
     Map<List<Object>, GroupAccumulator> groups = new LinkedHashMap<>();
     long[] counter = {0};
 
@@ -511,7 +516,8 @@ public final class HdumpPathEvaluator {
         value = null;
       }
 
-      if (value instanceof Number num) {
+      // A value expression yields NaN for a missing or non-numeric field: not a value
+      if (value instanceof Number num && !Double.isNaN(num.doubleValue())) {
         double d = num.doubleValue();
         sum += d;
         min = Math.min(min, d);
@@ -535,7 +541,7 @@ public final class HdumpPathEvaluator {
       // Add aggregation value
       switch (op.aggregation()) {
         case COUNT -> result.put(aggColumnName, count);
-        case SUM -> result.put(aggColumnName, sum);
+        case SUM -> result.put(aggColumnName, numericCount > 0 ? sum : null);
         case AVG -> result.put(aggColumnName, numericCount > 0 ? sum / numericCount : null);
         case MIN -> result.put(aggColumnName, numericCount > 0 ? min : null);
         case MAX -> result.put(aggColumnName, numericCount > 0 ? max : null);
@@ -546,10 +552,16 @@ public final class HdumpPathEvaluator {
   }
 
   /**
-   * Streaming evaluation with filter support for large heaps. Applies type pattern and predicate
-   * filters during streaming, then delegates to specialized streaming method based on operation
-   * type.
+   * {@code [B}, {@code [I}, ...: classes whose instances the class-instances index does not list.
    */
+  private static boolean isPrimitiveArrayClass(HeapClass cls) {
+    String name = cls.getName();
+    return name != null
+        && name.length() == 2
+        && name.charAt(0) == '['
+        && "ZCFDBSIJ".indexOf(name.charAt(1)) >= 0;
+  }
+
   /**
    * Operators whose output for a row depends on that row alone, so they can run while streaming.
    */
@@ -585,13 +597,31 @@ public final class HdumpPathEvaluator {
 
       Set<String> matchingClassNames = findMatchingClasses(dump, pattern, query.instanceof_());
 
-      // For each matching class, get instances directly from index
-      stream =
+      // For each matching class, get instances directly from index. Primitive arrays are not in
+      // that index (each would cost a full scan of its own), so all matched primitive-array
+      // classes share one scan.
+      List<HeapClass> matched =
           matchingClassNames.stream()
               .map(name -> dump.getClassByName(name))
               .filter(Optional::isPresent)
               .map(Optional::get)
+              .toList();
+      Set<HeapClass> primitiveArrays = Collections.newSetFromMap(new IdentityHashMap<>());
+      for (HeapClass cls : matched) {
+        if (isPrimitiveArrayClass(cls)) {
+          primitiveArrays.add(cls);
+        }
+      }
+      Stream<HeapObject> indexed =
+          matched.stream()
+              .filter(cls -> !primitiveArrays.contains(cls))
               .flatMap(cls -> dump.getObjectsOfClassFast(cls));
+      stream =
+          primitiveArrays.isEmpty()
+              ? indexed
+              : Stream.concat(
+                  indexed,
+                  dump.getObjects().filter(o -> primitiveArrays.contains(o.getHeapClass())));
 
     } else {
       // SLOW PATH: Full scan with per-object filtering
@@ -658,8 +688,7 @@ public final class HdumpPathEvaluator {
     }
     return switch (head) {
       case TopOp topOp -> selectTop(rows, topOp);
-      case GroupByOp groupByOp ->
-          evaluateObjectsStreamingGroupByFromStream(rows, dump.getObjectCount(), groupByOp);
+      case GroupByOp groupByOp -> groupRows(rows, groupByOp);
       case CountOp c -> List.of(new LinkedHashMap<>(Map.of("count", rows.count())));
       case SumOp sumOp -> evaluateObjectsStreamingSumFromStream(rows, dump.getObjectCount(), sumOp);
       case StatsOp statsOp ->
@@ -1665,135 +1694,7 @@ public final class HdumpPathEvaluator {
 
   private static List<Map<String, Object>> applyGroupBy(
       List<Map<String, Object>> results, GroupByOp op) {
-    // Group by the specified fields
-    // Groups in first-seen order, as the streaming path keeps them (a plain groupingBy HashMap
-    // made ties after groupBy | top come out in hash order, differently on the two paths)
-    Map<List<Object>, List<Map<String, Object>>> groups =
-        results.stream()
-            .collect(
-                Collectors.groupingBy(
-                    row -> {
-                      List<Object> key = new ArrayList<>();
-                      for (String field : op.groupFields()) {
-                        key.add(getField(row, field));
-                      }
-                      return key;
-                    },
-                    LinkedHashMap::new,
-                    Collectors.toList()));
-
-    // Apply aggregation
-    List<Map<String, Object>> aggregated = new ArrayList<>();
-    for (Map.Entry<List<Object>, List<Map<String, Object>>> entry : groups.entrySet()) {
-      Map<String, Object> row = new LinkedHashMap<>();
-
-      // Add group key fields
-      List<Object> keyValues = entry.getKey();
-      for (int i = 0; i < op.groupFields().size(); i++) {
-        row.put(op.groupFields().get(i), keyValues.get(i));
-      }
-
-      // Add aggregation result
-      List<Map<String, Object>> group = entry.getValue();
-      switch (op.aggregation()) {
-        case COUNT -> row.put("count", group.size());
-        case SUM, AVG, MIN, MAX -> {
-          ValueExpr valueExpr = op.valueExpr();
-          if (valueExpr != null) {
-            // Use provided expression
-            double[] values =
-                group.stream()
-                    .mapToDouble(valueExpr::evaluate)
-                    .filter(v -> !Double.isNaN(v))
-                    .toArray();
-            if (values.length > 0) {
-              // Extract field name from valueExpr if it's a simple field reference
-              String fieldName = extractFieldNameFromExpr(valueExpr);
-              applyAggregation(row, op.aggregation(), values, fieldName);
-            }
-          } else {
-            // No value=: shallowSize for objects, else the first non-id numeric column.
-            // The column keeps the aggregation's name (sum/avg/min/max), as in streaming.
-            String valueField = group.isEmpty() ? null : defaultAggregationField(group.get(0));
-            if (valueField != null) {
-              double[] values =
-                  group.stream()
-                      .map(m -> m.get(valueField))
-                      .filter(v -> v instanceof Number)
-                      .mapToDouble(v -> ((Number) v).doubleValue())
-                      .toArray();
-              if (values.length > 0) {
-                applyAggregation(row, op.aggregation(), values, null);
-              }
-            }
-          }
-        }
-      }
-
-      aggregated.add(row);
-    }
-
-    // Apply sorting if requested
-    if (op.sortBy() != null) {
-      String keyField = op.groupFields().isEmpty() ? "key" : op.groupFields().get(0);
-      String valueField = getAggregationFieldName(op.aggregation());
-      RowSorter.sortGroupByResults(aggregated, op.sortBy(), keyField, valueField, op.ascending());
-    }
-
-    return aggregated;
-  }
-
-  /** Returns the field name for the given aggregation operation. */
-  private static String getAggregationFieldName(AggOp aggOp) {
-    return switch (aggOp) {
-      case COUNT -> "count";
-      case SUM -> "sum";
-      case AVG -> "avg";
-      case MIN -> "min";
-      case MAX -> "max";
-    };
-  }
-
-  private static void applyAggregation(
-      Map<String, Object> row, AggOp aggOp, double[] values, String valueField) {
-    // Use field name as column name if it's a memory field, otherwise use aggregation name
-    String columnName;
-    if (valueField != null && isMemoryFieldName(valueField)) {
-      columnName = valueField;
-    } else {
-      columnName =
-          switch (aggOp) {
-            case COUNT -> "count";
-            case SUM -> "sum";
-            case AVG -> "avg";
-            case MIN -> "min";
-            case MAX -> "max";
-          };
-    }
-
-    switch (aggOp) {
-      case SUM -> {
-        double sum = 0;
-        for (double v : values) sum += v;
-        row.put(columnName, sum);
-      }
-      case AVG -> {
-        double sum = 0;
-        for (double v : values) sum += v;
-        row.put(columnName, sum / values.length);
-      }
-      case MIN -> {
-        double min = Double.MAX_VALUE;
-        for (double v : values) if (v < min) min = v;
-        row.put(columnName, min);
-      }
-      case MAX -> {
-        double max = Double.NEGATIVE_INFINITY;
-        for (double v : values) if (v > max) max = v;
-        row.put(columnName, max);
-      }
-      default -> {}
-    }
+    return groupRows(results.stream(), op);
   }
 
   // === Retained size dependency analysis ===

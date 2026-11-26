@@ -407,8 +407,11 @@ Without `value=`, `sum`/`avg`/`min`/`max` aggregate `shallowSize` on `objects`, 
 first numeric column that is not an identifier (`id`, `objectId`); the result column is named after
 the aggregation (`sum`, `avg`, ...). With `value=<memory field>` (`shallow`, `retained`, ...) the
 result column is named after that field, so sort it by that name:
-`groupBy(class, agg=sum, value=retained) | top(10, retained)`. A group with no numeric value has
-`null` for `avg`/`min`/`max`.
+`groupBy(class, agg=sum, value=retained) | top(10, retained)`. Values that are missing or not
+numbers (a `value=arrayLength` on an object that is not an array) are skipped; a group with no
+numeric value at all has `null` for `sum`/`avg`/`min`/`max`. `sortBy=key` sorts by the first group
+field, `sortBy=value` by the aggregate column, groups without a value last in either direction;
+without `sortBy`, groups come out in the order their first row was seen.
 
 `class` is an alias for `className`. Group fields are plain column names; a path such as
 `class/name` is not accepted (object rows have no nested fields).

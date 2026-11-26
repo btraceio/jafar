@@ -216,7 +216,14 @@ class StreamingPathTest {
             "objects | groupBy(class) | top(3, class)",
             "objects | groupBy(class) | top(2, count)",
             "objects | groupBy(class, agg=sum, value=shallow) | sortBy(class)",
-            "objects | groupBy(class) | sortBy(class)")) {
+            "objects | groupBy(class) | sortBy(class)",
+            // the cases two groupBy implementations disagreed on (4th review of #225)
+            "objects | groupBy(class, agg=sum, value=arrayLength)",
+            "objects | groupBy(class, agg=avg, value=nosuch)",
+            "objects | groupBy(class, agg=sum, value=shallow, sortBy=value, asc=true)",
+            "objects | groupBy(class, agg=min, value=shallow, sortBy=value)",
+            "objects | groupBy(arrayLength, sortBy=key, asc=true)",
+            "objects | groupBy(class, arrayLength, agg=avg, value=arrayLength)")) {
       // groupBy | top(3, class) used to rank by the aggregate first: different rows
       assertEquals(normalized(inMemory(q)), normalized(run(q)), q);
     }
@@ -247,5 +254,31 @@ class StreamingPathTest {
       }
       assertEquals(2, indexed.getHeapDump().getClassByName("[B").get().getInstanceCount());
     }
+  }
+
+  @Test
+  void groupByEdgeCasesHaveOneDefinition() {
+    // A value= field missing on a row is skipped, not NaN; a group without values reads null
+    Map<String, Object> plain =
+        inMemory("objects | groupBy(class, agg=sum, value=arrayLength)").stream()
+            .filter(r -> "com.example.Plain".equals(r.get("class")))
+            .findFirst()
+            .orElseThrow();
+    assertTrue(plain.containsKey("sum"), plain.toString());
+    assertNull(plain.get("sum"), plain.toString());
+    // sortBy=value sorts by the aggregate column ("shallow" here), which in memory it did not
+    List<Map<String, Object>> asc =
+        inMemory("objects | groupBy(class, agg=sum, value=shallow, sortBy=value, asc=true)");
+    for (int i = 1; i < asc.size(); i++) {
+      double prev = ((Number) asc.get(i - 1).get("shallow")).doubleValue();
+      double cur = ((Number) asc.get(i).get("shallow")).doubleValue();
+      assertTrue(prev <= cur, asc.toString());
+    }
+    // groups without a key value sort last in both directions
+    List<Map<String, Object>> byKey =
+        inMemory("objects | groupBy(arrayLength, sortBy=key, asc=true)");
+    assertNull(byKey.get(byKey.size() - 1).get("arrayLength"), byKey.toString());
+    // the count has one type
+    assertInstanceOf(Long.class, inMemory("objects | groupBy(class)").get(0).get("count"));
   }
 }

@@ -158,8 +158,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregation get the session resolver, so `join(session=...)` works there; streamed `top()` and
   `sum()` fail on a missing field (and name columns, and order ties) as the in-memory ones do.
   `groupBy(...) | top(n)` no longer uses a bounded accumulator that dropped groups every 10K rows
-  (approximate totals) and ranked by the aggregate before `top()`'s field; it keeps every group,
-  as the in-memory path does, and both now list groups in first-seen order. Streaming a primitive
+  (approximate totals) and ranked by the aggregate before `top()`'s field. There is now one
+  `groupBy` implementation for both paths: groups in first-seen order, values that are missing or
+  not numbers skipped (the streamed path summed `NaN`), `null` for a group without values,
+  `sortBy=value` on the aggregate column (in memory it sorted by a column that did not exist for
+  `value=shallow`), groups without a value last, and `count` always a long. Streaming a primitive
   array type (`objects/byte[]`) in INDEXED mode found nothing, as the class-instances index holds
   no primitive arrays; those classes are now scanned. `doc/hdumppath.md`
   now documents what is streamed and what is capped at 100 objects
