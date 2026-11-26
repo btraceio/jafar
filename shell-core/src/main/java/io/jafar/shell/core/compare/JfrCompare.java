@@ -141,7 +141,10 @@ public final class JfrCompare {
    * those parts become one: across two runs they cannot be told apart.
    */
   static String stableName(String frame) {
-    if (frame.indexOf('$') < 0) {
+    // Fast path for the common frame. A hidden class need not have a '$' in its name (Jafar's
+    // generated deserializers are io.jafar...UntypedDeserializer_<type>_<n>/0x...), so the '/0x'
+    // check is needed too.
+    if (frame.indexOf('$') < 0 && !frame.contains("/0x")) {
       return frame;
     }
     String name = HIDDEN_CLASS_ADDRESS.matcher(frame).replaceAll("");

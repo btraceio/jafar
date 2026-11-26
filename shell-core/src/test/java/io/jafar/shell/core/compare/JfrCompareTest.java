@@ -286,6 +286,12 @@ class JfrCompareTest {
     assertEquals("m.Foo$Inner.bar", JfrCompare.stableName("m.Foo$Inner.bar"));
     assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda/0x0000000801234.run"));
     assertEquals("m.Foo$$Lambda.run", JfrCompare.stableName("m.Foo$$Lambda$3/0x00000008abcd.run"));
+    // A hidden class without a '$': Jafar's generated deserializers.
+    assertEquals(
+        "io.jafar.parser.internal_api.UntypedDeserializer_bench_Common_1.deserialize",
+        JfrCompare.stableName(
+            "io.jafar.parser.internal_api.UntypedDeserializer_bench_Common_1/0x0000000040122000"
+                + ".deserialize"));
     // javac's per-compilation numbers: accessors (Java 8 targets) and lambda bodies.
     assertEquals("m.Foo.access$", JfrCompare.stableName("m.Foo.access$300"));
     assertEquals("m/x/Outer.access$", JfrCompare.stableName("m/x/Outer.access$400"));
