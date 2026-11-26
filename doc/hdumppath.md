@@ -203,11 +203,18 @@ objects/instanceof/java.util.HashMap       # HashMap, LinkedHashMap and other su
 
 `instanceof` follows **superclasses only**. A heap dump records each class's superclass but not
 the interfaces it implements (HotSpot's `HPROF_GC_CLASS_DUMP` record has no interface list), so
-`instanceof/java.util.Map` cannot find `HashMap`. Name a class the implementations extend
-(`java.util.AbstractMap`, `java.util.AbstractCollection`, `java.util.AbstractList`,
-`java.util.AbstractSet`), or use a glob (`objects/java.util.*Map`). Classes that implement the
-interface directly without extending such a class (for example `java.util.Hashtable`) are not
-matched by the abstract class either.
+`instanceof/java.util.Map` cannot find `HashMap`. Name a class the implementations extend. An
+abstract base covers only the classes that extend it, so check what you would miss (JDK 25):
+
+| Target | Covers | Does not cover |
+|---|---|---|
+| `java.util.AbstractMap` | `HashMap`, `LinkedHashMap`, `TreeMap`, `ConcurrentHashMap`, `ConcurrentSkipListMap`, `WeakHashMap`, `IdentityHashMap`, `EnumMap`, `Map.of` | `Hashtable`, `Collections.unmodifiableMap` / `synchronizedMap` |
+| `java.util.AbstractCollection` | `ArrayList`, `LinkedList`, `Vector`, `ArrayDeque`, `PriorityQueue`, `HashSet`, `TreeSet`, `List.of`, `Set.of` | `CopyOnWriteArrayList`, `Collections.unmodifiable*` / `synchronized*` wrappers, `ConcurrentHashMap` key/value views |
+| `java.util.AbstractList` | `ArrayList`, `LinkedList`, `Vector` | `List.of`, `CopyOnWriteArrayList`, `Collections.unmodifiableList` / `synchronizedList` |
+| `java.util.AbstractSet` | `HashSet`, `LinkedHashSet`, `TreeSet` | `Set.of`, `Collections.unmodifiableSet` / `synchronizedSet` |
+
+A glob matches names, not types: `objects/java.util.*Map` also matches
+`java.util.Collections$SetFromMap` (a `Set`) and misses every map outside `java.util`.
 
 `instanceof` fails instead of returning nothing when:
 
@@ -897,7 +904,7 @@ gcroots | groupBy(type) | top(10, count)
 objects/instanceof/java.util.AbstractMap | groupBy(class) | top(10, count)
 
 # Collection analysis
-objects/instanceof/java.util.AbstractCollection | groupBy(class, agg=sum) | top(10, sum)
+objects/instanceof/java.util.AbstractCollection | groupBy(class, agg=sum) | top(10, sum)   # see the coverage table above
 ```
 
 ### Heap Diff (Cross-Session Comparison)

@@ -409,8 +409,13 @@ public final class HeapReportGenerator {
             "Run waste() for exact per-object figures",
             wastedEstimate,
             wastedCollections,
-            "Inspect with: objects/java.util.* | waste() | sortBy(wastedBytes desc)",
-            "objects/java.util.* | waste() | filter(wastedBytes > 1MB) | top(10, wastedBytes)"));
+            // instanceof on a concrete base also covers subclasses (anonymous LRU maps etc.);
+            // a java.util.* glob would miss those and drag in every HashMap$Node
+            "Inspect with: objects/instanceof/java.util.HashMap | waste() | sortBy(wastedBytes"
+                + " desc); likewise java.util.ArrayList and"
+                + " java.util.concurrent.ConcurrentHashMap",
+            "objects/instanceof/java.util.HashMap | waste() | filter(wastedBytes > 1MB)"
+                + " | top(10, wastedBytes)"));
   }
 
   // ---- Utilities ----

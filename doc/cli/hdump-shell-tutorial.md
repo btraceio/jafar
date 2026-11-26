@@ -231,15 +231,19 @@ hdump> objects/instanceof/java.util.AbstractMap | groupBy(class) | top(10, count
 ### Collection Analysis
 
 ```bash
-# All collections
+# Collections that extend AbstractCollection (not CopyOnWriteArrayList or the
+# Collections.unmodifiable*/synchronized* wrappers)
 hdump> objects/instanceof/java.util.AbstractCollection | groupBy(class) | top(10, count)
 
-# List implementations
+# Lists that extend AbstractList: ArrayList, LinkedList, Vector (not List.of)
 hdump> objects/instanceof/java.util.AbstractList | groupBy(class) | top(5, count)
 
-# Set implementations
+# Sets that extend AbstractSet: HashSet, LinkedHashSet, TreeSet (not Set.of)
 hdump> objects/instanceof/java.util.AbstractSet | groupBy(class) | top(5, count)
 ```
+
+What each abstract class covers is listed in
+[HdumpPath: Instanceof](../hdumppath.md#instanceof-subclass-matching).
 
 ## GC Root Analysis
 
@@ -701,7 +705,7 @@ classes | count
 gcroots | groupBy(type)
 ```
 
-### 2. Use instanceof for Interface Analysis
+### 2. Use instanceof for Class Hierarchies
 
 Find all subclasses (superclasses only; interfaces such as `java.io.Closeable` are not recorded
 in a heap dump, and `instanceof` on one fails with an explanation):

@@ -33,6 +33,12 @@ public final class HdumpPathEvaluator {
 
   private static final Logger LOG = LoggerFactory.getLogger(HdumpPathEvaluator.class);
 
+  /**
+   * Object count above which {@code objects} queries stream instead of materializing every row.
+   * Package-private and mutable only so tests can drive the streaming path with a small heap.
+   */
+  static long streamingThreshold = 5_000_000;
+
   /** Maps short alias field names to their canonical counterparts. */
   private static final Map<String, String> FIELD_ALIASES =
       Map.of(
@@ -129,6 +135,17 @@ public final class HdumpPathEvaluator {
     return row;
   }
 
+  /**
+   * Copies a row for an operator that adds columns, keeping the field aliases ({@code class},
+   * {@code shallow}, {@code retained}) resolvable for {@code select()} and anything else that reads
+   * the row directly. A plain {@code LinkedHashMap} copy dropped them.
+   */
+  private static Map<String, Object> aliasCopy(Map<String, Object> row) {
+    Map<String, Object> copy = new AliasMap();
+    copy.putAll(row);
+    return copy;
+  }
+
   /** Gets a value from a map, resolving field aliases. */
   static Object getField(Map<String, Object> map, String field) {
     Object v = map.get(field);
@@ -181,7 +198,7 @@ public final class HdumpPathEvaluator {
 
     // Optimization: For large heaps with object queries, use streaming to avoid OOM
     // This handles all cases: unfiltered, type patterns, predicates
-    if (query.root() == Root.OBJECTS && dump.getObjectCount() > 5_000_000) {
+    if (query.root() == Root.OBJECTS && dump.getObjectCount() > streamingThreshold) {
 
       // If no pipeline, default to top(100) to prevent OOME
       if (query.pipeline().isEmpty()) {
@@ -257,7 +274,25 @@ public final class HdumpPathEvaluator {
         return evaluateObjectsStreamingWithFilters(
             dump, session, streamingQuery, statsOp, remaining);
 
-      } else {
+      } else if (isRowLocal(firstOp)) {
+        // waste(), cacheStats() and filter() only look at one row: stream them object by object
+        // up to a top(N), instead of applying them to the first 100 objects (the cap below).
+        // Found reviewing #225: hdump_report's waste hint starts with waste().
+        int i = 0;
+        while (i < streamingPipeline.size() && isRowLocal(streamingPipeline.get(i))) {
+          i++;
+        }
+        if (i < streamingPipeline.size() && streamingPipeline.get(i) instanceof TopOp topOp) {
+          return evaluateObjectsStreamingWithFilters(
+              dump,
+              session,
+              streamingQuery,
+              streamingPipeline.subList(0, i),
+              topOp,
+              streamingPipeline.subList(i + 1, streamingPipeline.size()));
+        }
+      }
+      {
         // Other operations - default to top(100) to prevent OOME
         LOG.warn(
             "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as first operation.",
@@ -298,40 +333,33 @@ public final class HdumpPathEvaluator {
   /** Streaming evaluation from a filtered stream (supports type patterns and predicates). */
   private static List<Map<String, Object>> evaluateObjectsStreamingTopFromStream(
       Stream<HeapObject> stream, long totalObjects, TopOp topOp) {
-    Comparator<Map<String, Object>> comparator;
-    if (topOp.orderBy() != null) {
-      comparator =
-          (m1, m2) -> {
-            Object v1 = getField(m1, topOp.orderBy());
-            Object v2 = getField(m2, topOp.orderBy());
-            int cmp = compareValues(v1, v2);
-            return topOp.descending() ? -cmp : cmp;
-          };
-    } else {
-      // No ordering - just take first N
-      comparator = (m1, m2) -> 0;
+    return selectTop(stream.map(HdumpPathEvaluator::objectToMap), topOp);
+  }
+
+  /**
+   * The {@code top(n, field)} rows of a stream, best first, keeping at most {@code n + 1} rows. The
+   * heap is ordered worst-first so that {@code poll()} evicts the worst row; it used to be ordered
+   * best-first, which evicted the best row and returned the n smallest values in ascending order.
+   * Rows without a value are worst in either direction. Without an order field this is the first
+   * {@code n} rows.
+   */
+  static List<Map<String, Object>> selectTop(Stream<Map<String, Object>> rows, TopOp topOp) {
+    if (topOp.orderBy() == null) {
+      return rows.limit(topOp.n()).collect(Collectors.toList());
     }
-
-    // Min-heap of size N (removes smallest when full)
-    java.util.PriorityQueue<Map<String, Object>> topN =
-        new java.util.PriorityQueue<>(topOp.n() + 1, comparator);
-
-    long[] counter = {0};
-
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
-          topN.add(map);
-          if (topN.size() > topOp.n()) {
-            topN.poll(); // Remove smallest
+    Comparator<Map<String, Object>> bestFirst =
+        nullsLastBy(m -> getField(m, topOp.orderBy()), topOp.descending());
+    java.util.PriorityQueue<Map<String, Object>> heap =
+        new java.util.PriorityQueue<>(topOp.n() + 1, bestFirst.reversed());
+    rows.forEach(
+        row -> {
+          heap.add(row);
+          if (heap.size() > topOp.n()) {
+            heap.poll(); // evict the worst
           }
-
-          counter[0]++;
         });
-
-    // Convert priority queue to list in correct order
-    List<Map<String, Object>> results = new ArrayList<>(topN);
-    results.sort(comparator.reversed()); // Reverse to get descending order
+    List<Map<String, Object>> results = new ArrayList<>(heap);
+    results.sort(bestFirst);
     return results;
   }
 
@@ -378,13 +406,7 @@ public final class HdumpPathEvaluator {
         sortColumn = op.sortBy(); // Use as-is (shouldn't happen based on parser)
       }
 
-      results.sort(
-          (m1, m2) -> {
-            Object v1 = m1.get(sortColumn);
-            Object v2 = m2.get(sortColumn);
-            int cmp = compareValues(v1, v2);
-            return op.ascending() ? cmp : -cmp;
-          });
+      results.sort(nullsLastBy(m -> m.get(sortColumn), !op.ascending()));
     }
 
     return results;
@@ -469,14 +491,7 @@ public final class HdumpPathEvaluator {
 
     // Apply sorting from TopOp
     if (topOp.orderBy() != null) {
-      Comparator<Map<String, Object>> comparator =
-          (m1, m2) -> {
-            Object v1 = getField(m1, topOp.orderBy());
-            Object v2 = getField(m2, topOp.orderBy());
-            int cmp = compareValues(v1, v2);
-            return topOp.descending() ? -cmp : cmp;
-          };
-      results.sort(comparator);
+      results.sort(nullsLastBy(m -> getField(m, topOp.orderBy()), topOp.descending()));
     }
 
     // Apply remaining pipeline operations
@@ -689,7 +704,7 @@ public final class HdumpPathEvaluator {
       List<Map<String, Object>> results =
           groups.values().stream()
               .map(acc -> acc.toResultMap(op))
-              .sorted((m1, m2) -> -compareValues(m1.get(aggField), m2.get(aggField))) // Descending
+              .sorted(nullsLastBy(m -> m.get(aggField), true)) // descending, nulls last
               .limit(n)
               .collect(Collectors.toList());
       return results;
@@ -705,6 +720,28 @@ public final class HdumpPathEvaluator {
       HeapDump dump,
       HeapSession session,
       Query query,
+      PipelineOp firstOp,
+      List<PipelineOp> remainingOps) {
+    return evaluateObjectsStreamingWithFilters(
+        dump, session, query, List.of(), firstOp, remainingOps);
+  }
+
+  /**
+   * Operators whose output for a row depends on that row alone, so they can run while streaming.
+   */
+  private static boolean isRowLocal(PipelineOp op) {
+    return op instanceof WasteOp || op instanceof CacheStatsOp || op instanceof FilterOp;
+  }
+
+  /**
+   * As above, with {@code rowOps} (see {@link #isRowLocal}) applied to each row before {@code
+   * firstOp}, which must then be a {@link TopOp}.
+   */
+  private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
+      HeapDump dump,
+      HeapSession session,
+      Query query,
+      List<PipelineOp> rowOps,
       PipelineOp firstOp,
       List<PipelineOp> remainingOps) {
 
@@ -778,7 +815,23 @@ public final class HdumpPathEvaluator {
 
     // Delegate to specialized streaming method based on operation type
     List<Map<String, Object>> results;
-    if (firstOp instanceof TopOp topOp) {
+    if (!rowOps.isEmpty()) {
+      if (!(firstOp instanceof TopOp topOp)) {
+        throw new IllegalStateException("row operators must stream into top(), not " + firstOp);
+      }
+      Stream<Map<String, Object>> rows =
+          stream
+              .map(HdumpPathEvaluator::objectToMap)
+              .flatMap(
+                  row -> {
+                    List<Map<String, Object>> out = List.of(row);
+                    for (PipelineOp op : rowOps) {
+                      out = applyPipelineOp(session, out, op);
+                    }
+                    return out.stream();
+                  });
+      results = selectTop(rows, topOp);
+    } else if (firstOp instanceof TopOp topOp) {
       results = evaluateObjectsStreamingTopFromStream(stream, dump.getObjectCount(), topOp);
     } else if (firstOp instanceof GroupByOp groupByOp) {
       results = evaluateObjectsStreamingGroupByFromStream(stream, dump.getObjectCount(), groupByOp);
@@ -1595,7 +1648,7 @@ public final class HdumpPathEvaluator {
     // Left-join: for each current row, lookup baseline, add baseline.* and *Delta columns
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
     for (Map<String, Object> row : results) {
-      Map<String, Object> out = new LinkedHashMap<>(row);
+      Map<String, Object> out = aliasCopy(row);
       Object key = getField(row, joinKey);
       Map<String, Object> baseRow = key != null ? baselineIndex.get(key) : null;
 
@@ -1670,7 +1723,7 @@ public final class HdumpPathEvaluator {
     // Left-join: enrich each heap row with allocation statistics
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
     for (Map<String, Object> row : results) {
-      Map<String, Object> out = new LinkedHashMap<>(row);
+      Map<String, Object> out = aliasCopy(row);
       Object keyObj = getField(row, joinKey);
       String className = keyObj != null ? String.valueOf(keyObj) : null;
 
@@ -2123,7 +2176,7 @@ public final class HdumpPathEvaluator {
     return results.stream()
         .map(
             row -> {
-              Map<String, Object> newRow = new LinkedHashMap<>(row);
+              Map<String, Object> newRow = aliasCopy(row);
               Object val = newRow.get(field);
               if (val != null) {
                 newRow.put(field, transform.apply(val));
@@ -2169,7 +2222,7 @@ public final class HdumpPathEvaluator {
     }
 
     if (includeSubclasses) {
-      checkInstanceofTarget(pattern, baseClass.orElse(null), result);
+      checkInstanceofTarget(dump, pattern, result);
     }
     return result;
   }
@@ -2179,40 +2232,51 @@ public final class HdumpPathEvaluator {
    * records carry only the superclass, never the implemented interfaces (see the
    * HPROF_GC_CLASS_DUMP layout in HotSpot's {@code heapDumper.cpp}), so subtype matching walks
    * superclass chains only. An interface is in the dump as a class of its own: no instance fields,
-   * instance size 0, no instances, and no class names it as a superclass. Such a target would
-   * silently match nothing, as would a name that is not in the dump at all.
+   * instance size 0, no instances, and no class names it as a superclass. When every class the
+   * target matched (itself, its subclasses, or every class a glob matched) looks like that, the
+   * query would silently return nothing, as it would for a name that is not in the dump at all.
+   *
+   * <p>A concrete class with no instance fields and no live instances (a static utility class)
+   * looks the same in a heap dump; the message says so and names the query that answers 0 for it.
    */
-  private static void checkInstanceofTarget(String pattern, HeapClass base, Set<String> matched) {
+  private static void checkInstanceofTarget(HeapDump dump, String pattern, Set<String> matched) {
     String shown = ClassNameUtil.toHumanReadable(pattern);
+    boolean glob = pattern.contains("*") || pattern.contains("?");
     if (matched.isEmpty()) {
       throw new IllegalArgumentException(
           "instanceof/"
               + shown
               + ": no class "
-              + (pattern.contains("*") || pattern.contains("?") ? "matches" : "named")
+              + (glob ? "matches" : "named")
               + " '"
               + shown
               + "' in this heap dump");
     }
-    if (base != null
-        && matched.size() == 1
-        && !base.isArray()
-        && base.getInstanceCount() == 0
-        && base.getInstanceSize() == 0
-        && base.getInstanceFields().isEmpty()) {
-      throw new IllegalArgumentException(
-          "instanceof/"
-              + shown
-              + ": '"
-              + shown
-              + "' has no instances, no instance fields and no subclasses in this heap dump, which"
-              + " is what an interface looks like. A heap dump records each class's superclass but"
-              + " not the interfaces it implements, so instanceof cannot match through an"
-              + " interface. Use a class the implementations extend (for example"
-              + " java.util.AbstractMap instead of java.util.Map) or a glob such as"
-              + " objects/java.util.*Map. (An abstract class with no fields and no subclasses"
-              + " here also gets this message.)");
+    for (String name : matched) {
+      HeapClass cls = dump.getClassByName(name).orElse(null);
+      if (cls == null
+          || cls.isArray()
+          || cls.getInstanceCount() > 0
+          || cls.getInstanceSize() != 0
+          || !cls.getInstanceFields().isEmpty()) {
+        return; // something here can have instances: an empty result is a real answer
+      }
     }
+    throw new IllegalArgumentException(
+        "instanceof/"
+            + shown
+            + ": "
+            + (glob ? "every class matching '" + shown + "' has" : "'" + shown + "' has")
+            + " no instances, no instance fields and no subclasses in this heap dump, which is"
+            + " what an interface looks like. A heap dump records each class's superclass but not"
+            + " the interfaces it implements, so instanceof cannot match through an interface:"
+            + " name a class the implementations extend instead (for java.util.Map, for example,"
+            + " java.util.AbstractMap or java.util.HashMap). If "
+            + (glob ? "these are classes" : "it is a class")
+            + " with no live instances (a static utility class looks the same), the answer is 0:"
+            + " query objects/"
+            + shown
+            + " without instanceof.");
   }
 
   private static void addSubclasses(HeapDump dump, String className, Set<String> result) {
@@ -2336,8 +2400,7 @@ public final class HdumpPathEvaluator {
     for (Map<String, Object> row : results) {
       Object idObj = row.get("id");
       if (idObj == null) {
-        Map<String, Object> copy = new AliasMap();
-        copy.putAll(row);
+        Map<String, Object> copy = aliasCopy(row);
         CollectionWasteAnalyzer.addNullWasteColumns(copy);
         enriched.add(copy);
         continue;
@@ -2347,16 +2410,13 @@ public final class HdumpPathEvaluator {
           idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
       HeapObject obj = dump.getObjectById(id).orElse(null);
       if (obj == null) {
-        Map<String, Object> copy = new AliasMap();
-        copy.putAll(row);
+        Map<String, Object> copy = aliasCopy(row);
         CollectionWasteAnalyzer.addNullWasteColumns(copy);
         enriched.add(copy);
         continue;
       }
 
-      // AliasMap keeps "class"/"shallow"/"retained" resolvable downstream
-      Map<String, Object> enrichedRow = new AliasMap();
-      enrichedRow.putAll(row);
+      Map<String, Object> enrichedRow = aliasCopy(row);
       if (!CollectionWasteAnalyzer.analyze(obj, enrichedRow, refSize)) {
         CollectionWasteAnalyzer.addNullWasteColumns(enrichedRow);
       }
@@ -2374,7 +2434,7 @@ public final class HdumpPathEvaluator {
     for (Map<String, Object> row : results) {
       Object idObj = row.get("id");
       if (idObj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = aliasCopy(row);
         CacheStatsAnalyzer.addNullColumns(copy);
         enriched.add(copy);
         continue;
@@ -2384,7 +2444,7 @@ public final class HdumpPathEvaluator {
           idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
       HeapObject obj = dump.getObjectById(id).orElse(null);
       if (obj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = aliasCopy(row);
         CacheStatsAnalyzer.addNullColumns(copy);
         enriched.add(copy);
         continue;
@@ -2395,7 +2455,7 @@ public final class HdumpPathEvaluator {
       long retainedSize =
           retainedObj instanceof Number n ? n.longValue() : obj.getRetainedSizeIfAvailable();
 
-      Map<String, Object> enrichedRow = new LinkedHashMap<>(row);
+      Map<String, Object> enrichedRow = aliasCopy(row);
       if (!CacheStatsAnalyzer.analyze(obj, enrichedRow, retainedSize)) {
         CacheStatsAnalyzer.addNullColumns(enrichedRow);
       }

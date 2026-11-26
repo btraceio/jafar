@@ -588,7 +588,7 @@ public final class HdumpTools {
         objects | top(10, retained)
         classes | top(20, instanceCount)
         objects/java.lang.String | count
-        objects/java.util.* | waste() | top(10, wastedBytes)
+        objects/instanceof/java.util.HashMap | waste() | top(10, wastedBytes)
         duplicates | sortBy(wastedBytes desc) | top(20)
         gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)
         checkLeaks(detector="duplicate-strings")

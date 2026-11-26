@@ -139,7 +139,7 @@ hdump> checkLeaks(detector="growing-collections")
 # Manual investigation
 hdump> classes | top(20, instanceCount)
 hdump> classes/com.myapp.* | top(10, instanceCount)
-hdump> objects/instanceof/java.util.AbstractCollection | groupBy(class) | top(10, count)
+hdump> objects/instanceof/java.util.AbstractCollection | groupBy(class) | top(10, count)  # most JDK collections; see hdumppath.md
 ```
 
 ### Retained Size Analysis

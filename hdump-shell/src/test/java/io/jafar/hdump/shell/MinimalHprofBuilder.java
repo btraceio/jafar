@@ -24,17 +24,19 @@ import java.util.List;
  *     .write(tempDir);
  * }</pre>
  */
-final class MinimalHprofBuilder {
+public final class MinimalHprofBuilder {
 
   private static final int ID_SIZE = 8;
 
   /** HPROF basic type tags used by {@link #addClass(long, String, long, Field...)}. */
-  static final int TYPE_OBJECT = 2;
+  public static final int TYPE_OBJECT = 2;
 
-  static final int TYPE_INT = 10;
+  public static final int TYPE_BOOLEAN = 4;
+
+  public static final int TYPE_INT = 10;
 
   /** An instance field declared by a class: its name and HPROF basic type. */
-  record Field(String name, int type) {}
+  public record Field(String name, int type) {}
 
   private record ClassDef(long id, String name, long superId, List<Field> fields) {}
 
@@ -50,7 +52,7 @@ final class MinimalHprofBuilder {
   private final List<ObjArray> arrays = new ArrayList<>();
 
   /** Registers a class with the given address and internal name (e.g. {@code java/lang/String}). */
-  MinimalHprofBuilder addClass(long classId, String internalName) {
+  public MinimalHprofBuilder addClass(long classId, String internalName) {
     return addClass(classId, internalName, 0);
   }
 
@@ -58,13 +60,14 @@ final class MinimalHprofBuilder {
    * Registers a class with a superclass (0 for none) and the instance fields it declares itself,
    * excluding inherited ones, in HPROF order.
    */
-  MinimalHprofBuilder addClass(long classId, String internalName, long superId, Field... fields) {
+  public MinimalHprofBuilder addClass(
+      long classId, String internalName, long superId, Field... fields) {
     classes.add(new ClassDef(classId, internalName, superId, List.of(fields)));
     return this;
   }
 
   /** Adds an instance of the given class with no field data. */
-  MinimalHprofBuilder addInstance(long objectId, long classId) {
+  public MinimalHprofBuilder addInstance(long objectId, long classId) {
     return addInstance(objectId, classId, new byte[0]);
   }
 
@@ -72,43 +75,48 @@ final class MinimalHprofBuilder {
    * Adds an instance with raw field data: the class's own fields first, then each superclass's, as
    * HotSpot writes them. Build it with {@link #fieldData()}.
    */
-  MinimalHprofBuilder addInstance(long objectId, long classId, byte[] data) {
+  public MinimalHprofBuilder addInstance(long objectId, long classId, byte[] data) {
     instances.add(new Instance(objectId, classId, data));
     return this;
   }
 
   /** Adds an object array of the given array class holding the given element ids (0 = null). */
-  MinimalHprofBuilder addObjectArray(long arrayId, long arrayClassId, long... elements) {
+  public MinimalHprofBuilder addObjectArray(long arrayId, long arrayClassId, long... elements) {
     arrays.add(new ObjArray(arrayId, arrayClassId, elements));
     return this;
   }
 
   /** Writes instance field values in HPROF encoding (ids are 8 bytes). */
-  static final class FieldData {
+  public static final class FieldData {
     private final ByteArrayOutputStream bos = new ByteArrayOutputStream();
     private final DataOutputStream out = new DataOutputStream(bos);
 
-    FieldData ref(long id) throws IOException {
+    public FieldData ref(long id) throws IOException {
       out.writeLong(id);
       return this;
     }
 
-    FieldData i32(int v) throws IOException {
+    public FieldData bool(boolean v) throws IOException {
+      out.writeByte(v ? 1 : 0);
+      return this;
+    }
+
+    public FieldData i32(int v) throws IOException {
       out.writeInt(v);
       return this;
     }
 
-    byte[] bytes() {
+    public byte[] bytes() {
       return bos.toByteArray();
     }
   }
 
-  static FieldData fieldData() {
+  public static FieldData fieldData() {
     return new FieldData();
   }
 
   /** Adds a ROOT_UNKNOWN GC root for the given object. */
-  MinimalHprofBuilder addGcRoot(long objectId) {
+  public MinimalHprofBuilder addGcRoot(long objectId) {
     roots.add(new GcRoot(objectId));
     return this;
   }
@@ -119,7 +127,7 @@ final class MinimalHprofBuilder {
    * @param dir directory for the temp file
    * @return path to the written file
    */
-  Path write(Path dir) throws IOException {
+  public Path write(Path dir) throws IOException {
     Path file = Files.createTempFile(dir, "test-", ".hprof");
     Files.write(file, toBytes());
     return file;
@@ -158,8 +166,12 @@ final class MinimalHprofBuilder {
     DataOutputStream h = new DataOutputStream(heapBos);
 
     // CLASS_DUMP for every class
+    java.util.Map<Long, ClassDef> byId = new java.util.HashMap<>();
     for (ClassDef cls : classes) {
-      writeClassDump(h, cls, fieldNameIds);
+      byId.put(cls.id, cls);
+    }
+    for (ClassDef cls : classes) {
+      writeClassDump(h, cls, instanceSize(cls, byId), fieldNameIds);
     }
 
     // INSTANCE_DUMP for every instance
@@ -222,13 +234,38 @@ final class MinimalHprofBuilder {
     out.writeLong(nameId);
   }
 
-  private static void writeClassDump(
-      DataOutputStream out, ClassDef cls, java.util.Map<String, Long> fieldNameIds)
-      throws IOException {
-    int instanceSize = 0;
-    for (Field f : cls.fields) {
-      instanceSize += f.type() == TYPE_OBJECT ? ID_SIZE : 4;
+  /**
+   * Instance size as HotSpot writes it: the field bytes of the class and all its superclasses (no
+   * object header). Field-less classes, interfaces included, get 0.
+   */
+  private static int instanceSize(ClassDef cls, java.util.Map<Long, ClassDef> byId) {
+    int size = 0;
+    for (ClassDef c = cls; c != null; c = c.superId == 0 ? null : byId.get(c.superId)) {
+      for (Field f : c.fields) {
+        size += fieldWidth(f.type());
+      }
     }
+    return size;
+  }
+
+  /** Byte width of an HPROF basic type in field data (ids are {@value #ID_SIZE} bytes). */
+  private static int fieldWidth(int type) {
+    return switch (type) {
+      case TYPE_OBJECT -> ID_SIZE;
+      case 4, 8 -> 1; // boolean, byte
+      case 5, 9 -> 2; // char, short
+      case 6, TYPE_INT -> 4; // float, int
+      case 7, 11 -> 8; // double, long
+      default -> throw new IllegalArgumentException("not an HPROF basic type: " + type);
+    };
+  }
+
+  private static void writeClassDump(
+      DataOutputStream out,
+      ClassDef cls,
+      int instanceSize,
+      java.util.Map<String, Long> fieldNameIds)
+      throws IOException {
     out.writeByte(0x20); // CLASS_DUMP
     out.writeLong(cls.id);
     out.writeInt(0); // stack trace

@@ -409,6 +409,8 @@ public final class HeapDumpImpl implements HeapDump {
       LOG.debug("Class-instances index not available (will be built on first parse)");
     }
 
+    loadInstanceCounts();
+
     LOG.debug(
         "Parsed {} classes, {} objects, {} GC roots (indexed mode)",
         classesById.size(),
@@ -1794,6 +1796,46 @@ public final class HeapDumpImpl implements HeapDump {
     }
     // In-memory mode: direct cache lookup
     return Optional.ofNullable(getCachedObject(id));
+  }
+
+  /**
+   * INDEXED mode only: sets {@link HeapClass#getInstanceCount()} for every class. The single-pass
+   * parser counts instances as it reads them; the two-pass parser did not, so every class reported
+   * 0 instances in INDEXED mode (the AUTO choice for dumps over 2 GB). The counts come from the
+   * class-instances index, or, when that index is absent (an index directory written before it
+   * existed), from one sequential read of the object index.
+   *
+   * <p>Both indexes also record each class's own class object under that class (see the CLASS_DUMP
+   * case in pass 2: an entry with file offset 0), so that entry is not counted. Primitive array
+   * entries carry class id -1 and are not attributed to a class here, as before.
+   */
+  private void loadInstanceCounts() {
+    if (classAddressToId32 == null) {
+      return;
+    }
+    if (classInstancesOffsetReader != null) {
+      for (HeapClassImpl cls : classesById.values()) {
+        int classId32 = classAddressToId32.get(cls.getId());
+        var location =
+            classId32 >= 0 ? classInstancesOffsetReader.getInstancesLocation(classId32) : null;
+        // minus the class object's own entry, which every class from a CLASS_DUMP has
+        cls.setInstanceCount(location != null ? Math.max(0, location.instanceCount() - 1) : 0);
+      }
+      return;
+    }
+    it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap counts =
+        new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    int entries = objectIndexReader.getEntryCount();
+    for (int i = 0; i < entries; i++) {
+      ObjectIndexReader.ObjectMetadata meta = objectIndexReader.readObject(i);
+      if (meta != null && meta.fileOffset != 0) { // file offset 0: a class object's own entry
+        counts.addTo(meta.classId, 1);
+      }
+    }
+    for (HeapClassImpl cls : classesById.values()) {
+      int classId32 = classAddressToId32.get(cls.getId());
+      cls.setInstanceCount(classId32 >= 0 ? counts.get(classId32) : 0);
+    }
   }
 
   @Override

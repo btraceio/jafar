@@ -130,14 +130,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   null columns that headed `top()` lists (#225).** A heap dump records each class's superclass but
   not its interfaces (HotSpot's `HPROF_GC_CLASS_DUMP` has no interface list), so
   `objects/instanceof/java.util.Map` returned 0 objects on a heap with thousands of maps. It now
-  fails and says why when the named class looks like an interface (in the dump, with no
-  instances, no instance fields and no subclasses), and `instanceof` on a name not in the dump
-  fails with `no class named ...`. Jafar's own hints recommended these queries; `hdump_report`,
+  fails and says why when every class it matches looks like an interface (in the dump, with no
+  instances, no instance fields and no subclasses; globs included), and `instanceof` on a name not
+  in the dump fails with `no class named ...`. A field-less class with no live instances looks the
+  same; the message names `objects/<class>` (without instanceof) for that case. Jafar's own hints recommended these queries; `hdump_report`,
   the `hdump_query` tool description, the MCP help and the docs now use `java.util.AbstractMap`,
-  `java.util.AbstractCollection` and globs. `waste()` analyzes a subclass of a supported
+  `java.util.AbstractCollection` or `java.util.HashMap`; `doc/hdumppath.md` lists what each
+  abstract class covers and misses. `waste()` analyzes a subclass of a supported
   collection (an anonymous `HashMap`, say) through the fields it inherits, where it used to
   return null columns; `top()` and `sortBy(... desc)` put rows with a null value last instead of
-  first; and rows after `waste()` keep the `class`/`shallow`/`retained` aliases
+  first; and rows after `waste()`, `cacheStats()`, string transforms and joins keep the
+  `class`/`shallow`/`retained` aliases (`select(class, ...)` read `null` after them)
+- **Heap dumps over 2 GB (INDEXED mode) reported 0 instances for every class.** The two-pass
+  parser never set `HeapClass.getInstanceCount()`, so `classes | select(name, instanceCount)` and
+  `hdump_report`'s histogram and waste findings read 0 on any dump AUTO opened in INDEXED mode.
+  The counts now come from the class-instances index (minus each class's own class-object entry),
+  or from the object index when an older index directory lacks it
+- **HdumpPath on heaps over 5M objects: `top(n, field)` returned the n smallest values, in
+  ascending order.** The bounded heap evicted its best row instead of its worst. The streaming
+  groupBy sorts also put nulls first when descending. A pipeline that starts with `waste()`,
+  `cacheStats()` or `filter()` and reaches a `top(n)` is now streamed object by object; it used to
+  run on 100 objects of the stream
+- **`cacheStats()` never reported `isLruMode = true`.** The reader decodes a boolean field as
+  `Boolean` and the check tested for `Number`; LinkedHashMap subclasses (the usual LRU cache) were
+  also not recognised. On a JDK 25 dump with 50 access-order `LinkedHashMap` subclasses,
+  `objects/instanceof/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true) | count`
+  went from 0 to 50
 - **HdumpPath: `groupBy(class, agg=sum)` summed object ids, and operators over a missing column
   returned results that read as measurements (#226).** Without `value=`, `sum`/`avg`/`min`/`max`
   took the first numeric column of an object row, which is `id`: on a heap with three `Foo` objects
