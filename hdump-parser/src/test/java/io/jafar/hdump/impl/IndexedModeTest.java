@@ -149,22 +149,28 @@ class IndexedModeTest {
   private static long[] indexedSizes(
       Path file, GraphHeapDumpWriter w, IndexedStrategy strategy, int budget, boolean noHeap)
       throws IOException {
-    ApproximateRetainedSizeComputer.indexedStrategy = strategy;
-    ApproximateRetainedSizeComputer.indexedBudget = budget;
-    var heap = ApproximateRetainedSizeComputer.availableHeap;
-    if (noHeap) ApproximateRetainedSizeComputer.availableHeap = () -> 0L;
+    return indexedRun(file, w, strategy, budget, noHeap).sizes;
+  }
+
+  /** One INDEXED computation's values and how often its subgraph fallback ran. */
+  private record Run(long[] sizes, int fallbacks) {}
+
+  private static Run indexedRun(
+      Path file, GraphHeapDumpWriter w, IndexedStrategy strategy, int budget, boolean noHeap)
+      throws IOException {
     try (HeapDump dump = HeapDumpParser.parse(file, ParserOptions.INDEXED)) {
-      assertTrue(((HeapDumpImpl) dump).getObjectIndexReader() != null, "INDEXED mode");
+      HeapDumpImpl impl = (HeapDumpImpl) dump;
+      assertTrue(impl.getObjectIndexReader() != null, "INDEXED mode");
+      var options = impl.retainedSizeOptions();
+      options.strategy = strategy;
+      options.budget = budget;
+      if (noHeap) options.availableHeap = () -> 0L;
       dump.computeDominators();
       long[] out = new long[w.nodeCount()];
       for (int v = 0; v < out.length; v++) {
         out[v] = dump.getObjectById(w.objectId(v)).orElseThrow().getRetainedSize();
       }
-      return out;
-    } finally {
-      ApproximateRetainedSizeComputer.indexedStrategy = null;
-      ApproximateRetainedSizeComputer.indexedBudget = 256;
-      ApproximateRetainedSizeComputer.availableHeap = heap;
+      return new Run(out, options.subgraphFallbacks.get());
     }
   }
 
@@ -248,9 +254,9 @@ class IndexedModeTest {
     for (Object[] run : STRATEGIES) {
       Files.deleteIfExists(indexDir.resolve(IndexFormat.RETAINED_INDEX_NAME));
       boolean noHeap = (Boolean) run[2];
-      int fallbacks = ApproximateRetainedSizeComputer.SUBGRAPH_FALLBACKS.get();
-      long[] actual = indexedSizes(file, w, (IndexedStrategy) run[0], (Integer) run[1], noHeap);
-      int ranFallback = ApproximateRetainedSizeComputer.SUBGRAPH_FALLBACKS.get() - fallbacks;
+      Run result = indexedRun(file, w, (IndexedStrategy) run[0], (Integer) run[1], noHeap);
+      long[] actual = result.sizes();
+      int ranFallback = result.fallbacks();
       if (!noHeap) {
         assertEquals(0, ranFallback, run[0] + " budget " + run[1] + ": unexpected fallback");
       } else if (hasOnceReferencedChildren(w)) {

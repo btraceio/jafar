@@ -51,30 +51,51 @@ public final class ApproximateRetainedSizeComputer {
   }
 
   /**
-   * INDEXED strategy: {@code -Djafar.hdump.retained.strategy=AUTO|ALL_AT_ONCE|BUDGETED|PER_OBJECT}
-   * (default AUTO). BUDGETED bounds the transient heap to the forest pass plus the large objects'
-   * subgraph even where all at once would fit. Tests pin it directly (package-private).
+   * How one dump computes INDEXED retained sizes. Held per dump ({@code HeapDumpImpl}), never in
+   * static state: the strategy defaults to {@code
+   * -Djafar.hdump.retained.strategy=AUTO|ALL_AT_ONCE|BUDGETED|PER_OBJECT}, read at compute time;
+   * tests pin the strategy, shrink the budget or replace the free-heap figure on the dump they
+   * open.
    */
-  static volatile IndexedStrategy indexedStrategy = null; // null: the system property
+  static final class RetainedSizeOptions {
+    /** Pinned strategy, or null for the system property (default AUTO). */
+    volatile IndexedStrategy strategy;
 
-  /** The strategy: a test's pin, else {@code jafar.hdump.retained.strategy}, else AUTO. */
-  private static IndexedStrategy strategy() {
-    IndexedStrategy pinned = indexedStrategy;
-    if (pinned != null) return pinned;
-    String value = System.getProperty("jafar.hdump.retained.strategy");
-    if (value == null || value.isBlank()) return IndexedStrategy.AUTO;
-    try {
-      return IndexedStrategy.valueOf(value.trim().toUpperCase(Locale.ROOT));
-    } catch (IllegalArgumentException e) {
-      LOG.warn(
-          "Ignoring -Djafar.hdump.retained.strategy={} (expected one of {}); using AUTO",
-          value,
-          java.util.Arrays.toString(IndexedStrategy.values()));
-      return IndexedStrategy.AUTO;
+    /** Budget, in BFS steps, below which an object keeps its per-object BFS. */
+    volatile int budget = 256;
+
+    /** Free heap in bytes. */
+    volatile java.util.function.LongSupplier availableHeap =
+        () -> {
+          Runtime rt = Runtime.getRuntime();
+          return rt.maxMemory() - (rt.totalMemory() - rt.freeMemory());
+        };
+
+    /** Times an object's subgraph did not fit and it fell back to one BFS. */
+    final java.util.concurrent.atomic.AtomicInteger subgraphFallbacks =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    /** The strategy: the pinned one, else {@code jafar.hdump.retained.strategy}, else AUTO. */
+    IndexedStrategy strategy() {
+      IndexedStrategy pinned = strategy;
+      if (pinned != null) return pinned;
+      String value = System.getProperty("jafar.hdump.retained.strategy");
+      if (value == null || value.isBlank()) return IndexedStrategy.AUTO;
+      try {
+        return IndexedStrategy.valueOf(value.trim().toUpperCase(Locale.ROOT));
+      } catch (IllegalArgumentException e) {
+        LOG.warn(
+            "Ignoring -Djafar.hdump.retained.strategy={} (expected one of {}); using AUTO",
+            value,
+            java.util.Arrays.toString(IndexedStrategy.values()));
+        return IndexedStrategy.AUTO;
+      }
+    }
+
+    boolean fits(long bytes) {
+      return bytes < availableHeap.getAsLong() / 2;
     }
   }
-
-  static volatile int indexedBudget = 256;
 
   /**
    * Transient heap {@link MinRetainedSizes} needs for {@code n} nodes and {@code e} edges (its
@@ -82,21 +103,6 @@ public final class ApproximateRetainedSizeComputer {
    */
   static long allAtOnceBytes(long n, long e) {
     return 88L * n + 32L * e;
-  }
-
-  /** Free heap in bytes; a test hook can replace it (package-private). */
-  static volatile java.util.function.LongSupplier availableHeap =
-      () -> {
-        Runtime rt = Runtime.getRuntime();
-        return rt.maxMemory() - (rt.totalMemory() - rt.freeMemory());
-      };
-
-  /** Times the large objects' subgraph did not fit and they fell back to one BFS each. */
-  static final java.util.concurrent.atomic.AtomicInteger SUBGRAPH_FALLBACKS =
-      new java.util.concurrent.atomic.AtomicInteger();
-
-  private static boolean fits(long bytes) {
-    return bytes < availableHeap.getAsLong() / 2;
   }
 
   /**
@@ -141,11 +147,12 @@ public final class ApproximateRetainedSizeComputer {
     IndexedRefs refs = new IndexedRefs(dump, stored);
     final int n = refs.size();
     long edges = stored != null ? stored.start(n) : -1;
-    IndexedStrategy strategy = strategy();
+    RetainedSizeOptions options = dump.retainedSizeOptions();
+    IndexedStrategy strategy = options.strategy();
     boolean canAllAtOnce = stored != null && edges < Integer.MAX_VALUE - 8;
     if (strategy == IndexedStrategy.AUTO) {
       strategy =
-          canAllAtOnce && fits(allAtOnceBytes(n, edges))
+          canAllAtOnce && options.fits(allAtOnceBytes(n, edges))
               ? IndexedStrategy.ALL_AT_ONCE
               : IndexedStrategy.BUDGETED;
     }
@@ -160,7 +167,7 @@ public final class ApproximateRetainedSizeComputer {
     try {
       switch (strategy) {
         case ALL_AT_ONCE -> allAtOnce(refs, stored, inbound, n, (int) edges, writer);
-        case BUDGETED -> budgeted(refs, inbound, n, indexedBudget, writer, progressCallback);
+        case BUDGETED -> budgeted(refs, inbound, n, options, writer, progressCallback);
         default -> perObject(refs, inbound, n, writer, progressCallback);
       }
     } catch (java.io.IOException e) {
@@ -216,15 +223,15 @@ public final class ApproximateRetainedSizeComputer {
       IndexedRefs refs,
       InboundCountReader inbound,
       int n,
-      int budget,
+      RetainedSizeOptions options,
       io.jafar.hdump.index.RetainedSizeWriter writer,
       ProgressCallback cb)
       throws java.io.IOException {
-    java.util.BitSet large = largeObjects(refs, inbound, n, budget);
+    java.util.BitSet large = largeObjects(refs, inbound, n, options.budget);
     Bfs bfs = new Bfs(refs, inbound, n);
     // The large objects first, so retained.idx is only ever written complete and in order.
     it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap largeValues =
-        largeValues(refs, inbound, n, large, bfs);
+        largeValues(refs, inbound, n, large, bfs, options);
     for (int t = 0; t < n; t++) {
       long value;
       if (refs.isClassEntry(t)) {
@@ -298,7 +305,12 @@ public final class ApproximateRetainedSizeComputer {
    * warning.
    */
   private static it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap largeValues(
-      IndexedRefs refs, InboundCountReader inbound, int n, java.util.BitSet large, Bfs bfs) {
+      IndexedRefs refs,
+      InboundCountReader inbound,
+      int n,
+      java.util.BitSet large,
+      Bfs bfs,
+      RetainedSizeOptions options) {
     it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap values =
         new it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap(Math.max(16, large.cardinality()));
     int[] local = new int[n]; // id32 -> index in the current batch + 1
@@ -309,7 +321,8 @@ public final class ApproximateRetainedSizeComputer {
       int mark = nodes.size();
       long markEdges = edges[0];
       collect(refs, inbound, t, local, nodes, edges);
-      if (edges[0] < Integer.MAX_VALUE - 8 && fits(allAtOnceBytes(nodes.size(), edges[0]))) {
+      if (edges[0] < Integer.MAX_VALUE - 8
+          && options.fits(allAtOnceBytes(nodes.size(), edges[0]))) {
         continue;
       }
       // t does not fit with the batch: compute the batch without t, then t on its own
@@ -318,7 +331,8 @@ public final class ApproximateRetainedSizeComputer {
       edges[0] = markEdges;
       computeBatch(refs, inbound, large, local, nodes, values);
       collect(refs, inbound, t, local, nodes, edges);
-      if (edges[0] < Integer.MAX_VALUE - 8 && fits(allAtOnceBytes(nodes.size(), edges[0]))) {
+      if (edges[0] < Integer.MAX_VALUE - 8
+          && options.fits(allAtOnceBytes(nodes.size(), edges[0]))) {
         continue;
       }
       LOG.warn(
@@ -327,7 +341,7 @@ public final class ApproximateRetainedSizeComputer {
           t,
           nodes.size(),
           edges[0]);
-      SUBGRAPH_FALLBACKS.incrementAndGet();
+      options.subgraphFallbacks.incrementAndGet();
       for (int i = 0; i < nodes.size(); i++) local[nodes.getInt(i)] = 0;
       nodes.clear();
       edges[0] = 0;

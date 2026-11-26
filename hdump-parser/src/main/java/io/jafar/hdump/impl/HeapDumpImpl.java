@@ -1948,6 +1948,14 @@ public final class HeapDumpImpl implements HeapDump {
     }
   }
 
+  // How INDEXED retained sizes are computed for this dump (strategy, budget; tests adjust it)
+  private final ApproximateRetainedSizeComputer.RetainedSizeOptions retainedSizeOptions =
+      new ApproximateRetainedSizeComputer.RetainedSizeOptions();
+
+  ApproximateRetainedSizeComputer.RetainedSizeOptions retainedSizeOptions() {
+    return retainedSizeOptions;
+  }
+
   /** INDEXED mode: objects.idx reader; null in IN_MEMORY mode. */
   ObjectIndexReader getObjectIndexReader() {
     return objectIndexReader;
