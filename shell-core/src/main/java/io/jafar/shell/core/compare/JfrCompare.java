@@ -1,103 +1,58 @@
 package io.jafar.shell.core.compare;
 
+import io.jafar.parser.api.ParsingContext;
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.analysis.AnalysisTarget;
 import io.jafar.shell.core.analysis.JfrAnalyses;
 import io.jafar.shell.core.analysis.JfrQuerySource;
-import io.jafar.shell.core.findings.Finding;
-import io.jafar.shell.core.findings.Findings;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathParser;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Compares a candidate recording against a baseline: the logic behind {@code jfr_compare}, with no
- * transport attached.
+ * Reads JFR recordings for a comparison, and compares two of them: the reader behind {@code
+ * jfr_compare}, with no transport attached. The comparison itself is {@link ProfileCompare}'s,
+ * which every format shares; this class reads a recording into a {@link RecordingProfile} and
+ * delegates.
  *
  * <p>It was written inside {@code jfr-mcp}'s tool handler, reachable only by speaking MCP, so CI
  * could not compare two recordings headless. Here it returns data; {@code jfr_compare} wraps that
  * data in its protocol, and {@code jfr-shell compare} prints it.
  *
- * <p>The comparison normalises before it compares. Event counts become per-second rates using each
- * recording's own observed span, and stack frames are compared as a percentage of that recording's
- * samples rather than as sample counts, so two recordings profiled at different sampling intervals
- * remain comparable. Where the two recordings are not safely comparable at all — different
- * execution-sample event types, or wildly different durations — the result says so in {@code
- * comparability} instead of quietly producing a plausible number. A frame is only called a
- * regression when its move is significant given both recordings' sample counts; anything less is
- * {@code inconclusive}, and a recording too thin to judge at all says so in the findings.
- *
- * <p>Two frame lists can be compared. Self time (the leaf frame of each sample) is always compared.
- * Inclusive time (every frame on the stack, once per sample) is compared on request: it names a
- * caller whose own code is unchanged but whose callees got slower, which self time cannot.
+ * <p>Every execution sample weighs 1: a {@code datadog.ExecutionSample}'s {@code weight} field is
+ * not read, so shares are shares of samples.
  */
-public final class JfrCompare {
+public final class JfrCompare implements ProfileReader {
 
-  /**
-   * Frames whose share moved by less than this many percentage points are reported as noise. A
-   * sampling profiler's per-frame share varies run to run even with no code change; a
-   * sub-percentage-point move is not evidence of anything.
-   */
-  public static final double DEFAULT_MIN_DELTA_PCT = 1.0;
+  /** {@link ProfileCompare#DEFAULT_MIN_DELTA_PCT}. */
+  public static final double DEFAULT_MIN_DELTA_PCT = ProfileCompare.DEFAULT_MIN_DELTA_PCT;
 
-  /**
-   * Below this many samples in either recording no frame or rate change is called a regression. It
-   * is the usual floor for the two-proportion test below, and the samples' span is also what rates
-   * are measured over, so a thin recording undermines both.
-   */
-  public static final long MIN_RECORDING_SAMPLES = 30;
+  /** {@link ProfileCompare#MIN_RECORDING_SAMPLES}. */
+  public static final long MIN_RECORDING_SAMPLES = ProfileCompare.MIN_RECORDING_SAMPLES;
 
-  /** A frame needs this many samples in at least one recording before its move can mean much. */
-  public static final long MIN_FRAME_SAMPLES = 5;
+  /** {@link ProfileCompare#MIN_FRAME_SAMPLES}. */
+  public static final long MIN_FRAME_SAMPLES = ProfileCompare.MIN_FRAME_SAMPLES;
 
-  /**
-   * Two-proportion z score a frame's change must reach. Strict because every frame is its own test,
-   * and a recording has hundreds of them.
-   */
-  public static final double MIN_SIGNIFICANCE_Z = 3.0;
+  /** {@link ProfileCompare#MIN_SIGNIFICANCE_Z}. */
+  public static final double MIN_SIGNIFICANCE_Z = ProfileCompare.MIN_SIGNIFICANCE_Z;
 
-  /** Beyond this ratio between the two observed durations, rate comparisons get a warning. */
-  public static final double DURATION_RATIO_WARN = 3.0;
+  /** {@link ProfileCompare#DURATION_RATIO_WARN}. */
+  public static final double DURATION_RATIO_WARN = ProfileCompare.DURATION_RATIO_WARN;
 
-  /** Frame rows returned per list unless the caller asks for another number. */
-  public static final int DEFAULT_LIMIT = 25;
+  /** {@link ProfileCompare#DEFAULT_LIMIT}. */
+  public static final int DEFAULT_LIMIT = ProfileCompare.DEFAULT_LIMIT;
 
-  /**
-   * Above this share of truncated stacks on either side, in percentage points, no inclusive change
-   * is called significant. A truncated stack lacks its outermost frames, so a change in how many
-   * stacks get cut moves those frames' inclusive shares with no time moving.
-   */
-  public static final double MAX_TRUNCATED_PCT_FOR_INCLUSIVE = 1.0;
-
-  /** Event types compared as rates, besides the total. */
-  private static final List<String> TRACKED_EVENT_TYPES =
-      List.of(
-          "jdk.GCPhasePause",
-          "jdk.GarbageCollection",
-          "jdk.JavaMonitorEnter",
-          "jdk.JavaMonitorWait",
-          "jdk.ThreadPark",
-          "jdk.ObjectAllocationSample",
-          "jdk.ObjectAllocationInNewTLAB",
-          "jdk.SocketRead",
-          "jdk.FileRead",
-          "jdk.JavaErrorThrow",
-          "jdk.ExceptionThrow");
-
-  /** Findings' {@code source}: the comparison is {@code jfr_compare}'s, whoever runs it. */
-  private static final String SOURCE = "jfr_compare";
+  /** {@link ProfileCompare#MAX_TRUNCATED_PCT_FOR_INCLUSIVE}. */
+  public static final double MAX_TRUNCATED_PCT_FOR_INCLUSIVE =
+      ProfileCompare.MAX_TRUNCATED_PCT_FOR_INCLUSIVE;
 
   private final JfrQuerySource source;
   private final JfrAnalyses analyses;
@@ -116,48 +71,42 @@ public final class JfrCompare {
     this.analyses = new JfrAnalyses(source);
   }
 
-  /**
-   * A hidden class's address, as in {@code LambdaForm$MH/0x00007f2e141a1000}: assigned per JVM run.
-   */
-  private static final Pattern HIDDEN_CLASS_ADDRESS = Pattern.compile("/0x[0-9a-fA-F]+");
-
-  /** A lambda class's sequence number, as in {@code Foo$$Lambda$14}: assigned per JVM run. */
-  private static final Pattern LAMBDA_INDEX = Pattern.compile("\\$\\$Lambda\\$\\d+");
-
-  /**
-   * javac's number in a synthetic accessor ({@code access$300}, for code compiled for Java 8,
-   * before nestmates) or a lambda body ({@code lambda$main$0}): assigned per compilation, in order
-   * of appearance, so it changes whenever the class does.
-   */
-  private static final Pattern JAVAC_INDEX =
-      Pattern.compile("(?<=\\.)(access|lambda\\$[\\w$]*?)\\$\\d+$");
-
-  /**
-   * {@code frame} without the parts the JVM assigns per run, a hidden class's {@code /0x...}
-   * address and a lambda class's {@code $$Lambda$<n>} number, and without the numbers javac assigns
-   * per compilation, in {@code access$<n>} and {@code lambda$<method>$<n>}. Two recordings come
-   * from two JVMs, often running two builds, so with those parts the same frame has a different
-   * name on each side and reads as gone from one and new in the other. Frames that differ only in
-   * those parts become one: across two runs they cannot be told apart.
-   */
+  /** {@link FrameNames#stableName}. */
   static String stableName(String frame) {
-    // Fast path for the common frame. A hidden class need not have a '$' in its name (Jafar's
-    // generated deserializers are io.jafar...UntypedDeserializer_<type>_<n>/0x...), so the '/0x'
-    // check is needed too.
-    if (frame.indexOf('$') < 0 && !frame.contains("/0x")) {
-      return frame;
-    }
-    String name = HIDDEN_CLASS_ADDRESS.matcher(frame).replaceAll("");
-    name = LAMBDA_INDEX.matcher(name).replaceAll(Matcher.quoteReplacement("$$Lambda"));
-    return JAVAC_INDEX.matcher(name).replaceAll("$1\\$");
+    return FrameNames.stableName(frame);
   }
 
-  private static List<String> stableNames(List<String> frames) {
-    List<String> names = new ArrayList<>(frames.size());
-    for (String frame : frames) {
-      names.add(stableName(frame));
+  @Override
+  public String format() {
+    return RecordingProfile.JFR;
+  }
+
+  /**
+   * The event types in {@code file} that a comparison can read as samples: those whose sampler kind
+   * is known, with at least one event, by name.
+   */
+  @Override
+  public List<SampleTypeInfo> sampleTypes(Path file) throws Exception {
+    try (JFRSession session = new JFRSession(file, ParsingContext.create())) {
+      List<SampleTypeInfo> types = new ArrayList<>();
+      for (Map.Entry<String, Long> type :
+          new TreeMap<>(source.countAllEventTypes(session)).entrySet()) {
+        SamplerKind kind = SamplerKind.forJfrEventType(type.getKey());
+        if (kind != SamplerKind.UNKNOWN && type.getValue() > 0) {
+          types.add(new SampleTypeInfo(type.getKey(), "count", kind));
+        }
+      }
+      return types;
     }
-    return names;
+  }
+
+  /** Opens {@code file}, reads it as {@link #profile} does, and closes it. */
+  @Override
+  public RecordingProfile read(Path file, ProfileSelection selection) throws Exception {
+    try (JFRSession session = new JFRSession(file, ParsingContext.create())) {
+      return profile(
+          new AnalysisTarget(0, file, session), selection.sampleType(), selection.inclusive());
+    }
   }
 
   /** Profiles both recordings and compares them. */
@@ -212,7 +161,7 @@ public final class JfrCompare {
                   && Boolean.TRUE.equals(stackTrace.get("truncated"))) {
                 truncated.increment();
               }
-              List<String> frames = stableNames(analyses.extractFrames(event, "bottom-up", null));
+              List<String> frames = frameKeys(event, null);
               if (!frames.isEmpty()) {
                 leafFrames.merge(frames.get(0), 1L, Long::sum);
                 // Once per sample: a recursive method is on the stack, not on it twice as often.
@@ -221,7 +170,7 @@ public final class JfrCompare {
                 }
               }
             } else {
-              List<String> frames = stableNames(analyses.extractFrames(event, "bottom-up", 1));
+              List<String> frames = frameKeys(event, 1);
               if (!frames.isEmpty()) {
                 leafFrames.merge(frames.get(0), 1L, Long::sum);
               }
@@ -250,398 +199,39 @@ public final class JfrCompare {
         totalEvents);
   }
 
+  /** The sample's frames, leaf first, each keyed by {@link FrameNames#jfrKey}. */
+  private List<String> frameKeys(Map<String, Object> event, Integer maxDepth) {
+    return analyses.extractFrames(
+        event,
+        "bottom-up",
+        maxDepth,
+        frame -> analyses.extractFrameName(frame, FrameNames::jfrKey));
+  }
+
   /**
-   * Compares two profiles already read.
+   * Compares two profiles already read: {@link ProfileCompare#compare}.
    *
    * @throws IllegalArgumentException when {@code options} asks for inclusive frames but a profile
    *     was read without counting them: its empty counts would read as "no caller moved"
    */
   public CompareResult compare(
       RecordingProfile baseline, RecordingProfile candidate, CompareOptions options) {
-    if (options.inclusiveFrames()
-        && !(baseline.inclusiveCounted() && candidate.inclusiveCounted())) {
-      throw new IllegalArgumentException(
-          "inclusive frames were requested, but the "
-              + (baseline.inclusiveCounted() ? "candidate" : "baseline")
-              + " profile was read without counting them: read both with profile(..., true)");
-    }
-    List<String> comparability = comparabilityNotes(baseline, candidate);
-    boolean judgeInclusive = true;
-    if (options.inclusiveFrames()
-        && (baseline.truncatedPct() > MAX_TRUNCATED_PCT_FOR_INCLUSIVE
-            || candidate.truncatedPct() > MAX_TRUNCATED_PCT_FOR_INCLUSIVE)) {
-      judgeInclusive = false;
-      comparability.add(
-          String.format(
-              Locale.ROOT,
-              "Truncated stacks (baseline %.1f%%, candidate %.1f%% of samples, above %.1f%%):"
-                  + " JFR cut them at its stack depth, so the outermost frames' inclusive shares"
-                  + " are understated and no inclusive change is called significant. Record with"
-                  + " -XX:FlightRecorderOptions:stackdepth=2048 to keep deeper stacks.",
-              baseline.truncatedPct(),
-              candidate.truncatedPct(),
-              MAX_TRUNCATED_PCT_FOR_INCLUSIVE));
-      comparability.remove("Recordings appear comparable.");
-    }
-    List<Map<String, Object>> metrics = compareMetrics(baseline, candidate);
-    List<Map<String, Object>> frames =
-        compareFrames(
-            baseline,
-            candidate,
-            baseline.leafFrameCounts(),
-            candidate.leafFrameCounts(),
-            "SelfPct",
-            true,
-            options.minDeltaPct(),
-            options.limit());
-    List<Map<String, Object>> inclusive =
-        options.inclusiveFrames()
-            ? compareFrames(
-                baseline,
-                candidate,
-                baseline.inclusiveFrameCounts(),
-                candidate.inclusiveFrameCounts(),
-                "TotalPct",
-                judgeInclusive,
-                options.minDeltaPct(),
-                options.limit())
-            : List.of();
-    boolean sufficient = hasSufficientSamples(baseline, candidate);
-    List<Finding> findings = findings(baseline, candidate, frames, metrics);
-    return new CompareResult(
-        baseline,
-        candidate,
-        comparability,
-        metrics,
-        frames,
-        options.inclusiveFrames() ? inclusive : null,
-        options.minDeltaPct(),
-        sufficient,
-        MIN_RECORDING_SAMPLES,
-        findings);
+    return ProfileCompare.compare(baseline, candidate, options);
   }
 
-  /** Whether both recordings have at least {@link #MIN_RECORDING_SAMPLES} samples. */
+  /** {@link ProfileCompare#hasSufficientSamples}. */
   public static boolean hasSufficientSamples(
       RecordingProfile baseline, RecordingProfile candidate) {
-    return baseline.sampleCount() >= MIN_RECORDING_SAMPLES
-        && candidate.sampleCount() >= MIN_RECORDING_SAMPLES;
+    return ProfileCompare.hasSufficientSamples(baseline, candidate);
   }
 
-  /**
-   * Whether a frame's change in share is more than sampling noise could plausibly produce: both
-   * recordings have enough samples, the frame has at least {@link #MIN_FRAME_SAMPLES} in one of
-   * them, and the two-proportion z score reaches {@link #MIN_SIGNIFICANCE_Z}.
-   *
-   * @param baseSamples the frame's samples in the baseline
-   * @param candSamples the frame's samples in the candidate
-   */
+  /** {@link ProfileCompare#isSignificant}. */
   public static boolean isSignificant(
       RecordingProfile baseline, RecordingProfile candidate, long baseSamples, long candSamples) {
-    if (!hasSufficientSamples(baseline, candidate)) {
-      return false;
-    }
-    if (Math.max(baseSamples, candSamples) < MIN_FRAME_SAMPLES) {
-      return false;
-    }
-    double baseN = baseline.sampleCount();
-    double candN = candidate.sampleCount();
-    double pooled = (baseSamples + candSamples) / (baseN + candN);
-    double standardError = Math.sqrt(pooled * (1 - pooled) * (1 / baseN + 1 / candN));
-    if (standardError == 0.0) {
-      return false;
-    }
-    double difference = Math.abs(candSamples / candN - baseSamples / baseN);
-    return difference / standardError >= MIN_SIGNIFICANCE_Z;
-  }
-
-  private static List<String> comparabilityNotes(
-      RecordingProfile baseline, RecordingProfile candidate) {
-    List<String> notes = new ArrayList<>();
-
-    if (baseline.eventType() == null || candidate.eventType() == null) {
-      notes.add(
-          "No execution samples in "
-              + (baseline.eventType() == null ? "baseline" : "candidate")
-              + ": per-frame CPU comparison is unavailable, event-rate comparison still applies.");
-    } else if (!baseline.eventType().equals(candidate.eventType())) {
-      notes.add(
-          "Different execution sample event types ("
-              + baseline.eventType()
-              + " vs "
-              + candidate.eventType()
-              + "): the two recordings used different profilers, so frame shares are only"
-              + " loosely comparable and sample counts are not comparable at all.");
-    }
-
-    if (baseline.durationSeconds() <= 0 || candidate.durationSeconds() <= 0) {
-      notes.add(
-          "Could not establish an observed duration for both recordings; rates are omitted"
-              + " where the denominator is unknown.");
-    } else {
-      double ratio =
-          Math.max(baseline.durationSeconds(), candidate.durationSeconds())
-              / Math.min(baseline.durationSeconds(), candidate.durationSeconds());
-      if (ratio > DURATION_RATIO_WARN) {
-        notes.add(
-            String.format(
-                Locale.ROOT,
-                "Observed durations differ by %.1fx (%.1fs vs %.1fs): rates are normalised, but"
-                    + " a much shorter recording may simply have missed periodic work.",
-                ratio,
-                baseline.durationSeconds(),
-                candidate.durationSeconds()));
-      }
-    }
-
-    if (!hasSufficientSamples(baseline, candidate)) {
-      notes.add(
-          String.format(
-              Locale.ROOT,
-              "Too few samples to judge changes (baseline %,d, candidate %,d, need %d in each):"
-                  + " no regression is raised, and none being raised is not evidence of no change.",
-              baseline.sampleCount(),
-              candidate.sampleCount(),
-              MIN_RECORDING_SAMPLES));
-    } else if (baseline.sampleCount() < 1000 || candidate.sampleCount() < 1000) {
-      notes.add(
-          String.format(
-              Locale.ROOT,
-              "Low sample count (baseline %,d, candidate %,d): per-frame shares are noisy below"
-                  + " a few thousand samples, so treat small moves as inconclusive.",
-              baseline.sampleCount(),
-              candidate.sampleCount()));
-    }
-
-    if (notes.isEmpty()) {
-      notes.add("Recordings appear comparable.");
-    }
-    return notes;
-  }
-
-  private static List<Map<String, Object>> compareMetrics(
-      RecordingProfile baseline, RecordingProfile candidate) {
-    List<Map<String, Object>> metrics = new ArrayList<>();
-
-    metrics.add(
-        rateMetric(
-            "totalEvents",
-            baseline.totalEvents(),
-            candidate.totalEvents(),
-            baseline,
-            candidate,
-            "events/s"));
-
-    // Event types worth comparing as rates. Absolute counts across recordings of different
-    // lengths are meaningless, so every one of these is normalised per second.
-    for (String type : TRACKED_EVENT_TYPES) {
-      long baseCount = baseline.eventCounts().getOrDefault(type, 0L);
-      long candCount = candidate.eventCounts().getOrDefault(type, 0L);
-      if (baseCount == 0 && candCount == 0) {
-        continue;
-      }
-      metrics.add(rateMetric(type, baseCount, candCount, baseline, candidate, "events/s"));
-    }
-
-    return metrics;
-  }
-
-  private static Map<String, Object> rateMetric(
-      String name,
-      long baseCount,
-      long candCount,
-      RecordingProfile baseline,
-      RecordingProfile candidate,
-      String unit) {
-    double baseRate = baseline.ratePerSecond(baseCount);
-    double candRate = candidate.ratePerSecond(candCount);
-
-    Map<String, Object> metric = new LinkedHashMap<>();
-    metric.put("name", name);
-    metric.put("unit", unit);
-    metric.put("baselineCount", baseCount);
-    metric.put("candidateCount", candCount);
-    metric.put("baselineRate", round(baseRate, 3));
-    metric.put("candidateRate", round(candRate, 3));
-    metric.put("deltaRate", round(candRate - baseRate, 3));
-    if (baseRate > 0) {
-      metric.put("deltaPct", round((candRate - baseRate) * 100.0 / baseRate, 1));
-    } else if (candRate > 0) {
-      metric.put("deltaPct", null);
-      metric.put("note", "absent in baseline");
-    }
-    return metric;
-  }
-
-  /**
-   * One frame list: self time ({@code shareKey} {@code SelfPct}) or inclusive time ({@code
-   * TotalPct}). The row keys and the significance rule are the same for both; only the counts and
-   * the share's name differ. With {@code judge} false no row is significant: every move is reported
-   * as {@code inconclusive}.
-   */
-  private List<Map<String, Object>> compareFrames(
-      RecordingProfile baseline,
-      RecordingProfile candidate,
-      Map<String, Long> baseCounts,
-      Map<String, Long> candCounts,
-      String shareKey,
-      boolean judge,
-      double minDeltaPct,
-      int limit) {
-    Set<String> allFrames = new HashSet<>(baseCounts.keySet());
-    allFrames.addAll(candCounts.keySet());
-
-    List<Map<String, Object>> changed = new ArrayList<>();
-    for (String frame : allFrames) {
-      long baseSamples = baseCounts.getOrDefault(frame, 0L);
-      long candSamples = candCounts.getOrDefault(frame, 0L);
-      double basePct = share(baseSamples, baseline.sampleCount());
-      double candPct = share(candSamples, candidate.sampleCount());
-      double delta = candPct - basePct;
-      if (Math.abs(delta) < minDeltaPct) {
-        continue;
-      }
-
-      Map<String, Object> row = new LinkedHashMap<>();
-      row.put("method", frame);
-      row.put("baseline" + shareKey, round(basePct, 2));
-      row.put("candidate" + shareKey, round(candPct, 2));
-      row.put("deltaPct", round(delta, 2));
-      row.put("baselineSamples", baseSamples);
-      row.put("candidateSamples", candSamples);
-      boolean significant = judge && isSignificant(baseline, candidate, baseSamples, candSamples);
-      row.put(
-          "direction", !significant ? "inconclusive" : delta > 0 ? "regression" : "improvement");
-      row.put("significant", significant);
-      if (basePct == 0.0) {
-        row.put("note", "not present in baseline");
-      } else if (candPct == 0.0) {
-        row.put("note", "gone in candidate");
-      }
-      row.put("type", analyses.isNativeMethod(frame) ? "native" : "java");
-      changed.add(row);
-    }
-
-    // Significant rows first: findings come from this list, so noise must not push them past limit.
-    changed.sort(
-        Comparator.comparing((Map<String, Object> row) -> !(Boolean) row.get("significant"))
-            .thenComparing(
-                Comparator.comparingDouble(
-                        (Map<String, Object> row) ->
-                            Math.abs(((Number) row.get("deltaPct")).doubleValue()))
-                    .reversed()));
-
-    return changed.size() > limit ? new ArrayList<>(changed.subList(0, limit)) : changed;
-  }
-
-  private static double share(long frameSamples, long sampleCount) {
-    return sampleCount <= 0 ? 0.0 : frameSamples * 100.0 / sampleCount;
-  }
-
-  private static List<Finding> findings(
-      RecordingProfile baseline,
-      RecordingProfile candidate,
-      List<Map<String, Object>> frames,
-      List<Map<String, Object>> metrics) {
-    List<Finding> findings = new ArrayList<>();
-    boolean sufficientSamples = hasSufficientSamples(baseline, candidate);
-
-    for (Map<String, Object> frame : frames) {
-      double delta = ((Number) frame.get("deltaPct")).doubleValue();
-      if (delta <= 0 || !(Boolean) frame.get("significant")) {
-        continue;
-      }
-      String method = String.valueOf(frame.get("method"));
-      findings.add(
-          Finding.of("regression", "frame-" + method)
-              .severity(delta >= 5.0 ? Finding.Severity.WARNING : Finding.Severity.INFO)
-              .title(
-                  "%s grew from %.2f%% to %.2f%% of samples (+%.2f points)",
-                  method,
-                  ((Number) frame.get("baselineSelfPct")).doubleValue(),
-                  ((Number) frame.get("candidateSelfPct")).doubleValue(),
-                  delta)
-              .description(
-                  "Self time share of execution samples. A share change is not a wall-clock"
-                      + " change: confirm against the event rates before calling it a slowdown.")
-              .source(SOURCE)
-              .evidence("method", method)
-              .evidence("baselineSelfPct", frame.get("baselineSelfPct"))
-              .evidence("candidateSelfPct", frame.get("candidateSelfPct"))
-              .evidence("deltaPct", delta)
-              .evidence("baselineSamples", frame.get("baselineSamples"))
-              .evidence("candidateSamples", frame.get("candidateSamples"))
-              .action("Inspect the call paths reaching this frame in both recordings")
-              .build());
-    }
-
-    for (Map<String, Object> metric : metrics) {
-      Object deltaPctObj = metric.get("deltaPct");
-      if (!sufficientSamples || !(deltaPctObj instanceof Number deltaPct)) {
-        continue;
-      }
-      String name = String.valueOf(metric.get("name"));
-      // A rate change worth naming: more than half again as often, and not a trickle.
-      double candidateRate = ((Number) metric.get("candidateRate")).doubleValue();
-      if (deltaPct.doubleValue() >= 50.0 && candidateRate >= 1.0) {
-        findings.add(
-            Finding.of("regression", "rate-" + name)
-                .warning()
-                .title(
-                    "%s rate rose %.0f%% (%.2f/s to %.2f/s)",
-                    name,
-                    deltaPct.doubleValue(),
-                    ((Number) metric.get("baselineRate")).doubleValue(),
-                    candidateRate)
-                .source(SOURCE)
-                .evidence("metric", name)
-                .evidence("baselineRate", metric.get("baselineRate"))
-                .evidence("candidateRate", metric.get("candidateRate"))
-                .evidence("deltaPct", deltaPct)
-                .build());
-      }
-    }
-
-    if (!sufficientSamples) {
-      findings.add(
-          Finding.of("regression", "insufficient-samples")
-              .info()
-              .title(
-                  "Too few samples to call a regression (baseline %,d, candidate %,d)",
-                  baseline.sampleCount(), candidate.sampleCount())
-              .description(
-                  "Each recording needs at least "
-                      + MIN_RECORDING_SAMPLES
-                      + " execution samples before a change can be told from sampling noise. This"
-                      + " comparison is inconclusive: it neither shows a regression nor rules one"
-                      + " out.")
-              .source(SOURCE)
-              .evidence("baselineSamples", baseline.sampleCount())
-              .evidence("candidateSamples", candidate.sampleCount())
-              .evidence("minSamplesPerRecording", MIN_RECORDING_SAMPLES)
-              .action("Record both runs for longer, or under load, and compare again")
-              .build());
-    } else if (findings.isEmpty()) {
-      findings.add(
-          Finding.of("regression", "none")
-              .info()
-              .title("No regression above the noise floor")
-              .description(
-                  "No frame moved by more than both the configured minDeltaPct and sampling noise,"
-                      + " and no tracked event rate rose by half again. That is not proof of"
-                      + " equivalence: a change smaller than sampling noise cannot be seen this"
-                      + " way.")
-              .source(SOURCE)
-              .evidence("baselineSamples", baseline.sampleCount())
-              .evidence("candidateSamples", candidate.sampleCount())
-              .build());
-    }
-
-    return Collections.unmodifiableList(Findings.merge(findings));
+    return ProfileCompare.isSignificant(baseline, candidate, baseSamples, candSamples);
   }
 
   static Double round(double value, int decimals) {
-    double factor = Math.pow(10, decimals);
-    return Math.round(value * factor) / factor;
+    return ProfileCompare.round(value, decimals);
   }
 }

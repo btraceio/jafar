@@ -74,6 +74,16 @@ public interface ShellModule {
     return null;
   }
 
+  /**
+   * The reader that turns this module's files into a {@link
+   * io.jafar.shell.core.compare.RecordingProfile} for {@code compare}, or {@code null} (the
+   * default) when its format cannot be compared. Discovery stays with {@link #canHandle}: the
+   * caller picks the module that handles a file, then asks it for its reader.
+   */
+  default io.jafar.shell.core.compare.ProfileReader profileReader() {
+    return null;
+  }
+
   /** Called once during module initialization. */
   void initialize();
 
