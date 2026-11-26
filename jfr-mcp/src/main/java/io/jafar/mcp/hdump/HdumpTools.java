@@ -9,6 +9,7 @@ import io.jafar.mcp.config.McpServerConfig;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
 import io.jafar.mcp.session.HeapSessionRegistry;
+import io.jafar.mcp.session.MappedFileRelease;
 import io.jafar.mcp.validation.FileValidator;
 import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.findings.Findings;
@@ -171,6 +172,9 @@ public final class HdumpTools {
     try {
       if (closeAll) {
         int count = heapSessionRegistry.closeAll();
+        if (count > 0) {
+          MappedFileRelease.afterClose();
+        }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("message", "Closed " + count + " session(s)");
@@ -179,7 +183,9 @@ public final class HdumpTools {
       }
 
       HeapSessionRegistry.SessionInfo info = heapSessionRegistry.getOrCurrent(sessionId);
-      heapSessionRegistry.close(String.valueOf(info.id()));
+      if (heapSessionRegistry.close(String.valueOf(info.id()))) {
+        MappedFileRelease.afterClose();
+      }
 
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("success", true);

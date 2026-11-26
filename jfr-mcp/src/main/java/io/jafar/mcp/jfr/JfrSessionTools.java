@@ -5,6 +5,7 @@ import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.query.QueryParser;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
+import io.jafar.mcp.session.MappedFileRelease;
 import io.jafar.mcp.session.SessionRegistry;
 import io.jafar.mcp.validation.FileValidator;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -389,6 +390,9 @@ public final class JfrSessionTools {
       if (closeAll != null && closeAll) {
         int count = sessionRegistry.closeAll();
         LOG.info("Closed all {} sessions of the caller", count);
+        if (count > 0) {
+          MappedFileRelease.afterClose();
+        }
         return successResult(
             Map.of(
                 "success",
@@ -410,6 +414,7 @@ public final class JfrSessionTools {
       boolean closed = sessionRegistry.close(sessionId);
       if (closed) {
         LOG.info("Closed session: {}", sessionId);
+        MappedFileRelease.afterClose();
         return successResult(
             Map.of(
                 "success",
