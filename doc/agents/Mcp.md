@@ -59,8 +59,17 @@ Things a cross-format change must keep (design: [cross-format-compare.md](../pla
   `/`. `method` values in `jfr_compare` are therefore dotted (`java.lang.String.indexOf`).
 - **The sampler policy is `CompareOptions.MixedSamplers`.** `jfr_compare` passes `NOTE` (two JFR
   event types of different kinds get the event-type note, as they always did); `profile_compare`
-  and `jfr-shell compare` pass `REFUSE`, or `ALLOW` on request. Allocation against CPU or wall is
-  refused under every policy.
+  and `jfr-shell compare` take theirs from `MixedSamplers.forPair`: `NOTE` for two JFR sides (so a
+  pair `jfr_compare` accepts is never refused; `perf_ab_run.sh` needs exit 0), otherwise `REFUSE`,
+  or `ALLOW` on request. Allocation against CPU or wall is refused under every policy.
+- **Counts are trials, not estimates.** `PprofProfileReader.countSource`: the column itself when it
+  counts samples, its producer partner, or summed values over the period, divided once at the
+  aggregate (per-sample rounding turns many sub-half-period samples into none). Allocation and lock
+  `count` columns are scaled estimates and never qualify.
+- **Dotting is decided per profile.** `FrameNames.symbolKey(name, jvmProfile)`: a Go name such as
+  `encoding/json.Marshal` has a Java internal name's shape, so the reader dots only in a profile
+  `looksJvm` (a `<init>`, `<clinit>`, `$$Lambda` symbol or a JVM source file). A trailing `:<line>`
+  is always dropped.
 - **pprof records no truncation.** Its profiles say `truncationKnown = false`; inclusive moves are
   still judged, with a note, and the description omits `truncatedStacks`.
 - **A JFR side's description keeps exactly `jfr_compare`'s keys.** Other formats add `format`,

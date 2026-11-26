@@ -249,14 +249,28 @@ module that recognises it. The comparison is the same, with these differences:
 - **Shares are of the chosen sample type.** A pprof profile has one value column per sample type.
   `--sample-type` (or `--baseline-sample-type` / `--candidate-sample-type`) picks one by `type` or
   `type/unit`; the default is the first CPU type, else the first, and the side's description says
-  which was chosen and why (`sampleTypeChosen`). `--list-sample-types` prints them.
-- **Significance needs observation counts.** They come from a column with unit `count`, or from
-  `value / period` when the period has the column's unit. A profile with neither (a
-  `cpu/nanoseconds` column and no period) still gets its shares, but no change is called
-  significant, and a note says why.
-- **Samplers must measure the same thing.** CPU against wall clock is refused unless
-  `--allow-mixed-samplers`, which compares with nothing judged; an allocation profile against a CPU
-  or wall one is always refused. A sample type whose kind is not recognised is compared with a note.
+  which was chosen, why, and where its counts came from (`sampleTypeChosen`).
+  `--list-sample-types` prints them (a JFR side by its bare event type, which `--event-type` takes).
+  Using an option on a side of the other format (`--sample-type` with two recordings) is a usage
+  error, exit 2.
+- **Significance needs observation counts.** They come from, in order: the column itself when its
+  unit is `count` and it counts samples; the column a producer pairs with it (`samples/count`
+  beside `cpu/nanoseconds`, when there is exactly one; `cpu-samples` beside `cpu-time`); or the
+  column's values summed per frame and divided by the period once, when the period has the column's
+  unit. Allocation object counts (`alloc_objects`, `inuse_objects`) are estimates scaled from the
+  sampled allocations, not trials, so a Go heap profile has no counts. A profile without counts
+  still gets its shares, but no change is called significant, and a note says why.
+- **Samplers must measure the same thing.** A sample type named `cpu`, `cpu-time`, `cpu_time` or
+  any other `cpu*` is CPU; `wall*` is wall clock. With a pprof side, CPU against wall clock is
+  refused unless `--allow-mixed-samplers`, which compares with nothing judged; an allocation profile
+  against a CPU or wall one is always refused. A sample type whose kind is not recognised is
+  compared with a note. Two recordings are never refused: they get the event-type note, as with
+  `jfr_compare`.
+- **Frame names follow the profile.** A slashed Java name (`java/lang/String.indexOf`) is dotted
+  only when the profile looks JVM-originated: some function is `<init>`, `<clinit>` or a
+  `$$Lambda`, or comes from a `.java`, `.kt` or `.scala` file. A Go profile keeps
+  `encoding/json.Marshal` as stored. A trailing `:<line>` is dropped, so a recording still matches
+  its conversion with `includeLineNumbers: true`.
 - **No event rates** unless both sides are recordings, and **no truncation count** for a pprof side:
   pprof does not record when a stack was cut, so a note says inclusive shares may be understated.
   Inclusive moves are still judged.

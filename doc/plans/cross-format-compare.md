@@ -365,8 +365,19 @@ The tests:
   is significant, and that there is one row per frame.
 - **The sampler policy is a three-way option** (`CompareOptions.MixedSamplers`): `NOTE` keeps
   `jfr_compare`'s behaviour for two JFR event types of different kinds (judged, with the event-type
-  note), so its output changes only by D2; `REFUSE` is the default of `profile_compare` and
-  `jfr-shell compare`; `ALLOW` compares with nothing judged.
+  note), so its output changes only by D2; `ALLOW` compares with nothing judged. `profile_compare`
+  and `jfr-shell compare` choose with `MixedSamplers.forPair`: `NOTE` for two JFR sides, else
+  `REFUSE` (or `ALLOW` on request). The D5 refusal therefore applies only when a pprof side is
+  involved; refusing two recordings `jfr_compare` accepts broke `perf_ab_run.sh`'s exit-0
+  contract.
+- **Counts (section 4) were narrowed after review.** A `count` column counts only when it counts
+  samples: allocation (`alloc_objects`) and lock (`contentions`) counts are estimates scaled from
+  the samples. The partner is the single `samples/count` column or `<x>-samples` beside `<x>-time`,
+  never "the first count column". Period-derived counts are summed and divided once.
+- **D2 for pprof is decided per profile, not per name.** `encoding/json.Marshal` matches the Java
+  internal-name pattern, so slashed names are dotted only in a profile that looks JVM-originated;
+  a trailing `:<line>` is dropped, which makes caveat 1's line-numbered conversion match after all.
+- **Sample-type names by prefix:** `cpu*` is CPU and `wall*` wall clock (`cpu-time`, `wall_time`).
 - **`samples` takes the kind of the profile's period type or of another CPU/wall sample type**,
   else it is `UNKNOWN`. jfr2pprof's `samples/count` (no period) is therefore `UNKNOWN`, and the round
   trip gets the "Sampler kind not recognised" note rather than a refusal.

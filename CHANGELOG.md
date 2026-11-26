@@ -14,12 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sampleType`, `minDeltaPct`, `limit`, `inclusiveFrames` and `allowMixedSamplers`; `jfr_compare`
   is unchanged apart from dotted method names (see Changed). `compare` reads a pprof side when run
   from the `jafar-shell` jar, with `--sample-type`, `--baseline-sample-type`,
-  `--candidate-sample-type`, `--allow-mixed-samplers` and `--list-sample-types`. Shares come from
-  the chosen sample type's values, the significance test from observation counts (a `count`
-  column, or `value / period`); with neither, nothing is called significant. CPU against wall clock
-  is refused unless allowed, allocation against CPU or wall always. The default pprof sample type
-  is the first CPU one, else the first, and the result says which. pprof records no truncation, so
-  inclusive moves are judged with a note. The comparison is now `ProfileCompare` in
+  `--candidate-sample-type`, `--allow-mixed-samplers` and `--list-sample-types` (a JFR side is
+  listed by its bare event type, as `--event-type` takes it); misusing an option exits 2 with the
+  usage. Shares come from the chosen sample type's values, the significance test from observation
+  counts: the column itself when it counts samples, its producer partner (`samples/count` beside
+  `cpu/nanoseconds`, `<x>-samples` beside `<x>-time`), or the summed values divided by the period
+  once; allocation object counts (`alloc_objects`) are scaled estimates and never count as trials.
+  With none of these nothing is called significant. Sample types named `cpu*` are CPU and `wall*`
+  wall clock. With a pprof side, CPU against wall clock is refused unless allowed, allocation
+  against CPU or wall always; two recordings are compared as `jfr_compare` compares them (a note,
+  exit 0), by both `compare` and `profile_compare`. The default pprof sample type is the first CPU
+  one, else the first, and the result says which and where its counts came from. Slashed Java names
+  in a pprof profile are dotted only when the profile looks JVM-originated (a `<init>`, `<clinit>`,
+  `$$Lambda` or `.java`/`.kt`/`.scala` function), so Go names such as `encoding/json.Marshal` stay
+  as stored, and a trailing `:<line>` (jfr2pprof's `includeLineNumbers`) is not part of a frame's
+  name. pprof records no truncation, so inclusive moves are judged with a note. The comparison is now `ProfileCompare` in
   `io.jafar.shell.core.compare`; `JfrCompare` reads recordings, `PprofProfileReader` (`pprof-shell`)
   reads profiles, and a module offers its reader through `ShellModule.profileReader()`. OTLP is not
   covered yet. See [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
