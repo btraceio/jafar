@@ -49,8 +49,9 @@ class JdkMetadataSourceRecoveryTest {
 
   @BeforeEach
   void assumeRecording() {
-    // The build generates this fixture from jfr-shell-tck's tck-test.jfr (test-recordings'
-    // generateTestRecordings); skip rather than fail if a build without that step lacks it.
+    // The build copies jfr-shell-tck's tck-test.jfr here (test-recordings'
+    // generateTestRecordings) unless get_resources.sh put the real recording there; skip rather
+    // than fail if neither happened.
     Assumptions.assumeTrue(isJfrRecording(RECORDING), "recording not available: " + RECORDING);
   }
 
@@ -86,9 +87,10 @@ class JdkMetadataSourceRecoveryTest {
   }
 
   /**
-   * The cap counts events: a scan capped at N reads events 1..N. The first event of a type the
-   * merged view lacks sits at a position found here from the recording itself, and a cap one event
-   * short of it must miss the type in both the listing and the lookup.
+   * The cap counts events: a scan capped at N indexes events 1..N (it reads event N+1 only to
+   * notice the cap). The first event of a type the merged view lacks sits at a position found here
+   * from the recording itself, and a cap one event short of it must miss the type in both the
+   * listing and the lookup.
    */
   @Test
   void capCountsEventsUpToAndIncludingTheCapExactly() throws Exception {
