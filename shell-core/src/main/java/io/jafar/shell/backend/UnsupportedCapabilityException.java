@@ -1,5 +1,7 @@
 package io.jafar.shell.backend;
 
+import java.util.Locale;
+
 /** Thrown when a command requires a capability the current backend does not support. */
 public final class UnsupportedCapabilityException extends Exception {
   private final BackendCapability capability;
@@ -8,7 +10,10 @@ public final class UnsupportedCapabilityException extends Exception {
   public UnsupportedCapabilityException(BackendCapability capability, String backendId) {
     super(
         String.format(
-            "Backend '%s' does not support capability: %s", backendId, capability.name()));
+            Locale.ROOT,
+            "Backend '%s' does not support capability: %s",
+            backendId,
+            capability.name()));
     this.capability = capability;
     this.backendId = backendId;
   }

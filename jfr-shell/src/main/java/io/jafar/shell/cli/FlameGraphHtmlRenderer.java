@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Locale;
 
 /**
  * Generates a self-contained interactive HTML flamegraph file and prints its {@code file://} URL.
@@ -68,7 +69,7 @@ public final class FlameGraphHtmlRenderer {
         case '\t' -> sb.append("\\t");
         default -> {
           if (c < 0x20) {
-            sb.append(String.format("\\u%04x", (int) c));
+            sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
           } else {
             sb.append(c);
           }

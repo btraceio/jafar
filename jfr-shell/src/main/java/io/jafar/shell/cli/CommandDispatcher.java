@@ -2518,7 +2518,7 @@ public class CommandDispatcher {
           sb.append("\\t");
           break;
         default:
-          if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+          if (c < 0x20) sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
           else sb.append(c);
       }
     }
@@ -2679,7 +2679,7 @@ public class CommandDispatcher {
               + "]:");
       for (String t : types) {
         Long typeId = sess.getMetadataTypeIds().get(t);
-        String idStr = typeId != null ? String.format("%5d", typeId) : "    ?";
+        String idStr = typeId != null ? String.format(Locale.ROOT, "%5d", typeId) : "    ?";
         io.println("  " + idStr + " - " + t);
       }
     }

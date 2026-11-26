@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.jline.reader.Completer;
@@ -264,6 +265,7 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     if (!isExpensive) return null;
 
     return String.format(
+        Locale.ROOT,
         "Requires computing retained sizes for %,d objects — may take several minutes.",
         objectCount);
   }

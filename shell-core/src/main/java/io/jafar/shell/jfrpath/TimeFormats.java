@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.Locale;
 
 /**
  * Duration, epoch and date-time formatting helpers shared by operators, filters and expressions.
@@ -19,22 +20,22 @@ final class TimeFormats {
     if (nanos < 1_000) {
       return nanos + "ns";
     } else if (nanos < 1_000_000) {
-      return String.format("%.2fus", nanos / 1_000.0);
+      return String.format(Locale.ROOT, "%.2fus", nanos / 1_000.0);
     } else if (nanos < 1_000_000_000) {
-      return String.format("%.2fms", nanos / 1_000_000.0);
+      return String.format(Locale.ROOT, "%.2fms", nanos / 1_000_000.0);
     } else if (nanos < 60_000_000_000L) {
-      return String.format("%.2fs", nanos / 1_000_000_000.0);
+      return String.format(Locale.ROOT, "%.2fs", nanos / 1_000_000_000.0);
     } else if (nanos < 3_600_000_000_000L) {
       long totalSecs = nanos / 1_000_000_000L;
       long mins = totalSecs / 60;
       long secs = totalSecs % 60;
-      return String.format("%dm %ds", mins, secs);
+      return String.format(Locale.ROOT, "%dm %ds", mins, secs);
     } else {
       long totalSecs = nanos / 1_000_000_000L;
       long hours = totalSecs / 3600;
       long mins = (totalSecs % 3600) / 60;
       long secs = totalSecs % 60;
-      return String.format("%dh %dm %ds", hours, mins, secs);
+      return String.format(Locale.ROOT, "%dh %dm %ds", hours, mins, secs);
     }
   }
 

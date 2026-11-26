@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -94,7 +95,9 @@ public final class JfrAnalyses {
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("type", e.getKey());
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / finalTotalEvents));
+                entry.put(
+                    "pct",
+                    String.format(Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / finalTotalEvents));
                 topTypes.add(entry);
               });
       result.put("topEventTypes", topTypes);
@@ -242,7 +245,10 @@ public final class JfrAnalyses {
       final long totalSamples = total.sum();
       return methodCounts.entrySet().stream()
           .max(Comparator.comparingLong(Map.Entry::getValue))
-          .map(e -> String.format("%s (%.1f%%)", e.getKey(), e.getValue() * 100.0 / totalSamples))
+          .map(
+              e ->
+                  String.format(
+                      Locale.ROOT, "%s (%.1f%%)", e.getKey(), e.getValue() * 100.0 / totalSamples))
           .orElse(null);
 
     } catch (Exception e) {
@@ -456,7 +462,9 @@ public final class JfrAnalyses {
                 entry.put("type", extractSimpleName(fullName));
                 entry.put("fullType", fullName);
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / totalEvents));
+                entry.put(
+                    "pct",
+                    String.format(Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / totalEvents));
                 // Add top throw site for this exception type
                 String topSite = analysis.topThrowSiteByType.get(fullName);
                 if (topSite != null) {
@@ -477,7 +485,9 @@ public final class JfrAnalyses {
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("site", e.getKey());
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / totalEvents));
+                entry.put(
+                    "pct",
+                    String.format(Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / totalEvents));
                 throwSites.add(entry);
               });
       result.put("topThrowSites", throwSites);
@@ -674,7 +684,9 @@ public final class JfrAnalyses {
                 entry.put("method", methodName);
                 entry.put("samples", e.getValue());
                 entry.put(
-                    "pct", String.format("%.1f%%", e.getValue() * 100.0 / totalSamples.sum()));
+                    "pct",
+                    String.format(
+                        Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / totalSamples.sum()));
                 entry.put("type", isNativeMethod(methodName) ? "native" : "java");
                 methods.add(entry);
               });
@@ -876,6 +888,7 @@ public final class JfrAnalyses {
           utilization.put(
               "detail",
               String.format(
+                  Locale.ROOT,
                   "Avg %.1f%%, min %.1f%%, max %.1f%%, p95 %.1f%%, p99 %.1f%%",
                   avgMachineTotal * 100,
                   minMachineTotal * 100,
@@ -942,8 +955,10 @@ public final class JfrAnalyses {
                 saturation.put(
                     "detail",
                     String.format(
+                        Locale.ROOT,
                         "Container throttled %d times, %d ns total",
-                        totalThrottledSlices, totalThrottledTime));
+                        totalThrottledSlices,
+                        totalThrottledTime));
               } else {
                 saturation.put("value", 0);
                 saturation.put("detail", "No container CPU throttling detected");
@@ -1011,7 +1026,9 @@ public final class JfrAnalyses {
         utilization.put(
             "detail",
             String.format(
-                "%.1f%% of samples in RUNNABLE state (not actual CPU load)", threadStatePct));
+                Locale.ROOT,
+                "%.1f%% of samples in RUNNABLE state (not actual CPU load)",
+                threadStatePct));
         utilization.put(
             "note",
             "Thread state != CPU utilization. Enable jdk.CPULoad events for accurate data.");
@@ -1068,7 +1085,8 @@ public final class JfrAnalyses {
 
             utilization.put("value", Math.round(heapPct * 10) / 10.0);
             utilization.put("unit", "%");
-            utilization.put("detail", String.format("Heap %.1f%% full after GC", heapPct));
+            utilization.put(
+                "detail", String.format(Locale.ROOT, "Heap %.1f%% full after GC", heapPct));
             utilization.put("heapUsedMB", heapUsed / (1024 * 1024));
             utilization.put("heapCommittedMB", heapCommitted / (1024 * 1024));
           }
@@ -1451,7 +1469,9 @@ public final class JfrAnalyses {
           bottlenecks.add("cpu_saturation");
           recommendations.add(
               String.format(
-                  "Investigate thread blocking: %.1f%% of CPU time spent waiting/blocked", satPct));
+                  Locale.ROOT,
+                  "Investigate thread blocking: %.1f%% of CPU time spent waiting/blocked",
+                  satPct));
         }
       }
     }
@@ -1505,6 +1525,7 @@ public final class JfrAnalyses {
             Object avgQueueMs = queueSat.get("avgQueueTimeMs");
             recommendations.add(
                 String.format(
+                    Locale.ROOT,
                     "High queue saturation detected (avg: %.1f ms) - consider increasing executor pool sizes",
                     avgQueueMs instanceof Number ? ((Number) avgQueueMs).doubleValue() : 0.0));
           } else if ("MODERATE_QUEUE_SATURATION".equals(queueAssessment)) {
@@ -1924,22 +1945,29 @@ public final class JfrAnalyses {
 
       if ("RUNNABLE".equals(state)) {
         if (pct > 70) {
-          patterns.add(String.format("High CPU utilization (%.1f%% RUNNABLE)", pct));
+          patterns.add(String.format(Locale.ROOT, "High CPU utilization (%.1f%% RUNNABLE)", pct));
         } else if (pct < 30) {
           patterns.add(
-              String.format("Low CPU utilization (%.1f%% RUNNABLE) - threads mostly waiting", pct));
+              String.format(
+                  Locale.ROOT,
+                  "Low CPU utilization (%.1f%% RUNNABLE) - threads mostly waiting",
+                  pct));
         } else {
-          patterns.add(String.format("Healthy CPU utilization (%.1f%% RUNNABLE)", pct));
+          patterns.add(
+              String.format(Locale.ROOT, "Healthy CPU utilization (%.1f%% RUNNABLE)", pct));
         }
       } else if ("WAITING".equals(state) || "TIMED_WAITING".equals(state)) {
         if (pct > 30) {
           patterns.add(
               String.format(
-                  "Significant time in %s (%.1f%%) - likely I/O or queue waits", state, pct));
+                  Locale.ROOT,
+                  "Significant time in %s (%.1f%%) - likely I/O or queue waits",
+                  state,
+                  pct));
         }
       } else if ("BLOCKED".equals(state)) {
         if (pct > 10) {
-          patterns.add(String.format("High lock contention (%.1f%% BLOCKED)", pct));
+          patterns.add(String.format(Locale.ROOT, "High lock contention (%.1f%% BLOCKED)", pct));
           recommendations.add(
               "Investigate lock contention - threads spending significant time blocked on monitors");
         }
@@ -1954,7 +1982,9 @@ public final class JfrAnalyses {
         problem.put("thread", m.threadName);
         long blockedSamples = m.stateCount.getOrDefault("BLOCKED", 0L);
         double blockedPct = (blockedSamples * 100.0) / m.totalSamples.sum();
-        problem.put("issue", String.format("%.1f%% of time spent BLOCKED on locks", blockedPct));
+        problem.put(
+            "issue",
+            String.format(Locale.ROOT, "%.1f%% of time spent BLOCKED on locks", blockedPct));
         problem.put("recommendation", "Review synchronization strategy for this thread");
         problematicThreads.add(problem);
       }
@@ -1969,8 +1999,10 @@ public final class JfrAnalyses {
       if (topContention != null && topContention.samples.sum() > 50) {
         recommendations.add(
             String.format(
+                Locale.ROOT,
                 "Monitor class '%s' has high contention (%d events) - consider lock-free alternatives",
-                topContention.monitorClass, topContention.samples.sum()));
+                topContention.monitorClass,
+                topContention.samples.sum()));
       }
     }
 
@@ -1984,10 +2016,13 @@ public final class JfrAnalyses {
       if (maxQueue != null && maxQueue.getAvgDurationMs() > 50) {
         patterns.add(
             String.format(
+                Locale.ROOT,
                 "High executor queue times on %s (avg: %.1f ms)",
-                maxQueue.scheduler, maxQueue.getAvgDurationMs()));
+                maxQueue.scheduler,
+                maxQueue.getAvgDurationMs()));
         recommendations.add(
             String.format(
+                Locale.ROOT,
                 "Consider increasing thread pool size for %s or optimizing task submission rate",
                 maxQueue.scheduler));
       }
@@ -2227,7 +2262,8 @@ public final class JfrAnalyses {
 
         if (exceptionCount > 1000) {
           headlines.add(
-              String.format("HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+              String.format(
+                  Locale.ROOT, "HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
           thresholdFindings.add(
               Finding.of("exceptions", "rate")
                   .warning()
@@ -2255,7 +2291,8 @@ public final class JfrAnalyses {
                   + "or error handling issues");
         } else if (exceptionCount > 100) {
           headlines.add(
-              String.format("MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+              String.format(
+                  Locale.ROOT, "MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
           thresholdFindings.add(
               Finding.of("exceptions", "rate")
                   .info()
@@ -2278,8 +2315,11 @@ public final class JfrAnalyses {
           if (avgPauseMs > 100 || totalPauseMs > 10000) {
             headlines.add(
                 String.format(
+                    Locale.ROOT,
                     "HIGH GC PRESSURE: %,d collections, %.1fms avg pause, %.1fs total pause",
-                    gcCount, avgPauseMs, totalPauseMs / 1000.0));
+                    gcCount,
+                    avgPauseMs,
+                    totalPauseMs / 1000.0));
             thresholdFindings.add(
                 Finding.of("gc", "pressure")
                     .warning()
@@ -2306,6 +2346,7 @@ public final class JfrAnalyses {
             if (allocEventTypeForGc != null) {
               recommendations.add(
                   String.format(
+                      Locale.ROOT,
                       "Run jfr_flamegraph with %s to identify allocation hotspots",
                       allocEventTypeForGc));
             } else {
@@ -2316,8 +2357,10 @@ public final class JfrAnalyses {
           } else if (avgPauseMs > 50 || totalPauseMs > 5000) {
             headlines.add(
                 String.format(
+                    Locale.ROOT,
                     "MODERATE GC PRESSURE: %,d collections, %.1fms avg pause",
-                    gcCount, avgPauseMs));
+                    gcCount,
+                    avgPauseMs));
             thresholdFindings.add(
                 Finding.of("gc", "pressure")
                     .info()
@@ -2340,7 +2383,9 @@ public final class JfrAnalyses {
         Long cpuSamples = ((Number) cpuStats.get("totalSamples")).longValue();
 
         if (cpuSamples > 5000) {
-          headlines.add(String.format("CPU INTENSIVE: %,d execution samples captured", cpuSamples));
+          headlines.add(
+              String.format(
+                  Locale.ROOT, "CPU INTENSIVE: %,d execution samples captured", cpuSamples));
 
           // Run hotmethods analysis
           try {
@@ -2393,7 +2438,9 @@ public final class JfrAnalyses {
       if (allocEventType != null) {
         headlines.add(
             String.format(
-                "ALLOCATION PROFILING: %s events available for analysis", allocEventType));
+                Locale.ROOT,
+                "ALLOCATION PROFILING: %s events available for analysis",
+                allocEventType));
       } else {
         headlines.add("ALLOCATION PROFILING: Not enabled in this recording");
         capabilityGaps.add(

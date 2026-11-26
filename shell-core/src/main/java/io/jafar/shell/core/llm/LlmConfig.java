@@ -327,7 +327,9 @@ public final class LlmConfig {
 
   /** Renders the effective settings, for {@code llm status}. */
   public String describe() {
-    return """
+    return String.format(
+        Locale.ROOT,
+        """
         enabled     : %s
         backend     : %s
         model       : %s
@@ -338,18 +340,17 @@ public final class LlmConfig {
         timeout     : %ds
         confirm     : %s
         redaction   : %s
-        redact keys : %s"""
-        .formatted(
-            enabled(),
-            backendId(),
-            model() == null ? "(backend default)" : model(),
-            baseUrl() == null ? "(backend default)" : baseUrl(),
-            maxTokens(),
-            maxRows(),
-            maxRetries(),
-            timeoutSeconds(),
-            confirmBeforeRun(),
-            redactionEnabled() ? "on" : "OFF",
-            String.join(", ", redactFields()));
+        redact keys : %s""",
+        enabled(),
+        backendId(),
+        model() == null ? "(backend default)" : model(),
+        baseUrl() == null ? "(backend default)" : baseUrl(),
+        maxTokens(),
+        maxRows(),
+        maxRetries(),
+        timeoutSeconds(),
+        confirmBeforeRun(),
+        redactionEnabled() ? "on" : "OFF",
+        String.join(", ", redactFields()));
   }
 }

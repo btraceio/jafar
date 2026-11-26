@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The module-boundary rules (a)–(i), one static factory per rule. Every factory takes the {@link
+ * The architecture rules (a)–(j), one static factory per rule. Every factory takes the {@link
  * ModuleClasses} membership, so the identical rule runs on the real module classes
  * (ArchitectureRulesTest) and on fixture-augmented imports (ArchRuleFireTest) — module membership,
  * not package names, decides what a rule covers, because packages overlap across modules.
@@ -287,6 +287,48 @@ public final class ArchitectureRules {
             .dependOnClassesThat()
             .resideInAPackage("io.jafar.shell.llm..")
             .as("i: classes in io.jafar.shell.core.llm.. must not depend on io.jafar.shell.llm.."));
+  }
+
+  /**
+   * (j) No class in a covered module formats with the JVM default locale: {@code
+   * String.format(String, ...)}, {@code String.formatted(...)}, {@code PrintStream}/{@code
+   * PrintWriter} {@code printf}/{@code format(String, ...)}, {@code MessageFormat.format(String,
+   * ...)}, the no-argument {@code NumberFormat} factories and {@code new DecimalFormat(String)} all
+   * take the locale from the machine, so on a ru-RU or de-DE host a percentage reads {@code
+   * "47,8%"} next to a JSON number {@code 47.8} (issue #224). Pass a {@code Locale} ({@code
+   * Locale.ROOT} for anything a program or a bug report reads). Not frozen: there is no
+   * grandfathered debt, and a new call must fail.
+   */
+  public static ArchRule ruleJ() {
+    return noClasses()
+        .should()
+        .callMethod(String.class, "format", String.class, Object[].class)
+        .orShould()
+        .callMethod(String.class, "formatted", Object[].class)
+        .orShould()
+        .callMethod(java.io.PrintStream.class, "printf", String.class, Object[].class)
+        .orShould()
+        .callMethod(java.io.PrintStream.class, "format", String.class, Object[].class)
+        .orShould()
+        .callMethod(java.io.PrintWriter.class, "printf", String.class, Object[].class)
+        .orShould()
+        .callMethod(java.io.PrintWriter.class, "format", String.class, Object[].class)
+        .orShould()
+        .callMethod(java.text.MessageFormat.class, "format", String.class, Object[].class)
+        .orShould()
+        .callMethod(java.text.NumberFormat.class, "getInstance")
+        .orShould()
+        .callMethod(java.text.NumberFormat.class, "getNumberInstance")
+        .orShould()
+        .callMethod(java.text.NumberFormat.class, "getPercentInstance")
+        .orShould()
+        .callMethod(java.text.NumberFormat.class, "getIntegerInstance")
+        .orShould()
+        .callConstructor(java.text.DecimalFormat.class, String.class)
+        .as(
+            "j: no class formats with the JVM default locale (String.format/formatted,"
+                + " PrintStream/PrintWriter printf/format, MessageFormat.format, NumberFormat and"
+                + " DecimalFormat without a Locale)");
   }
 
   /**

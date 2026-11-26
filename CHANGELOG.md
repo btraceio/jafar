@@ -130,6 +130,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **Numbers in tool payloads, reports and shell output followed the JVM default locale (#224).**
+  On a ru-RU or de-DE host `jfr_summary` returned `"pct": "66,6%"` and `"topMethod": "... (34,9%)"`,
+  `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON
+  numbers written with a dot, so a client parsing the strings failed or misread them. Every
+  `String.format`, `formatted` and `printf` in the shipped modules now passes `Locale.ROOT`. Arch
+  rule (j) fails the build on a new call without a locale (`doc/agents/Gates.md`)
 - **`jfr_compare` and `jfr-shell compare` treated a JVM-generated frame as a different frame in
   each recording.** Hidden classes carry a per-run address (`LambdaForm$MH/0x00007f2e141a1000`) and
   lambda classes a per-run number (`Foo$$Lambda$14`), so every such frame read as gone from one

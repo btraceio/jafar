@@ -9,6 +9,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
@@ -164,8 +165,11 @@ public final class DominatorTreeComputer {
             progressCallback.onProgress(
                 0.4 + (0.01 * percentWithinIteration),
                 String.format(
+                    Locale.ROOT,
                     "Computing dominators (iteration %d, %d%% through %,d objects)...",
-                    iteration, percentWithinIteration, rpo.size()));
+                    iteration,
+                    percentWithinIteration,
+                    rpo.size()));
             lastReportedPercent = percentWithinIteration;
           }
         }
@@ -178,6 +182,7 @@ public final class DominatorTreeComputer {
       if (iterationElapsed > 5000) {
         String msg =
             String.format(
+                Locale.ROOT,
                 "⚠ Slow iteration %d: %dms, %d changes, avg %.2fms/change",
                 iteration,
                 iterationElapsed,
@@ -207,8 +212,11 @@ public final class DominatorTreeComputer {
         progressCallback.onProgress(
             progress,
             String.format(
+                Locale.ROOT,
                 "Computing dominators (iteration %d, %d changes, %dms)...",
-                iteration, changeCount, iterationElapsed));
+                iteration,
+                changeCount,
+                iterationElapsed));
       }
 
       // Stagnation guard: stop if changeCount has not decreased for STAGNATION_PATIENCE
@@ -220,9 +228,12 @@ public final class DominatorTreeComputer {
         if (stagnantIterations >= STAGNATION_PATIENCE) {
           String msg =
               String.format(
+                  Locale.ROOT,
                   "⚠ Dominator computation stagnated at %d change(s) after %d iterations "
                       + "— stopping early (result is approximate, %d node(s) may have incorrect idom)",
-                  changeCount, iteration, changeCount);
+                  changeCount,
+                  iteration,
+                  changeCount);
           LOG.warn(msg);
           System.err.println(msg);
           changed = false;
@@ -434,7 +445,8 @@ public final class DominatorTreeComputer {
               if (progressCallback != null && done % Math.max(1, actualChunks / 10) == 0) {
                 progressCallback.onProgress(
                     0.2 + 0.15 * done / actualChunks,
-                    String.format("Building predecessor map (%d%%)", done * 100 / actualChunks));
+                    String.format(
+                        Locale.ROOT, "Building predecessor map (%d%%)", done * 100 / actualChunks));
               }
             });
 

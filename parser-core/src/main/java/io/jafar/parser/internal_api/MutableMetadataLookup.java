@@ -5,6 +5,7 @@ import io.jafar.parser.internal_api.collections.LongObjectHashMap;
 import io.jafar.parser.internal_api.metadata.MetadataClass;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -37,8 +38,10 @@ public final class MutableMetadataLookup implements MetadataLookup {
     if (strings == null || idx < 0 || idx >= strings.length) {
       throw new IllegalArgumentException(
           String.format(
+              Locale.ROOT,
               "String index %d out of bounds (string table size: %d)",
-              idx, strings == null ? 0 : strings.length));
+              idx,
+              strings == null ? 0 : strings.length));
     }
     return strings[idx];
   }

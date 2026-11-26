@@ -9,6 +9,7 @@ import com.tngtech.archunit.ArchConfiguration;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
+import io.jafar.arch.fixture.DefaultLocaleFormatFixture;
 import io.jafar.arch.fixture.NotAnInterfaceSpiFixture;
 import io.jafar.arch.fixture.PprofInternalReachInFixture;
 import io.jafar.arch.fixture.ReachIntoConsumersFixture;
@@ -100,6 +101,12 @@ class ArchRuleFireTest {
   void ruleEFiresOnMutableStaticFieldInParserImpl() throws IOException {
     ModuleClasses modules = loadWithFixture("parser-core", StaticCounterFixture.class);
     assertFires(ArchitectureRules.ruleE(modules), "e:", StaticCounterFixture.class, modules);
+  }
+
+  @Test
+  void ruleJFiresOnDefaultLocaleFormatting() throws IOException {
+    ModuleClasses modules = loadWithFixture("shell-core", DefaultLocaleFormatFixture.class);
+    assertFires(ArchitectureRules.ruleJ(), "j:", DefaultLocaleFormatFixture.class, modules);
   }
 
   @Test

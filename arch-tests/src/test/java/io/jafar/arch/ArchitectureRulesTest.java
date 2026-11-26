@@ -5,8 +5,8 @@ import com.tngtech.archunit.library.freeze.FreezingArchRule;
 import org.junit.jupiter.api.Test;
 
 /**
- * The boundary rules (a)–(i) as freeze rules (AC-2.1/AC-2.2): each rule is checked against the real
- * module classes with the committed violation store ({@code
+ * The rules (a)–(i) as freeze rules (AC-2.1/AC-2.2), and (j) unfrozen: each rule is checked against
+ * the real module classes with the committed violation store ({@code
  * arch-tests/src/test/resources/archunit_store}), so the suite is green on the branch base and
  * fails only on NEW violations — existing reach-ins are grandfathered, never fixed here.
  *
@@ -70,6 +70,12 @@ class ArchitectureRulesTest {
     for (ArchRule rule : ArchitectureRules.ruleI()) {
       frozen(rule);
     }
+  }
+
+  @Test
+  void ruleJ_noFormattingWithTheDefaultLocale() {
+    // Unfrozen: no debt is grandfathered (issue #224)
+    ArchitectureRules.ruleJ().check(MODULES.classes());
   }
 
   private static void frozen(ArchRule rule) {
