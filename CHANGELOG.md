@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Work budgets** (`gradle/work-budgets.properties`, the `workTest` tasks of `parser-core` and
+  `parser-codegen`) - a ratchet gate on how much work a parse does, counted rather than timed:
+  chunks started and read, events read and decoded, varints read, values skipped, constant-pool
+  entries indexed and decoded, for eight untyped and typed entry points on `tck-test.jfr` and
+  `test-ap.jfr`. A test-only agent in `test-support` counts entries into named parser methods; no
+  parser code changes. Counts are exact and identical across runs, chunk-pool sizes and JDKs; a
+  count above its budget fails, one below fails with "re-tighten". Raising a count needs
+  `Work-Budget: <reason>` in the PR body (`scripts/work-budget-check.sh`, the `work-budget` job).
+  Catches algorithmic regressions such as a type filter decoding what it drops; constant-factor
+  ones change no counter. See [doc/plans/work-budgets.md](doc/plans/work-budgets.md)
 - **`perf-ab` workflow** (`.github/workflows/perf-ab.yml`, driver `scripts/perf_ab_run.sh`) - an
   advisory A/B performance report: a PR with the `perf-ab` label is benchmarked against its merge
   base on one runner, in base/head/head/base rounds (`QueryPushdownBenchmark`, 3 forks per round),
@@ -30,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are not A/A, too few runs, and inconsistent benchmark sets. The procedure is in
   [doc/plans/perf-ab.md](doc/plans/perf-ab.md), section 3.8; the calibration file follows once the
   runs exist on the runner
+- **`scripts/perf-ab-calibration.json`** - the perf-ab calibration from ten A/A runs on GitHub
+  runners (three AMD EPYC models, both round orders, no p < 0.01 in 60 tests): minimum effects of
+  4-5% and noise bounds of 12.5-33.5% per `QueryPushdownBenchmark` method. perf-ab verdicts on PRs
+  now read `slower`, `faster` or `no change detected` instead of `uncalibrated`
 - **`jfr-shell compare <baseline.jfr> <candidate.jfr>`** - the `jfr_compare` comparison without an
   MCP server, for CI. Prints a short report, or with `--json` the keys `jfr_compare` returns plus
   `inclusiveFrames`: per frame, the share of samples whose stack contains it (once per sample under
@@ -126,6 +140,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Fixed
+- **Numbers in tool payloads, reports and shell output followed the JVM default locale (#224).**
+  On a ru-RU or de-DE host `jfr_summary` returned `"pct": "66,6%"` and `"topMethod": "... (34,9%)"`,
+  `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON
+  numbers written with a dot, so a client parsing the strings failed or misread them. Every
+  `String.format`, `formatted` and `printf` in the shipped modules now passes `Locale.ROOT`, and so
+  does every fixed `DateTimeFormatter.ofPattern`. A `timerange(format=...)`/`asDateTime(format=...)`
+  pattern is formatted in `Locale.US` on every machine: with `MMM` or `EEE` it printed "Aug." and
+  "Di." under de-DE and Cyrillic names under ru-RU. Output is unchanged on an en-US machine; other
+  English locales now get the US conventions too (`PM` rather than `pm`/`p.m.`, US week numbering
+  for `w`/`W`/`Y`/`e`/`c`, US zone abbreviations). The time zone is still the machine's. Under a
+  locale with non-ASCII digits (ar-EG, fa-IR, ...) jafar-processor's `%d` template generated
+  `requireStorage(metadata, metaField, ٠, ...)`, which does not compile; it now writes ASCII
+  digits. Arch rule (j) fails the build on a new default-locale call (`doc/agents/Gates.md`)
 - **HdumpPath: `instanceof/<interface>` silently matched nothing, and `waste()` gave subclasses
   null columns that headed `top()` lists (#225).** A heap dump records each class's superclass but
   not its interfaces (HotSpot's `HPROF_GC_CLASS_DUMP` has no interface list), so

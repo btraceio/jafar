@@ -189,7 +189,7 @@ public final class Shell implements AutoCloseable {
 
           @Override
           public void printf(String fmt, Object... args) {
-            out.printf(fmt, args);
+            out.printf(Locale.ROOT, fmt, args);
             flush();
           }
 
@@ -841,8 +841,10 @@ public final class Shell implements AutoCloseable {
       }
       err.println(
           String.format(
+              Locale.ROOT,
               "%nExecuted %d/%d commands successfully.",
-              result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size()));
+              result.getSuccessCount(),
+              result.getSuccessCount() + result.getErrors().size()));
     } else if (result.getSuccessCount() > 0) {
       out.println();
       out.println("Script executed successfully: " + result.getSuccessCount() + " commands");
@@ -1705,7 +1707,7 @@ public final class Shell implements AutoCloseable {
         case '\r' -> sb.append("\\r");
         case '\t' -> sb.append("\\t");
         default -> {
-          if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+          if (c < 0x20) sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
           else sb.append(c);
         }
       }

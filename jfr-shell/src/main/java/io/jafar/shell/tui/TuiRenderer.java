@@ -29,6 +29,7 @@ import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.jline.reader.Candidate;
@@ -311,7 +312,9 @@ public final class TuiRenderer {
       String progressMsg = ctx.asyncProgressMessage;
       long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
       String elapsed =
-          elapsedSec > 0 ? String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60) : "";
+          elapsedSec > 0
+              ? String.format(Locale.ROOT, " (%02d:%02d)", elapsedSec / 60, elapsedSec % 60)
+              : "";
       String status = (progressMsg != null ? progressMsg : "Running...") + elapsed;
 
       // Split: one line for the spinner, the rest for live progress lines

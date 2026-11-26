@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 /**
  * Records interactive shell commands to a script file for later replay.
@@ -36,9 +37,10 @@ import java.time.format.DateTimeFormatter;
  * ({@link SecretCommands#redact}), so the file holds no key and replaying it does not set one.
  */
 public final class CommandRecorder {
-  private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
+  private static final DateTimeFormatter TIME_FORMATTER =
+      DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
   private static final DateTimeFormatter TIMESTAMP_FORMATTER =
-      DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+      DateTimeFormatter.ofPattern("yyyyMMddHHmmss", Locale.ROOT);
 
   private Path recordingPath;
   private BufferedWriter writer;

@@ -200,6 +200,35 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/alloc-body.md
           scripts/alloc-budget-check.sh --base "origin/${{ github.base_ref }}" --body-file /tmp/alloc-body.md
 
+  work-budget:
+    # The blocking work-budget ratchet statement (doc/plans/work-budgets.md,
+    # doc/agents/Gates.md): raising a count in gradle/work-budgets.properties,
+    # or adding a nonzero key to an entry point that has keys, needs
+    # `Work-Budget: <reason>` in the PR body. pull_request only, like
+    # `alloc-budget`. The counts themselves are checked by the workTest tasks,
+    # inside `check` in the JDK 21 cell of `tests`.
+    name: Work budget statement
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the Work-Budget statement
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR_NUMBER" --repo "$REPO" --json body -q '.body // ""' > /tmp/work-body.md
+          scripts/work-budget-check.sh --base "origin/${{ github.base_ref }}" --body-file /tmp/work-body.md
+
   concurrency-matrix:
     # Step 5 of the generated-code safety harness (doc/agents/Gates.md,
     # "Concurrency: the processor-count matrix"). The determinism nets, the
@@ -470,6 +499,8 @@ jobs:
       # The JDK 21 cell's `build` runs the JDK 21 allocation tests through `check`
       # (check dependsOn allocationTest); the JDK 8 cell names its allocation
       # tasks explicitly because it never runs `build` (doc/agents/Gates.md).
+      # The work-budget tests (workTest, check dependsOn it) run in the JDK 21
+      # cell only: their counts do not depend on the JDK (doc/plans/work-budgets.md).
       # Liberica JDK 8, 25 and 21 (the default), and Gradle pointed at exactly these:
       # see .github/actions/liberica-jdks.
       - name: Liberica JDKs for Gradle toolchains

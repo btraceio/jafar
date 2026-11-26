@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -117,7 +118,9 @@ public final class SubgraphFingerprinter {
       Map<String, Object> row = new LinkedHashMap<>();
       row.put(HdumpPath.DuplicateFields.ID, groupId);
       row.put(HdumpPath.DuplicateFields.ROOT_CLASS, group.className);
-      row.put(HdumpPath.DuplicateFields.FINGERPRINT, String.format("%016x", entry.getKey()));
+      row.put(
+          HdumpPath.DuplicateFields.FINGERPRINT,
+          String.format(Locale.ROOT, "%016x", entry.getKey()));
       row.put(HdumpPath.DuplicateFields.COPIES, copies);
       row.put(HdumpPath.DuplicateFields.UNIQUE_SIZE, group.shallowSize);
       row.put(HdumpPath.DuplicateFields.WASTED_BYTES, wastedBytes);

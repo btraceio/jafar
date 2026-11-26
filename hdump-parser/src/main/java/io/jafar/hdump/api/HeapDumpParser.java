@@ -3,6 +3,7 @@ package io.jafar.hdump.api;
 import io.jafar.hdump.impl.HeapDumpImpl;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -137,9 +138,10 @@ public final class HeapDumpParser {
   /** Formats byte count as human-readable string. */
   private static String formatBytes(long bytes) {
     if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-    if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
-    return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+    if (bytes < 1024 * 1024) return String.format(Locale.ROOT, "%.1f KB", bytes / 1024.0);
+    if (bytes < 1024 * 1024 * 1024)
+      return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024));
+    return String.format(Locale.ROOT, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
   }
 
   /** Parsing mode for heap dump processing. */

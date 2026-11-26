@@ -22,6 +22,7 @@ documented gaps are in [Gates.md](Gates.md).
 - Language: Java 25 (shell/MCP modules), Java 8 bytecode (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
 - Packages: `io.jafar.*`. Classes `PascalCase`, methods/fields `camelCase`, constants `UPPER_SNAKE_CASE`.
 - Keep public API minimal; prefer package-private for internals. Use meaningful names and final where sensible.
+- Format numbers with an explicit locale: `String.format(Locale.ROOT, ...)`, `printf(Locale.ROOT, ...)`. The default locale makes output depend on the machine (`"47,8%"` on ru-RU); arch rule (j) fails the build on a call without one.
 
 ## Formatting
 - Spotless enforces formatting for Java, Groovy, and Gradle files.
@@ -33,7 +34,7 @@ documented gaps are in [Gates.md](Gates.md).
 ## Architectural invariants
 
 The boundary rules live in the `arch-tests` module as frozen ArchUnit rules and are catalogued in
-[Gates.md](Gates.md#architecture-boundaries-archunit-freeze): the (a)–(i) plain-words list, the
+[Gates.md](Gates.md#architecture-boundaries-archunit-freeze): the (a)–(j) plain-words list, the
 committed freeze store and the fire tests that prove each rule fires. The load-bearing ones, in one
 line each:
 

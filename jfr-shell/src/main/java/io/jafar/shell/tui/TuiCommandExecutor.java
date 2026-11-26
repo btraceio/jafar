@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -40,7 +41,8 @@ import org.jline.reader.Candidate;
  * filtering, completion, cell picker, session picker, and CSV export.
  */
 public final class TuiCommandExecutor {
-  private static final DateTimeFormatter EXPORT_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+  private static final DateTimeFormatter EXPORT_TS =
+      DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
   private static final Set<String> SCRIPTING_KEYWORDS = Set.of("if", "elif", "else", "endif");
 
   private final TuiContext ctx;
@@ -369,7 +371,7 @@ public final class TuiCommandExecutor {
 
                           @Override
                           public void printf(String fmt, Object... args) {
-                            addOutputLine(String.format(fmt, args));
+                            addOutputLine(String.format(Locale.ROOT, fmt, args));
                           }
 
                           @Override
@@ -436,7 +438,7 @@ public final class TuiCommandExecutor {
 
                       @Override
                       public void printf(String fmt, Object... args) {
-                        addOutputLine(String.format(fmt, args));
+                        addOutputLine(String.format(Locale.ROOT, fmt, args));
                       }
 
                       @Override
@@ -458,7 +460,7 @@ public final class TuiCommandExecutor {
 
                                     @Override
                                     public void printf(String fmt, Object... args) {
-                                      addOutputLine(String.format(fmt, args));
+                                      addOutputLine(String.format(Locale.ROOT, fmt, args));
                                     }
 
                                     @Override
@@ -611,7 +613,9 @@ public final class TuiCommandExecutor {
       StringBuilder sb = new StringBuilder("  ");
       for (int c = 0; c < tab.cpColumnHeaders.size(); c++) {
         if (c > 0) sb.append("  ");
-        sb.append(String.format("%-" + tab.cpColumnWidths[c] + "s", tab.cpColumnHeaders.get(c)));
+        sb.append(
+            String.format(
+                Locale.ROOT, "%-" + tab.cpColumnWidths[c] + "s", tab.cpColumnHeaders.get(c)));
       }
       String headerLine = sb.toString();
       tab.lines.add(headerLine);
@@ -677,7 +681,7 @@ public final class TuiCommandExecutor {
 
           @Override
           public void printf(String fmt, Object... args) {
-            println(String.format(fmt, args));
+            println(String.format(Locale.ROOT, fmt, args));
           }
 
           @Override
@@ -1583,7 +1587,7 @@ public final class TuiCommandExecutor {
     private String elapsedSuffix() {
       long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
       if (elapsedSec <= 0) return "";
-      return String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60);
+      return String.format(Locale.ROOT, " (%02d:%02d)", elapsedSec / 60, elapsedSec % 60);
     }
 
     @Override

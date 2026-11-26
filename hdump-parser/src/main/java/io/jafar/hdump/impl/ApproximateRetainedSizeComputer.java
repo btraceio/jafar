@@ -8,6 +8,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -109,7 +110,8 @@ public final class ApproximateRetainedSizeComputer {
         if (percentComplete > lastReportedPercent) {
           progressCallback.onProgress(
               progress,
-              String.format("Computing approximate retained sizes (%d%%)...", percentComplete));
+              String.format(
+                  Locale.ROOT, "Computing approximate retained sizes (%d%%)...", percentComplete));
           lastReportedPercent = percentComplete;
         }
       }
@@ -197,7 +199,8 @@ public final class ApproximateRetainedSizeComputer {
         if (percentComplete > lastReportedPercent) {
           progressCallback.onProgress(
               progress,
-              String.format("Computing approximate retained sizes (%d%%)...", percentComplete));
+              String.format(
+                  Locale.ROOT, "Computing approximate retained sizes (%d%%)...", percentComplete));
           lastReportedPercent = percentComplete;
         }
       }
@@ -326,7 +329,9 @@ public final class ApproximateRetainedSizeComputer {
           progressCallback.onProgress(
               progress,
               String.format(
-                  "Scanning object references from heap dump (%d%%)...", percentComplete));
+                  Locale.ROOT,
+                  "Scanning object references from heap dump (%d%%)...",
+                  percentComplete));
           lastReportedPercent = percentComplete;
         }
       }

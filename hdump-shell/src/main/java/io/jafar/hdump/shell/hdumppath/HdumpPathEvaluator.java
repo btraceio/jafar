@@ -2469,6 +2469,7 @@ public final class HdumpPathEvaluator {
       String connector = depth == 0 ? "├── " : "└── ";
       sb.append(
           String.format(
+              Locale.ROOT,
               "%s%s%s  ×%,d  shallow=%s  retained=%s%n",
               indent,
               connector,
@@ -2482,9 +2483,10 @@ public final class HdumpPathEvaluator {
 
   private static String formatBytes(long bytes) {
     if (bytes < 1024) return bytes + "B";
-    if (bytes < 1024 * 1024) return String.format("%.1fKB", bytes / 1024.0);
-    if (bytes < 1024L * 1024 * 1024) return String.format("%.1fMB", bytes / (1024.0 * 1024));
-    return String.format("%.2fGB", bytes / (1024.0 * 1024 * 1024));
+    if (bytes < 1024 * 1024) return String.format(Locale.ROOT, "%.1fKB", bytes / 1024.0);
+    if (bytes < 1024L * 1024 * 1024)
+      return String.format(Locale.ROOT, "%.1fMB", bytes / (1024.0 * 1024));
+    return String.format(Locale.ROOT, "%.2fGB", bytes / (1024.0 * 1024 * 1024));
   }
 
   private static List<Map<String, Object>> applyCheckLeaks(
@@ -2767,7 +2769,10 @@ public final class HdumpPathEvaluator {
               : "unknown";
       tree.append(
           String.format(
-              "%s (retained: %,d bytes)\n", dominatorClassName, dominator.getRetainedSize()));
+              Locale.ROOT,
+              "%s (retained: %,d bytes)\n",
+              dominatorClassName,
+              dominator.getRetainedSize()));
       formatDominatorTree(root, tree, "", true);
 
       int totalDominated = countDominatedObjects(root);
@@ -2886,8 +2891,11 @@ public final class HdumpPathEvaluator {
       sb.append(last ? "└── " : "├── ");
       sb.append(
           String.format(
+              Locale.ROOT,
               "%s (%,d objects, retained: %,d bytes)\n",
-              child.className, child.count, child.retainedSize));
+              child.className,
+              child.count,
+              child.retainedSize));
 
       String childPrefix = prefix + (last ? "    " : "│   ");
       formatDominatorTree(child, sb, childPrefix, last);
