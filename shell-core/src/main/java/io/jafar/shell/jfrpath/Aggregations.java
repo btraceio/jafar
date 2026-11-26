@@ -340,7 +340,14 @@ final class Aggregations {
 
       // The consumer runs on several chunk-parsing threads at once: count with a LongAdder.
       final LongAdder c = new LongAdder();
-      if (query.isMultiType) {
+      if (query.predicates.isEmpty()) {
+        // Nothing to test on an event: count headers, decode nothing. Same types either way:
+        // forEachMatching streams exactly query.eventTypes.
+        eval.source
+            .countEvents(session.getRecordingPath(), new HashSet<>(query.eventTypes))
+            .values()
+            .forEach(c::add);
+      } else if (query.isMultiType) {
         // Multi-type query: use Set for O(1) lookup
         Set<String> typeSet = new HashSet<>(query.eventTypes);
         eval.forEachMatching(

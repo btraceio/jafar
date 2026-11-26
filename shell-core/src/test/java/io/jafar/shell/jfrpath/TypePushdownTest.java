@@ -126,6 +126,83 @@ class TypePushdownTest {
     assertEquals(List.of(Set.of("t.A")), spy.selections);
   }
 
+  /**
+   * {@code count()} without a filter asks the source to count, so the default source can read the
+   * event headers only; with a filter it still streams the events, since it must test them.
+   */
+  @Test
+  void countWithoutAFilterAsksTheSourceToCount() throws Exception {
+    JFRSession session = Mockito.mock(JFRSession.class);
+    when(session.getRecordingPath()).thenReturn(Path.of("/tmp/dummy.jfr"));
+    when(session.getAvailableTypes()).thenReturn(Set.of("t.A", "t.B"));
+
+    List<Set<String>> counted = Collections.synchronizedList(new ArrayList<>());
+    SpySource spy = new SpySource();
+    JfrPathEvaluator.EventSource source =
+        new JfrPathEvaluator.EventSource() {
+          @Override
+          public void streamEvents(Path recording, Consumer<JfrPathEvaluator.Event> consumer) {
+            spy.streamEvents(recording, consumer);
+          }
+
+          @Override
+          public void streamEvents(
+              Path recording, Collection<String> types, Consumer<JfrPathEvaluator.Event> c) {
+            spy.streamEvents(recording, types, c);
+          }
+
+          @Override
+          public Map<String, Long> countEvents(Path recording, Collection<String> types) {
+            counted.add(types == null ? null : new TreeSet<>(types));
+            return types == null ? Map.of("t.A", 10L, "t.B", 10L) : countOf(types);
+          }
+
+          private Map<String, Long> countOf(Collection<String> types) {
+            Map<String, Long> counts = new TreeMap<>();
+            for (String type : types) counts.put(type, 10L);
+            return counts;
+          }
+        };
+    JfrPathEvaluator evaluator = new JfrPathEvaluator(source);
+
+    assertEquals(10L, count(evaluator, session, "events/t.A | count()"));
+    assertEquals(20L, count(evaluator, session, "events/(t.A|t.B) | count()"));
+    assertEquals(List.of(Set.of("t.A"), Set.of("t.A", "t.B")), counted);
+    assertTrue(spy.selections.isEmpty(), "streamed: " + spy.selections);
+
+    assertEquals(6L, count(evaluator, session, "events/t.A[id>3] | count()"));
+    assertEquals(2, counted.size(), "a filtered count asked the source to count");
+    assertEquals(List.of(Set.of("t.A")), spy.selections);
+
+    assertEquals(Map.of("t.A", 10L, "t.B", 10L), evaluator.countAllEventTypes(session));
+    assertEquals(3, counted.size());
+    assertEquals(null, counted.get(2), "countAllEventTypes names no type");
+  }
+
+  private static long count(JfrPathEvaluator evaluator, JFRSession session, String query)
+      throws Exception {
+    return ((Number) evaluator.evaluate(session, JfrPathParser.parse(query)).get(0).get("count"))
+        .longValue();
+  }
+
+  /** On a real recording: a multi-type count from headers equals the decoded count. */
+  @Test
+  void aMultiTypeCountEqualsTheDecodedCount() throws Exception {
+    try (JFRSession session = new JFRSession(TCK_RECORDING, ParsingContext.create())) {
+      JfrPathEvaluator evaluator = new JfrPathEvaluator();
+      setPushdown(false);
+      Map<String, Long> counts = new TreeMap<>(evaluator.countAllEventTypes(session));
+      setPushdown(true);
+      assertEquals(counts, new TreeMap<>(evaluator.countAllEventTypes(session)));
+      List<String> types = new ArrayList<>(counts.keySet());
+      String a = types.get(0);
+      String b = types.get(types.size() - 1);
+      String query = "events/(" + a + "|" + b + ") | count()";
+      assertEquals(counts.get(a) + counts.get(b), countOf(evaluator, session, query, false), query);
+      assertEquals(counts.get(a) + counts.get(b), countOf(evaluator, session, query, true), query);
+    }
+  }
+
   /** A query's start-time filter reaches the source as a range, with the filter left in place. */
   @Test
   void aStartTimeFilterReachesTheSourceAsARange() throws Exception {
@@ -142,7 +219,9 @@ class TypePushdownTest {
     assertEquals(7L, ((Number) rows.get(0).get("count")).longValue());
 
     spy = new SpySource();
-    new JfrPathEvaluator(spy).evaluate(session, JfrPathParser.parse("events/t.A | count()"));
+    // sum, not count: an unfiltered count() streams nothing
+    // (countWithoutAFilterAsksTheSourceToCount)
+    new JfrPathEvaluator(spy).evaluate(session, JfrPathParser.parse("events/t.A | sum(id)"));
     assertEquals(List.of(TimeRange.all()), spy.ranges, "no time filter, no bound");
 
     // a decorator's own events are not bound by the primary query's filter
