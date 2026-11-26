@@ -176,6 +176,79 @@ class CompareCommandTest {
   }
 
   @Test
+  void twoRecordingsOfDifferentSamplerKindsAreComparedWithANote(@TempDir Path dir)
+      throws Exception {
+    // Execution samples (CPU) against native method samples (wall): jfr_compare compares them with
+    // a note, and so must the CLI. perf_ab_run.sh treats any exit but 0 as a failed run.
+    Path nativeSamples = nativeMethodSamples(dir.resolve("native.jfr"), 100);
+    assertEquals(
+        0, run("compare", TEST_AP.toString(), nativeSamples.toString(), "--json"), streams());
+    JsonObject json =
+        JsonParser.parseString(out.toString(StandardCharsets.UTF_8)).getAsJsonObject();
+    assertEquals(
+        "jdk.NativeMethodSample", json.getAsJsonObject("candidate").get("eventType").getAsString());
+    assertTrue(
+        json.get("comparability").toString().contains("Different execution sample event types"),
+        json.get("comparability").toString());
+  }
+
+  @Test
+  void aNonPositiveLimitIsAUsageError() {
+    assertEquals(Main.USAGE_ERROR, run("compare", TCK.toString(), TCK.toString(), "--limit", "0"));
+    String text = err.toString(StandardCharsets.UTF_8);
+    assertTrue(text.contains("--limit must be positive"), streams());
+    assertTrue(text.contains("Usage: jfr-shell compare"), streams());
+    err.reset();
+    assertEquals(
+        Main.USAGE_ERROR, run("compare", TCK.toString(), TCK.toString(), "--min-delta-pct", "-1"));
+    assertTrue(
+        err.toString(StandardCharsets.UTF_8).contains("Usage: jfr-shell compare"), streams());
+  }
+
+  @Test
+  void aRootPathIsNotFoundRatherThanACrash() {
+    // A root has no file name; naming it must not throw.
+    assertEquals(1, run("compare", "/", TCK.toString()));
+    assertTrue(err.toString(StandardCharsets.UTF_8).contains("file not found: /"), streams());
+  }
+
+  @Test
+  void listSampleTypesNamesAJfrSideByItsEventType() {
+    assertEquals(
+        0, run("compare", TCK.toString(), TCK.toString(), "--list-sample-types"), streams());
+    String text = out.toString(StandardCharsets.UTF_8);
+    assertTrue(text.contains("  datadog.ExecutionSample "), text);
+    assertFalse(text.contains("datadog.ExecutionSample/"), "not what --event-type takes: " + text);
+  }
+
+  /** A recording with {@code count} {@code jdk.NativeMethodSample} events, one second apart. */
+  private static Path nativeMethodSamples(Path file, int count) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (org.openjdk.jmc.flightrecorder.writer.api.Recording recording =
+        org.openjdk.jmc.flightrecorder.writer.api.Recordings.newRecording(bytes)) {
+      org.openjdk.jmc.flightrecorder.writer.api.Types types = recording.getTypes();
+      org.openjdk.jmc.flightrecorder.writer.api.Type stackTrace =
+          types.getType(org.openjdk.jmc.flightrecorder.writer.api.Types.JDK.STACK_TRACE);
+      org.openjdk.jmc.flightrecorder.writer.api.Type thread =
+          types.getType(org.openjdk.jmc.flightrecorder.writer.api.Types.JDK.THREAD);
+      org.openjdk.jmc.flightrecorder.writer.api.Type event =
+          recording.registerEventType("jdk.NativeMethodSample", t -> {});
+      long start = System.nanoTime();
+      for (int i = 0; i < count; i++) {
+        long at = start + i * 1_000_000_000L;
+        recording.writeEvent(
+            event.asValue(
+                v -> {
+                  v.putField("stackTrace", stackTrace.nullValue());
+                  v.putField("eventThread", thread.nullValue());
+                  v.putField("startTime", at);
+                }));
+      }
+    }
+    return Files.write(file, bytes.toByteArray());
+  }
+
+  @Test
   void anErrorWithoutAMessageIsNamedByItsClass() {
     assertEquals("java.lang.NullPointerException", Main.describe(new NullPointerException()));
     assertEquals("boom", Main.describe(new IllegalStateException("boom")));

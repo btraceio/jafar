@@ -1,7 +1,8 @@
 # Cross-format profile compare (JFR, pprof, OTLP)
 
-Status: design accepted, 2026-11-26. Nothing here is built yet. Every decision in section 7 was
-taken as recommended; section 8 lists what was not verified.
+Status: design accepted, 2026-11-26; v1 (JFR and pprof, decision D7) built. Every decision in
+section 7 was taken as recommended; section 8 lists what was not verified, and section 9 what v1
+did differently from this plan.
 
 Origin: idea 2 of the 2026-11 brainstorm. PR #252 moved the comparison into
 `shell-core/src/main/java/io/jafar/shell/core/compare/`. `RecordingProfile` already looks
@@ -350,3 +351,41 @@ The tests:
   `io.jafar.mcp.jfr`.
 - **Nothing was built or tested for this document.** The code paths above were read, and the one
   command in section 1 was run.
+
+## 9. What v1 did differently
+
+- **jfr2pprof did not produce identical keys.** It rendered a frame without a class as `.sendto`
+  (the `{class}.` with an empty class), so every native frame of `tck-test.jfr` mismatched. Fixed in
+  `FrameFormat.render`: the text between `{class}` and `{method}` goes with a missing class.
+- **`stableName` missed a hidden-class form.** `tck-test.jfr` stores hidden lambda classes as
+  `Handler$$Lambda.0x00007fd6a823c220` (a dot, not a slash), which kept the address and failed the
+  D2 Java-name match on the pprof side. `.0x<hex>` as a whole segment is now removed too.
+- **The round trip at `minDeltaPct = 0` is not an empty list.** The floor drops a move *smaller*
+  than it, so at 0 every frame is a row. The test asserts that every row has `deltaPct` 0 and none
+  is significant, and that there is one row per frame.
+- **The sampler policy is a three-way option** (`CompareOptions.MixedSamplers`): `NOTE` keeps
+  `jfr_compare`'s behaviour for two JFR event types of different kinds (judged, with the event-type
+  note), so its output changes only by D2; `ALLOW` compares with nothing judged. `profile_compare`
+  and `jfr-shell compare` choose with `MixedSamplers.forPair`: `NOTE` for two JFR sides, else
+  `REFUSE` (or `ALLOW` on request). The D5 refusal therefore applies only when a pprof side is
+  involved; refusing two recordings `jfr_compare` accepts broke `perf_ab_run.sh`'s exit-0
+  contract.
+- **Counts (section 4) were narrowed after review.** A `count` column counts only when it counts
+  samples: allocation (`alloc_objects`) and lock (`contentions`) counts are estimates scaled from
+  the samples. The partner is the single `samples/count` column or `<x>-samples` beside `<x>-time`,
+  never "the first count column". Period-derived counts are summed and divided once.
+- **D2 for pprof is decided per profile, not per name.** `encoding/json.Marshal` matches the Java
+  internal-name pattern, so slashed names are dotted only in a profile that looks JVM-originated;
+  a trailing `:<line>` is dropped, which makes caveat 1's line-numbered conversion match after all.
+- **Sample-type names by prefix:** `cpu*` is CPU and `wall*` wall clock (`cpu-time`, `wall_time`).
+- **`samples` takes the kind of the profile's period type or of another CPU/wall sample type**,
+  else it is `UNKNOWN`. jfr2pprof's `samples/count` (no period) is therefore `UNKNOWN`, and the round
+  trip gets the "Sampler kind not recognised" note rather than a refusal.
+- **Unknown counts** report `sampleCount` as the number of sample records and `null`
+  `baselineSamples`/`candidateSamples` in the rows; the finding is `regression:not-judged`, also
+  used when mixed samplers were allowed.
+- **`profile_compare` takes `inclusiveFrames`** (default false, like `jfr_compare`) and a per-side
+  `sampleType`.
+- **The standalone jfr-shell jar** has no pprof module, so it reads every non-JFR file as a
+  recording and fails with "cannot read JFR recording"; `jafar-shell compare` reads pprof.
+

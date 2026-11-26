@@ -108,6 +108,11 @@ public final class JfrModule implements ShellModule {
   }
 
   @Override
+  public io.jafar.shell.core.compare.ProfileReader profileReader() {
+    return new io.jafar.shell.core.compare.JfrCompare();
+  }
+
+  @Override
   public int getPriority() {
     return 0;
   }

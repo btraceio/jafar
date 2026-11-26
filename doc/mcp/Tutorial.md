@@ -25,6 +25,7 @@ The Model Context Protocol (MCP) is a standard protocol for AI agents to interac
 **JFR analysis tools:**
 - **jfr_diagnose** - Automated diagnosis: applies threshold checks, runs the USE and TSA analyses in-process, and returns merged severity-ranked findings plus the capability gaps that limit what the recording can answer
 - **jfr_compare** - Compare a candidate recording against a baseline; duration-normalised event rates and per-frame self-time deltas, with a comparability report
+- **profile_compare** - The same comparison when either side is a pprof profile; each side is `{format: jfr|pprof, sessionId}`
 - **jfr_summary** - Quick overview with duration, event counts, and key highlights
 - **jfr_flamegraph** - Generate aggregated stack trace data for flamegraph-style analysis
 - **jfr_callgraph** - Generate caller-callee relationship graph from stack traces

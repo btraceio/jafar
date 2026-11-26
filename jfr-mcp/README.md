@@ -79,6 +79,7 @@ same time, which is what makes cross-format correlation possible.
 | `jfr_summary` | Recording overview |
 | `jfr_diagnose` | Automated diagnosis: runs the USE and TSA analyses and returns merged, severity-ranked findings plus capability gaps |
 | `jfr_compare` | Compare a candidate recording against a baseline: duration-normalised rates and per-frame self-time deltas. A frame counts as a regression only if its move is significant; below 30 samples in either recording the result is reported as inconclusive |
+| `profile_compare` | Compare a candidate against a baseline where either side is a JFR recording or a pprof profile, each named as `{format, sessionId}`: frame shares of each side's total, judged by `jfr_compare`'s significance rule where observation counts are known. Refuses CPU against wall clock unless `allowMixedSamplers`, and allocation against CPU or wall always |
 | `jfr_flamegraph` | Aggregated stack trace data |
 | `jfr_callgraph` | Caller-callee relationship graph |
 | `jfr_stackprofile` | Frames with self/total shares, time buckets and per-thread counts |

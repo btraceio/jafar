@@ -6,10 +6,17 @@ import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.ShellModule;
+import io.jafar.shell.core.ShellModuleLoader;
 import io.jafar.shell.core.analysis.AnalysisTarget;
 import io.jafar.shell.core.compare.CompareOptions;
 import io.jafar.shell.core.compare.CompareResult;
 import io.jafar.shell.core.compare.JfrCompare;
+import io.jafar.shell.core.compare.ProfileCompare;
+import io.jafar.shell.core.compare.ProfileReader;
+import io.jafar.shell.core.compare.ProfileSelection;
+import io.jafar.shell.core.compare.RecordingProfile;
+import io.jafar.shell.core.compare.SampleTypeInfo;
 import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.live.TailRunner;
@@ -749,24 +756,69 @@ public final class Main implements Callable<Integer> {
   }
 
   /**
-   * {@code compare <baseline.jfr> <candidate.jfr>}: the {@code jfr_compare} comparison, headless.
-   * Exits 0 when the comparison ran, whatever it found; 1 when it could not run (a missing or
-   * unreadable recording, an unknown event type); and 2 on a usage error (a missing or malformed
+   * {@code compare <baseline> <candidate>}: the {@code jfr_compare} comparison, headless, for JFR
+   * recordings and pprof profiles in any pairing. Exits 0 when the comparison ran, whatever it
+   * found; 1 when it could not run (a missing or unreadable file, an unknown event or sample type,
+   * samplers that measure different things); and 2 on a usage error (a missing or malformed
    * argument), with the message and usage on stderr. It reports where time moved; it does not
    * decide whether a build got slower.
+   *
+   * <p>A file that starts with JFR's magic is read as a recording. Any other file goes to the first
+   * module on the class path whose {@code canHandle} claims it and that has a {@link
+   * io.jafar.shell.core.compare.ProfileReader}; when none does, it is read as a recording, so a
+   * file that is neither fails with "cannot read JFR recording". jfr-shell's own jar knows JFR
+   * only; the {@code jafar-shell} jar adds the pprof module.
    */
   @CommandLine.Command(
       name = "compare",
       mixinStandardHelpOptions = true,
       description =
-          "Compare a candidate recording against a baseline: event rates and per-frame self and"
-              + " inclusive time shares")
+          "Compare a candidate recording or profile against a baseline: per-frame self and"
+              + " inclusive time shares, and event rates when both are JFR recordings. Each side"
+              + " is a JFR recording or a pprof profile (pprof needs the jafar-shell jar).")
   static class CompareCommand implements Callable<Integer> {
-    @CommandLine.Parameters(index = "0", description = "Baseline recording (the 'before')")
+    @CommandLine.Parameters(
+        index = "0",
+        description = "Baseline recording or profile (the 'before')")
     private String baselineFile;
 
-    @CommandLine.Parameters(index = "1", description = "Candidate recording (the 'after')")
+    @CommandLine.Parameters(
+        index = "1",
+        description = "Candidate recording or profile (the 'after')")
     private String candidateFile;
+
+    @CommandLine.Option(
+        names = {"--sample-type"},
+        paramLabel = "<type[/unit]>",
+        description =
+            "pprof sample type, for every pprof side (default: the first CPU sample type, else"
+                + " the first)")
+    private String sampleType;
+
+    @CommandLine.Option(
+        names = {"--baseline-sample-type"},
+        paramLabel = "<type[/unit]>",
+        description = "pprof sample type of the baseline; overrides --sample-type")
+    private String baselineSampleType;
+
+    @CommandLine.Option(
+        names = {"--candidate-sample-type"},
+        paramLabel = "<type[/unit]>",
+        description = "pprof sample type of the candidate; overrides --sample-type")
+    private String candidateSampleType;
+
+    @CommandLine.Option(
+        names = {"--allow-mixed-samplers"},
+        description =
+            "Compare samplers of different kinds (CPU against wall clock) instead of refusing;"
+                + " no change is then called significant. Allocation against time is always"
+                + " refused")
+    private boolean allowMixedSamplers;
+
+    @CommandLine.Option(
+        names = {"--list-sample-types"},
+        description = "List the sample types of both files and exit")
+    private boolean listSampleTypes;
 
     @CommandLine.Option(
         names = {"--json"},
@@ -793,43 +845,72 @@ public final class Main implements Callable<Integer> {
         description = "JFR backend to use")
     private String backend;
 
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
+    /** An option used wrongly: the message and the command's usage on stderr, exit 2. */
+    private int usage(String message) {
+      return usageError(new CommandLine.ParameterException(spec.commandLine(), message));
+    }
+
     @Override
     public Integer call() {
       if (limit <= 0) {
-        System.err.println("Error: --limit must be positive");
-        return 1;
+        return usage("--limit must be positive");
       }
       if (!Double.isFinite(minDeltaPct) || minDeltaPct < 0) {
-        System.err.println("Error: --min-delta-pct must be a number of zero or more");
-        return 1;
+        return usage("--min-delta-pct must be a number of zero or more");
       }
       Path baselinePath = Paths.get(baselineFile);
       Path candidatePath = Paths.get(candidateFile);
       for (Path p : List.of(baselinePath, candidatePath)) {
+        Path name = p.getFileName(); // null for a root such as "/"
+        String what = name != null && name.toString().endsWith(".jfr") ? "JFR file" : "file";
         if (!Files.isRegularFile(p)) {
-          System.err.println("Error: JFR file not found: " + p);
+          System.err.println("Error: " + what + " not found: " + p);
           return 1;
         }
         if (!Files.isReadable(p)) {
-          System.err.println("Error: JFR file not readable: " + p);
+          System.err.println("Error: " + what + " not readable: " + p);
           return 1;
         }
       }
-      Integer rc = validateBackend(backend);
-      if (rc != 0) {
-        return rc;
-      }
+      try {
+        // null: the side is a JFR recording, read through the selected backend.
+        ProfileReader baseReader = profileReader(baselinePath);
+        ProfileReader candReader = profileReader(candidatePath);
+        String baseType = baselineSampleType != null ? baselineSampleType : sampleType;
+        String candType = candidateSampleType != null ? candidateSampleType : sampleType;
+        String misuse = typeOptionMisuse(baseReader, candReader);
+        if (misuse != null) {
+          return usage(misuse);
+        }
+        if (baseReader == null || candReader == null) {
+          Integer rc = validateBackend(backend);
+          if (rc != 0) {
+            return rc;
+          }
+        }
+        if (listSampleTypes) {
+          System.out.print(listTypes(baselinePath, baseReader));
+          System.out.print(listTypes(candidatePath, candReader));
+          return 0;
+        }
 
-      ParsingContext ctx = ParsingContext.create();
-      try (JFRSession baseline = open(baselinePath, ctx);
-          JFRSession candidate = open(candidatePath, ctx)) {
+        ParsingContext ctx = ParsingContext.create();
         // Inclusive shares always: they are what names a caller whose callees got slower.
+        RecordingProfile base = read(baselinePath, baseReader, baseType, 1, ctx);
+        RecordingProfile cand = read(candidatePath, candReader, candType, 2, ctx);
         CompareResult result =
-            new JfrCompare()
-                .compare(
-                    AnalysisTarget.of(1, baseline),
-                    AnalysisTarget.of(2, candidate),
-                    new CompareOptions(eventType, minDeltaPct, limit, true));
+            ProfileCompare.compare(
+                base,
+                cand,
+                new CompareOptions(
+                    eventType,
+                    minDeltaPct,
+                    limit,
+                    true,
+                    CompareOptions.MixedSamplers.forPair(
+                        base.format(), cand.format(), allowMixedSamplers)));
         System.out.print(json ? CompareOutput.json(result.toMap()) : CompareOutput.table(result));
         return 0;
       } catch (Exception e) {
@@ -838,13 +919,107 @@ public final class Main implements Callable<Integer> {
       }
     }
 
+    /**
+     * The reader of a file that is not a JFR recording, or {@code null} for a recording: a file
+     * with JFR's magic, or one no module with a reader claims.
+     *
+     * @throws IllegalArgumentException when the module that claims the file cannot compare it
+     */
+    static ProfileReader profileReader(Path path) {
+      if (isJfr(path)) {
+        return null;
+      }
+      for (ShellModule module : ShellModuleLoader.loadAll()) {
+        if ("jfr".equals(module.getId()) || !module.canHandle(path)) {
+          continue;
+        }
+        ProfileReader reader = module.profileReader();
+        if (reader == null) {
+          throw new IllegalArgumentException(
+              "cannot compare "
+                  + path
+                  + ": it is a "
+                  + module.getDisplayName()
+                  + " file, and only JFR recordings and pprof profiles can be compared");
+        }
+        return reader;
+      }
+      return null;
+    }
+
+    private static boolean isJfr(Path path) {
+      try (java.io.InputStream in = Files.newInputStream(path)) {
+        byte[] magic = in.readNBytes(4);
+        return magic.length == 4
+            && magic[0] == 'F'
+            && magic[1] == 'L'
+            && magic[2] == 'R'
+            && magic[3] == 0;
+      } catch (java.io.IOException e) {
+        return false;
+      }
+    }
+
+    /**
+     * {@code --event-type} is for JFR sides and the sample-type options for the others: the misuse,
+     * or {@code null} when there is none.
+     */
+    private String typeOptionMisuse(ProfileReader baseReader, ProfileReader candReader) {
+      if (eventType != null && baseReader != null && candReader != null) {
+        return "--event-type selects a JFR event type, and neither file is a JFR recording: use"
+            + " --sample-type";
+      }
+      if (sampleType != null && baseReader == null && candReader == null) {
+        return "--sample-type selects a pprof sample type, and both files are JFR recordings: use"
+            + " --event-type";
+      }
+      if (baselineSampleType != null && baseReader == null) {
+        return "--baseline-sample-type selects a pprof sample type, and the baseline is a JFR"
+            + " recording: use --event-type";
+      }
+      if (candidateSampleType != null && candReader == null) {
+        return "--candidate-sample-type selects a pprof sample type, and the candidate is a JFR"
+            + " recording: use --event-type";
+      }
+      return null;
+    }
+
+    private RecordingProfile read(
+        Path path, ProfileReader reader, String type, int id, ParsingContext ctx) throws Exception {
+      if (reader != null) {
+        return reader.read(path, new ProfileSelection(type, true));
+      }
+      try (JFRSession session = open(path, ctx)) {
+        return new JfrCompare().profile(AnalysisTarget.of(id, session), eventType, true);
+      }
+    }
+
+    private static String listTypes(Path path, ProfileReader reader) throws Exception {
+      ProfileReader r = reader != null ? reader : new JfrCompare();
+      StringBuilder out = new StringBuilder();
+      out.append(path).append(" (").append(r.format()).append(")\n");
+      List<SampleTypeInfo> types = r.sampleTypes(path);
+      if (types.isEmpty()) {
+        out.append("  no sample types\n");
+      }
+      for (SampleTypeInfo type : types) {
+        out.append(String.format(java.util.Locale.ROOT, "  %-40s %s%n", type.label(), type.kind()));
+      }
+      return out.toString();
+    }
+
     /** Opens a recording, naming the file when it is not one the parser can read. */
     private static JFRSession open(Path path, ParsingContext ctx) {
       try {
         return new JFRSession(path, ctx);
       } catch (Exception e) {
+        String hint =
+            isJfr(path)
+                ? ""
+                : " (it is not a JFR recording, and no module on the class path reads it: pprof"
+                    + " profiles are read by the jafar-shell jar)";
         throw new IllegalArgumentException(
-            "cannot read JFR recording " + path + ": " + describe(e), e);
+            "cannot read JFR recording " + path + ": " + describe(e) + hint, e);
       }
     }
   }

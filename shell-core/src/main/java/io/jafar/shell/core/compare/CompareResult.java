@@ -50,8 +50,11 @@ public record CompareResult(
 
   /**
    * One side's description, keyed as {@code jfr_compare} keys it: {@code recordingPath}, {@code
-   * eventType}, {@code samples}, {@code observedDurationSeconds}, {@code totalEvents}. A caller
-   * with session ids puts them in front.
+   * eventType}, {@code samples}, {@code observedDurationSeconds}, {@code totalEvents}; with
+   * inclusive counts and a format that records truncation, {@code truncatedStacks} and {@code
+   * truncatedStacksPct}. A side not read from JFR adds {@code format}, {@code sampleUnit}, {@code
+   * samplerKind}, {@code totalWeight}, {@code sampleCountKnown} and, when a sample type was chosen
+   * for it, {@code sampleTypeChosen}. A caller with session ids puts them in front.
    */
   public static Map<String, Object> describe(RecordingProfile profile) {
     Map<String, Object> map = new LinkedHashMap<>();
@@ -60,12 +63,24 @@ public record CompareResult(
         profile.recordingPath() == null ? null : profile.recordingPath().toString());
     map.put("eventType", profile.eventType());
     map.put("samples", profile.sampleCount());
-    map.put("observedDurationSeconds", JfrCompare.round(profile.durationSeconds(), 3));
+    map.put("observedDurationSeconds", ProfileCompare.round(profile.durationSeconds(), 3));
     map.put("totalEvents", profile.totalEvents());
-    // Only with inclusive counts, so jfr_compare (which reads none) keeps its keys.
-    if (profile.inclusiveCounted()) {
+    // Only with inclusive counts, so jfr_compare (which reads none) keeps its keys; and only where
+    // the format records truncation at all.
+    if (profile.inclusiveCounted() && profile.truncationKnown()) {
       map.put("truncatedStacks", profile.truncatedSamples());
-      map.put("truncatedStacksPct", JfrCompare.round(profile.truncatedPct(), 2));
+      map.put("truncatedStacksPct", ProfileCompare.round(profile.truncatedPct(), 2));
+    }
+    // A JFR side keeps exactly the keys jfr_compare has always returned.
+    if (!profile.isJfr()) {
+      map.put("format", profile.format());
+      map.put("sampleUnit", profile.sampleUnit());
+      map.put("samplerKind", profile.samplerKind().name());
+      map.put("totalWeight", profile.totalWeight());
+      map.put("sampleCountKnown", profile.countsKnown());
+      if (profile.sampleTypeReason() != null) {
+        map.put("sampleTypeChosen", profile.sampleTypeReason());
+      }
     }
     return map;
   }
