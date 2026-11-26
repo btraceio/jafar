@@ -845,20 +845,26 @@ public final class Main implements Callable<Integer> {
         description = "JFR backend to use")
     private String backend;
 
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
+    /** An option used wrongly: the message and the command's usage on stderr, exit 2. */
+    private int usage(String message) {
+      return usageError(new CommandLine.ParameterException(spec.commandLine(), message));
+    }
+
     @Override
     public Integer call() {
       if (limit <= 0) {
-        System.err.println("Error: --limit must be positive");
-        return 1;
+        return usage("--limit must be positive");
       }
       if (!Double.isFinite(minDeltaPct) || minDeltaPct < 0) {
-        System.err.println("Error: --min-delta-pct must be a number of zero or more");
-        return 1;
+        return usage("--min-delta-pct must be a number of zero or more");
       }
       Path baselinePath = Paths.get(baselineFile);
       Path candidatePath = Paths.get(candidateFile);
       for (Path p : List.of(baselinePath, candidatePath)) {
-        String what = p.getFileName().toString().endsWith(".jfr") ? "JFR file" : "file";
+        Path name = p.getFileName(); // null for a root such as "/"
+        String what = name != null && name.toString().endsWith(".jfr") ? "JFR file" : "file";
         if (!Files.isRegularFile(p)) {
           System.err.println("Error: " + what + " not found: " + p);
           return 1;
@@ -874,7 +880,10 @@ public final class Main implements Callable<Integer> {
         ProfileReader candReader = profileReader(candidatePath);
         String baseType = baselineSampleType != null ? baselineSampleType : sampleType;
         String candType = candidateSampleType != null ? candidateSampleType : sampleType;
-        checkTypeOptions(baseReader, candReader);
+        String misuse = typeOptionMisuse(baseReader, candReader);
+        if (misuse != null) {
+          return usage(misuse);
+        }
         if (baseReader == null || candReader == null) {
           Integer rc = validateBackend(backend);
           if (rc != 0) {
@@ -900,9 +909,8 @@ public final class Main implements Callable<Integer> {
                     minDeltaPct,
                     limit,
                     true,
-                    allowMixedSamplers
-                        ? CompareOptions.MixedSamplers.ALLOW
-                        : CompareOptions.MixedSamplers.REFUSE));
+                    CompareOptions.MixedSamplers.forPair(
+                        base.format(), cand.format(), allowMixedSamplers)));
         System.out.print(json ? CompareOutput.json(result.toMap()) : CompareOutput.table(result));
         return 0;
       } catch (Exception e) {
@@ -952,28 +960,28 @@ public final class Main implements Callable<Integer> {
       }
     }
 
-    /** {@code --event-type} is for JFR sides and the sample-type options for the others. */
-    private void checkTypeOptions(ProfileReader baseReader, ProfileReader candReader) {
+    /**
+     * {@code --event-type} is for JFR sides and the sample-type options for the others: the misuse,
+     * or {@code null} when there is none.
+     */
+    private String typeOptionMisuse(ProfileReader baseReader, ProfileReader candReader) {
       if (eventType != null && baseReader != null && candReader != null) {
-        throw new IllegalArgumentException(
-            "--event-type selects a JFR event type, and neither file is a JFR recording: use"
-                + " --sample-type");
+        return "--event-type selects a JFR event type, and neither file is a JFR recording: use"
+            + " --sample-type";
       }
       if (sampleType != null && baseReader == null && candReader == null) {
-        throw new IllegalArgumentException(
-            "--sample-type selects a pprof sample type, and both files are JFR recordings: use"
-                + " --event-type");
+        return "--sample-type selects a pprof sample type, and both files are JFR recordings: use"
+            + " --event-type";
       }
       if (baselineSampleType != null && baseReader == null) {
-        throw new IllegalArgumentException(
-            "--baseline-sample-type selects a pprof sample type, and the baseline is a JFR"
-                + " recording: use --event-type");
+        return "--baseline-sample-type selects a pprof sample type, and the baseline is a JFR"
+            + " recording: use --event-type";
       }
       if (candidateSampleType != null && candReader == null) {
-        throw new IllegalArgumentException(
-            "--candidate-sample-type selects a pprof sample type, and the candidate is a JFR"
-                + " recording: use --event-type");
+        return "--candidate-sample-type selects a pprof sample type, and the candidate is a JFR"
+            + " recording: use --event-type";
       }
+      return null;
     }
 
     private RecordingProfile read(

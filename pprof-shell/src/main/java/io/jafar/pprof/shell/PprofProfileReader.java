@@ -23,13 +23,12 @@ import java.util.stream.Collectors;
  * observation counts for the significance test where they can be derived.
  *
  * <p>Frames are keyed by {@link FrameNames#symbolKey} of the first non-empty of {@code
- * Function.name} and {@code Function.systemName}. Each {@code Line} of a {@code Location} is its
- * own frame, in the order the pprof shell flattens stacks: the leaf is the first line of the first
- * location.
+ * Function.name} and {@code Function.systemName}, dotting Java internal names only when the profile
+ * {@link #looksJvm looks JVM-originated}. Each {@code Line} of a {@code Location} is its own frame,
+ * in the order the pprof shell flattens stacks: the leaf is the first line of the first location.
  *
- * <p>Observation counts come, in order, from the selected column itself when its unit is {@code
- * count}; from another column with unit {@code count} in the same sample; from {@code value /
- * period} when the profile's period type has the selected column's unit; otherwise they are
+ * <p>Observation counts come from the source {@link #countSource} picks: the selected column when
+ * it counts samples, its producer partner, or the values divided by the period; otherwise they are
  * unknown, and the comparison reports shares without calling any change significant. The sum is
  * over samples, never a count of {@code Sample} messages: a writer may merge samples with the same
  * stack into one.
@@ -101,36 +100,41 @@ public final class PprofProfileReader implements ProfileReader {
       }
     }
     PprofProfile.ValueType selected = types.get(column);
-    CountSource counts = countSource(profile, column);
+    SamplerKind kind = kind(profile, selected);
+    CountSource counts = countSource(profile, column, kind);
 
     Map<Long, PprofProfile.Location> locations = new HashMap<>();
     for (PprofProfile.Location location : profile.locations()) {
       locations.put(location.id(), location);
     }
+    boolean jvm = looksJvm(profile);
     Map<Long, String> functionKeys = new HashMap<>();
     for (PprofProfile.Function function : profile.functions()) {
       String name = function.name().isEmpty() ? function.systemName() : function.name();
-      String key = FrameNames.symbolKey(name);
+      String key = FrameNames.symbolKey(name, jvm);
       if (key != null) {
         functionKeys.put(function.id(), key);
       }
     }
 
+    // Counts are accumulated raw, in the count source's unit, and divided by the period once per
+    // frame and once for the total: rounding each sample would turn many samples shorter than
+    // half a period into none.
     Map<String, Long> leafWeights = new LinkedHashMap<>();
     Map<String, Long> inclusiveWeights = new LinkedHashMap<>();
     Map<String, Long> leafCounts = new LinkedHashMap<>();
     Map<String, Long> inclusiveCounts = new LinkedHashMap<>();
     long totalWeight = 0;
-    long sampleCount = 0;
+    long totalCount = 0;
     boolean inclusive = selection.inclusive();
     for (PprofProfile.Sample sample : profile.samples()) {
       long weight = value(sample, column);
-      long count = counts.known ? counts.count(sample) : (weight != 0 ? 1 : 0);
+      long count = counts.known ? value(sample, counts.column) : (weight != 0 ? 1 : 0);
       if (weight == 0 && count == 0) {
         continue;
       }
       totalWeight += weight;
-      sampleCount += count;
+      totalCount += count;
       List<String> frames = frames(sample, locations, functionKeys, inclusive);
       if (frames.isEmpty()) {
         continue; // still a sample: it counts towards the total, under no frame
@@ -145,11 +149,16 @@ public final class PprofProfileReader implements ProfileReader {
         }
       }
     }
+    if (counts.period > 0) {
+      leafCounts.replaceAll((frame, raw) -> counts.perPeriod(raw));
+      inclusiveCounts.replaceAll((frame, raw) -> counts.perPeriod(raw));
+      totalCount = counts.perPeriod(totalCount);
+    }
 
     return new RecordingProfile(
         path,
         selected.type() + "/" + selected.unit(),
-        sampleCount,
+        totalCount,
         profile.durationNanos() > 0 ? profile.durationNanos() / 1_000_000_000.0 : 0.0,
         leafCounts,
         inclusiveCounts,
@@ -159,13 +168,30 @@ public final class PprofProfileReader implements ProfileReader {
         0,
         FORMAT,
         selected.unit(),
-        kind(profile, selected),
+        kind,
         totalWeight,
         leafWeights,
         inclusiveWeights,
         counts.known,
         false,
-        reason + (counts.known ? "" : "; " + counts.why));
+        reason + "; " + counts.why);
+  }
+
+  /**
+   * Whether the profile came from a JVM, so slashed Java internal names may be dotted: any function
+   * has a JVM-only name ({@code <init>}, {@code <clinit>}, {@code $$Lambda}) or a JVM language's
+   * source file. Decided per profile, because a Go name such as {@code encoding/json.Marshal} has a
+   * Java internal name's shape.
+   */
+  static boolean looksJvm(PprofProfile.Profile profile) {
+    for (PprofProfile.Function function : profile.functions()) {
+      if (FrameNames.isJvmSymbol(function.name())
+          || FrameNames.isJvmSymbol(function.systemName())
+          || FrameNames.isJvmSourceFile(function.filename())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static int find(List<PprofProfile.ValueType> types, String requested, Path path) {
@@ -208,31 +234,96 @@ public final class PprofProfileReader implements ProfileReader {
     return column < values.length ? values[column] : 0L;
   }
 
-  /** Where a sample's observation count comes from. */
+  /**
+   * Where a sample's observation count comes from: a column, in its unit, divided by {@code period}
+   * (once, at the aggregate) when it is positive.
+   */
   private record CountSource(boolean known, int column, long period, String why) {
-    long count(PprofProfile.Sample sample) {
-      long value = value(sample, column);
-      return period > 0 ? Math.round((double) value / period) : value;
+    long perPeriod(long raw) {
+      return Math.round((double) raw / period);
     }
   }
 
-  private static CountSource countSource(PprofProfile.Profile profile, int column) {
+  /**
+   * The source of observation counts for the selected column, in order:
+   *
+   * <ol>
+   *   <li>the column itself, when its unit is {@code count} and it counts samples: any kind but
+   *       allocation and lock, whose {@code count} columns ({@code alloc_objects}, {@code
+   *       contentions}) are estimates scaled up from the samples, not trials;
+   *   <li>its partner by producer convention: the one {@code samples/count} column (Go's CPU
+   *       profile pairs it with {@code cpu/nanoseconds}), or {@code <x>-samples}/{@code
+   *       <x>_samples} in {@code count} for {@code <x>-time}/{@code <x>_time};
+   *   <li>{@code value / period}, when the period has the selected column's unit and the kind is
+   *       not allocation (an allocation period is a byte sampling rate, and the values are already
+   *       scaled by it);
+   *   <li>otherwise unknown: the comparison then calls nothing significant.
+   * </ol>
+   */
+  private static CountSource countSource(
+      PprofProfile.Profile profile, int column, SamplerKind kind) {
     List<PprofProfile.ValueType> types = profile.sampleTypes();
-    String unit = types.get(column).unit();
-    if ("count".equalsIgnoreCase(unit)) {
-      return new CountSource(true, column, 0, null);
+    PprofProfile.ValueType selected = types.get(column);
+    String unit = selected.unit();
+    boolean scaled = kind.isAllocation() || kind == SamplerKind.LOCK;
+    if ("count".equalsIgnoreCase(unit) && !scaled) {
+      return new CountSource(true, column, 0, "counts: the column itself");
     }
-    for (int i = 0; i < types.size(); i++) {
-      if (i != column && "count".equalsIgnoreCase(types.get(i).unit())) {
-        return new CountSource(true, i, 0, null);
-      }
+    int partner = partner(types, column);
+    if (partner >= 0) {
+      PprofProfile.ValueType p = types.get(partner);
+      return new CountSource(
+          true, partner, 0, "counts: the " + p.type() + "/" + p.unit() + " column");
     }
     PprofProfile.ValueType periodType = profile.periodType();
-    if (profile.period() > 0 && periodType != null && unit.equalsIgnoreCase(periodType.unit())) {
-      return new CountSource(true, column, profile.period(), null);
+    if (!kind.isAllocation()
+        && profile.period() > 0
+        && periodType != null
+        && unit.equalsIgnoreCase(periodType.unit())) {
+      return new CountSource(
+          true, column, profile.period(), "counts: value / period " + profile.period());
     }
     return new CountSource(
-        false, column, 0, "observation counts unknown: no count column, and no period in " + unit);
+        false,
+        column,
+        0,
+        "observation counts unknown: no sample-count column for "
+            + selected.type()
+            + "/"
+            + unit
+            + ", and no period to divide by");
+  }
+
+  /** The count column paired with {@code column} by producer convention, or {@code -1}. */
+  private static int partner(List<PprofProfile.ValueType> types, int column) {
+    int samples = -1;
+    int matches = 0;
+    for (int i = 0; i < types.size(); i++) {
+      if (i != column && isSamplesCount(types.get(i), "samples")) {
+        samples = i;
+        matches++;
+      }
+    }
+    if (matches == 1) {
+      return samples;
+    }
+    String type = types.get(column).type().toLowerCase(Locale.ROOT);
+    for (String suffix : List.of("-time", "_time")) {
+      if (type.endsWith(suffix) && type.length() > suffix.length()) {
+        String stem = type.substring(0, type.length() - suffix.length());
+        String partnerName = stem + suffix.charAt(0) + "samples";
+        for (int i = 0; i < types.size(); i++) {
+          if (i != column && isSamplesCount(types.get(i), partnerName)) {
+            return i;
+          }
+        }
+      }
+    }
+    return -1;
+  }
+
+  private static boolean isSamplesCount(PprofProfile.ValueType type, String name) {
+    return type.type().equalsIgnoreCase(name) && "count".equalsIgnoreCase(type.unit());
   }
 
   /** The sample's frame keys, leaf first; only the leaf unless {@code all}. */

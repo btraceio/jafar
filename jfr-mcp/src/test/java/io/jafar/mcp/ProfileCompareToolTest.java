@@ -120,9 +120,29 @@ class ProfileCompareToolTest {
                     "sampleType", "samples/count")));
     assertEquals("samples/count", result.get("baseline").get("eventType").asString());
     assertEquals("cpu/nanoseconds", result.get("candidate").get("eventType").asString());
-    assertEquals("requested", result.get("candidate").get("sampleTypeChosen").asString());
+    assertEquals(
+        "requested; counts: the samples/count column",
+        result.get("candidate").get("sampleTypeChosen").asString());
     // cpu/nanoseconds takes its counts from the samples/count column: the move is judged.
     assertTrue(result.get("frames").toString().contains("\"significant\":true"), result.toString());
+  }
+
+  @Test
+  void twoRecordingsOfDifferentSamplerKindsGetANoteAsInJfrCompare() throws Exception {
+    // CPU (datadog.ExecutionSample) against wall (jdk.NativeMethodSample): jfr_compare and
+    // jfr-shell compare compare such a pair with a note, so profile_compare does too.
+    jfr.open(TCK, "cpu");
+    jfr.open(nativeMethodSamples(dir.resolve("native.jfr"), 100), "native");
+    JsonNode result =
+        success(
+            tools.handleProfileCompare(
+                Map.of(
+                    "baseline", Map.of("format", "jfr", "sessionId", "cpu"),
+                    "candidate", Map.of("format", "jfr", "sessionId", "native"))));
+    assertEquals("jdk.NativeMethodSample", result.get("candidate").get("eventType").asString());
+    assertTrue(
+        result.get("comparability").toString().contains("Different execution sample event types"),
+        result.get("comparability").toString());
   }
 
   @Test
@@ -186,6 +206,33 @@ class ProfileCompareToolTest {
       b.addSample(List.of(fresh, main), List.of((long) moved, moved * 10_000_000L), List.of());
     }
     return b.write(dir);
+  }
+
+  /** A recording with {@code count} {@code jdk.NativeMethodSample} events, one second apart. */
+  private static Path nativeMethodSamples(Path file, int count) throws Exception {
+    java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+    try (org.openjdk.jmc.flightrecorder.writer.api.Recording recording =
+        org.openjdk.jmc.flightrecorder.writer.api.Recordings.newRecording(bytes)) {
+      org.openjdk.jmc.flightrecorder.writer.api.Types types = recording.getTypes();
+      org.openjdk.jmc.flightrecorder.writer.api.Type stackTrace =
+          types.getType(org.openjdk.jmc.flightrecorder.writer.api.Types.JDK.STACK_TRACE);
+      org.openjdk.jmc.flightrecorder.writer.api.Type thread =
+          types.getType(org.openjdk.jmc.flightrecorder.writer.api.Types.JDK.THREAD);
+      org.openjdk.jmc.flightrecorder.writer.api.Type event =
+          recording.registerEventType("jdk.NativeMethodSample", t -> {});
+      long start = System.nanoTime();
+      for (int i = 0; i < count; i++) {
+        long at = start + i * 1_000_000_000L;
+        recording.writeEvent(
+            event.asValue(
+                v -> {
+                  v.putField("stackTrace", stackTrace.nullValue());
+                  v.putField("eventThread", thread.nullValue());
+                  v.putField("startTime", at);
+                }));
+      }
+    }
+    return java.nio.file.Files.write(file, bytes.toByteArray());
   }
 
   private static JsonNode success(CallToolResult result) throws Exception {

@@ -37,9 +37,13 @@ public final class FrameNames {
 
   /**
    * A whole name that is a Java class in internal (slashed) form plus a method: {@code
-   * java/lang/String.indexOf}. A Go function ({@code github.com/x/y.Func}) has a dot before its
-   * first slash and a native path has no method part, so neither matches.
+   * java/lang/String.indexOf}. A native path has no method part and does not match; a Go function
+   * may ({@code encoding/json.Marshal}), which is why {@link #symbolKey} only applies it to a
+   * profile that looks JVM-originated.
    */
+  /** A line number jfr2pprof appends with {@code includeLineNumbers}: {@code :42}. */
+  private static final Pattern LINE_SUFFIX = Pattern.compile(":\\d+$");
+
   private static final Pattern JAVA_INTERNAL_NAME =
       Pattern.compile("[\\w$]+(/[\\w$]+)+\\.[\\w$<>]+");
 
@@ -85,20 +89,45 @@ public final class FrameNames {
   }
 
   /**
-   * The key of a frame from a format that stores one name per frame (pprof): {@link #stableName},
-   * then {@code /} become {@code .} only when the whole name is a Java class in internal form plus
-   * a method. Go functions and native paths contain {@code /} legitimately and are left as they
-   * are.
+   * The key of a frame from a format that stores one name per frame (pprof). A trailing {@code
+   * :<line>} goes first (jfr2pprof's {@code includeLineNumbers} writes {@code Class.method:42}, and
+   * the key never includes the line), then {@link #stableName}. Then, only in a profile that {@code
+   * jvmProfile} says came from a JVM, a name that is wholly a Java class in internal form plus a
+   * method ({@code java/lang/String.indexOf}) has its {@code /} turned into {@code .}. Whether to
+   * dot is decided per profile, not per name: {@code encoding/json.Marshal} is a Go function with
+   * the same shape as a Java internal name, so a Go profile keeps its names as stored. Native paths
+   * never match, having no method part.
    *
+   * @param jvmProfile whether the profile looks JVM-originated: {@link #isJvmSymbol} or {@link
+   *     #isJvmSourceFile} holds for any of its functions
    * @return {@code null} for an empty name
    */
-  public static String symbolKey(String name) {
-    if (name == null || name.isEmpty()) {
+  public static String symbolKey(String name, boolean jvmProfile) {
+    if (name == null) {
       return null;
     }
-    String stable = stableName(name);
-    return stable.indexOf('/') >= 0 && JAVA_INTERNAL_NAME.matcher(stable).matches()
+    String bare = LINE_SUFFIX.matcher(name).replaceFirst("");
+    if (bare.isEmpty()) {
+      return null;
+    }
+    String stable = stableName(bare);
+    return jvmProfile && stable.indexOf('/') >= 0 && JAVA_INTERNAL_NAME.matcher(stable).matches()
         ? stable.replace('/', '.')
         : stable;
+  }
+
+  /**
+   * Whether a function name only a JVM produces appears: a constructor or class initialiser ({@code
+   * <init>}, {@code <clinit>}) or a lambda class ({@code $$Lambda}).
+   */
+  public static boolean isJvmSymbol(String name) {
+    return name != null
+        && (name.contains("<init>") || name.contains("<clinit>") || name.contains("$$Lambda"));
+  }
+
+  /** Whether a source file name is a JVM language's: {@code .java}, {@code .kt}, {@code .scala}. */
+  public static boolean isJvmSourceFile(String filename) {
+    return filename != null
+        && (filename.endsWith(".java") || filename.endsWith(".kt") || filename.endsWith(".scala"));
   }
 }

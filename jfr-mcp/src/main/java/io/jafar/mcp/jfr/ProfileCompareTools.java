@@ -88,7 +88,7 @@ public final class ProfileCompareTools {
             "candidate": %s,
             "sampleType": {
               "type": "string",
-              "description": "pprof sample type (type or type/unit) for every pprof side. Default: the first CPU sample type, else the first. JFR sides detect their execution-sample event type."
+              "description": "pprof sample type (type or type/unit) for every pprof side. Default: the first CPU sample type, else the first. Ignored for JFR sides, which take their own sampleType or detect their execution-sample event type."
             },
             "minDeltaPct": {
               "type": "number",
@@ -104,7 +104,7 @@ public final class ProfileCompareTools {
             },
             "allowMixedSamplers": {
               "type": "boolean",
-              "description": "Compare samplers of different kinds (CPU against wall clock) instead of refusing; no change is then called significant. Allocation against CPU or wall is always refused. Default: false"
+              "description": "With a pprof side, compare samplers of different kinds (CPU against wall clock) instead of refusing; no change is then called significant. Allocation against CPU or wall is always refused. Two JFR sides are never refused (they get a note), so this has no effect there. Default: false"
             }
           },
           "required": ["baseline", "candidate"]
@@ -119,11 +119,14 @@ public final class ProfileCompareTools {
             .description(
                 "Compares a candidate profile against a baseline where either side may be a JFR"
                     + " recording or a pprof profile: per-frame self-time shares (and inclusive"
-                    + " shares on request), normalised to each side's total, with the same"
-                    + " significance rule and findings as jfr_compare. Refuses samplers that"
-                    + " measure different things unless allowMixedSamplers; event rates only"
-                    + " when both sides are JFR. For two JFR recordings jfr_compare gives the"
-                    + " same comparison. Open each side with jfr_open or pprof_open first.")
+                    + " shares on request), normalised to each side's total, with jfr_compare's"
+                    + " significance rule and findings. When a pprof side is involved, samplers"
+                    + " that measure different things (CPU against wall clock) are refused unless"
+                    + " allowMixedSamplers, and allocation against CPU or wall always; two JFR"
+                    + " sides get jfr_compare's note instead, as jfr-shell compare does. Event rates"
+                    + " only when both sides are JFR. The top-level sampleType applies to pprof"
+                    + " sides only; a JFR side takes its event type from its own sampleType, or"
+                    + " detects it. Open each side with jfr_open or pprof_open first.")
             .inputSchema(McpJsonDefaults.getMapper(), schema)
             .build(),
         (exchange, args) -> handleProfileCompare(args.arguments()));
@@ -163,9 +166,7 @@ public final class ProfileCompareTools {
                   minDeltaPct,
                   limit,
                   inclusive,
-                  allowMixed
-                      ? CompareOptions.MixedSamplers.ALLOW
-                      : CompareOptions.MixedSamplers.REFUSE));
+                  CompareOptions.MixedSamplers.forPair(base.format(), cand.format(), allowMixed)));
       return resultFactory.success(
           result.toMap(
               baseline.describe(result.baseline()), candidate.describe(result.candidate())));

@@ -135,7 +135,8 @@ class CrossFormatCompareTest {
   }
 
   @Test
-  void lineNumbersInTheConvertedNamesBreakTheMatch(@TempDir Path dir) throws Exception {
+  void lineNumbersInTheConvertedNamesStillMatch(@TempDir Path dir) throws Exception {
+    // includeLineNumbers writes Class.method:<line>; the key drops the line, as JFR's does.
     Path pprof =
         convert(
             dir, MAPPING + "frame:\n  format: \"{class}.{method}\"\n  includeLineNumbers: true\n");
@@ -144,7 +145,10 @@ class CrossFormatCompareTest {
     RecordingProfile converted =
         new PprofProfileReader().read(pprof, new ProfileSelection(null, false));
     assertEquals(jfr.sampleCount(), converted.sampleCount());
-    assertNotEquals(jfr.leafFrameCounts().keySet(), converted.leafFrameCounts().keySet());
+    assertEquals(
+        jfr.leafFrameCounts(),
+        converted.leafFrameCounts(),
+        () -> difference(jfr.leafFrameCounts(), converted.leafFrameCounts()));
   }
 
   @Test
@@ -210,12 +214,21 @@ class CrossFormatCompareTest {
   @Test
   void sampleTypeOptionsAreCheckedAgainstEachSidesFormat(@TempDir Path dir) throws Exception {
     Path cpu = shifted(dir, "cpu", 0);
-    assertEquals(1, compare(TCK.toString(), TCK.toString(), "--sample-type", "cpu"));
+    // Option misuse is a usage error: exit 2, with the command's usage.
+    assertEquals(2, compare(TCK.toString(), TCK.toString(), "--sample-type", "cpu"));
     assertTrue(err.toString(StandardCharsets.UTF_8).contains("--event-type"), streams());
+    assertTrue(
+        err.toString(StandardCharsets.UTF_8).contains("Usage: jfr-shell compare"), streams());
     err.reset();
-    assertEquals(1, compare(cpu.toString(), cpu.toString(), "--event-type", "jdk.ExecutionSample"));
+    assertEquals(2, compare(cpu.toString(), cpu.toString(), "--event-type", "jdk.ExecutionSample"));
     assertTrue(err.toString(StandardCharsets.UTF_8).contains("--sample-type"), streams());
+    assertTrue(
+        err.toString(StandardCharsets.UTF_8).contains("Usage: jfr-shell compare"), streams());
     err.reset();
+    assertEquals(
+        2, compare(TCK.toString(), cpu.toString(), "--baseline-sample-type", "cpu"), this::streams);
+    err.reset();
+    // A sample type the file does not have is about the file, not the command line: exit 1.
     assertEquals(1, compare(cpu.toString(), cpu.toString(), "--sample-type", "nope"));
     assertTrue(err.toString(StandardCharsets.UTF_8).contains("has no sample type nope"), streams());
   }
@@ -226,7 +239,9 @@ class CrossFormatCompareTest {
     assertEquals(0, compare(TCK.toString(), cpu.toString(), "--list-sample-types"), this::streams);
     String text = out.toString(StandardCharsets.UTF_8);
     assertTrue(text.contains(TCK + " (jfr)"), text);
-    assertTrue(text.contains("datadog.ExecutionSample/count"), text);
+    // The bare event type, as --event-type takes it.
+    assertTrue(text.contains("  datadog.ExecutionSample "), text);
+    assertFalse(text.contains("datadog.ExecutionSample/"), text);
     assertTrue(text.contains(cpu + " (pprof)"), text);
     assertTrue(text.contains("samples/count"), text);
     assertTrue(text.contains("cpu/nanoseconds"), text);

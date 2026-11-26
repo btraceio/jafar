@@ -44,7 +44,8 @@ class PprofProfileReaderTest {
     assertSame(SamplerKind.ALLOC_BYTES, alloc.samplerKind());
     assertEquals(4096L, alloc.totalWeight());
     assertEquals(
-        "requested; observation counts unknown: no count column, and no period in bytes",
+        "requested; observation counts unknown: no sample-count column for alloc_space/bytes, and"
+            + " no period to divide by",
         alloc.sampleTypeReason());
   }
 
@@ -184,6 +185,91 @@ class PprofProfileReaderTest {
     assertTrue(
         e.getMessage().endsWith("has no sample type wall; it has cpu/nanoseconds"), e.getMessage());
     assertEquals("cpu/nanoseconds", new PprofProfileReader().sampleTypes(file).get(0).label());
+  }
+
+  @Test
+  void aGoHeapProfileHasNoTrialCounts() throws Exception {
+    // Go's heap profile: object counts are estimates scaled up from the sampled allocations, and
+    // the period is a byte sampling rate. None of it is a count of trials.
+    MinimalPprofBuilder b = new MinimalPprofBuilder();
+    b.addSampleType(b.addString("alloc_objects"), b.addString("count"));
+    b.addSampleType(b.addString("alloc_space"), b.addString("bytes"));
+    b.addSampleType(b.addString("inuse_objects"), b.addString("count"));
+    b.addSampleType(b.addString("inuse_space"), b.addString("bytes"));
+    b.setPeriod(b.addString("space"), b.addString("bytes"), 524_288);
+    b.addSample(List.of(location(b, "main.alloc")), List.of(8L, 524_288L, 4L, 262_144L), List.of());
+    Path file = b.write(dir);
+    for (String type :
+        List.of("alloc_objects", "alloc_space", "inuse_objects", "inuse_space", "")) {
+      RecordingProfile profile =
+          new PprofProfileReader().read(file, selection(type.isEmpty() ? null : type));
+      assertFalse(profile.countsKnown(), () -> type + ": " + profile.sampleTypeReason());
+    }
+  }
+
+  @Test
+  void aTimeColumnTakesItsCountsFromItsOwnSamplesColumn() throws Exception {
+    // cpu-time pairs with cpu-samples and wall-time with wall-samples: not with the first count
+    // column of the profile.
+    MinimalPprofBuilder b = new MinimalPprofBuilder();
+    b.addSampleType(b.addString("cpu-samples"), b.addString("count"));
+    b.addSampleType(b.addString("cpu-time"), b.addString("nanoseconds"));
+    b.addSampleType(b.addString("wall-samples"), b.addString("count"));
+    b.addSampleType(b.addString("wall-time"), b.addString("nanoseconds"));
+    b.addSample(List.of(location(b, "m.A.a")), List.of(2L, 2 * MS10, 50L, 50 * MS10), List.of());
+    Path file = b.write(dir);
+    RecordingProfile wall = new PprofProfileReader().read(file, selection("wall-time"));
+    assertEquals(50, wall.sampleCount(), wall.sampleTypeReason());
+    assertSame(SamplerKind.WALL, wall.samplerKind());
+    RecordingProfile cpu = new PprofProfileReader().read(file, selection("cpu-time"));
+    assertEquals(2, cpu.sampleCount(), cpu.sampleTypeReason());
+    assertSame(SamplerKind.CPU, cpu.samplerKind());
+  }
+
+  @Test
+  void periodCountsAreDividedOnceAtTheAggregate() throws Exception {
+    // Ten 3 ms samples at a 10 ms period are 3 samples' worth, not ten times round(0.3) = 0.
+    MinimalPprofBuilder b = new MinimalPprofBuilder();
+    int cpu = b.addString("cpu");
+    int ns = b.addString("nanoseconds");
+    b.addSampleType(cpu, ns);
+    b.setPeriod(cpu, ns, MS10);
+    long a = location(b, "m.A.a");
+    for (int i = 0; i < 10; i++) {
+      b.addSample(List.of(a), List.of(3_000_000L), List.of());
+    }
+    RecordingProfile profile = new PprofProfileReader().read(b.write(dir), selection(null));
+    assertTrue(profile.countsKnown());
+    assertEquals(3, profile.sampleCount());
+    assertEquals(Map.of("m.A.a", 3L), profile.leafFrameCounts());
+  }
+
+  @Test
+  void aGoProfileKeepsItsSlashedNames() throws Exception {
+    MinimalPprofBuilder b = new MinimalPprofBuilder();
+    b.addSampleType(b.addString("samples"), b.addString("count"));
+    int go = b.addString("encode.go");
+    long marshal = b.addLocation(b.addFunction(b.addString("encoding/json.Marshal"), go), 1);
+    long main = b.addLocation(b.addFunction(b.addString("main.main"), go), 1);
+    b.addSample(List.of(marshal, main), List.of(1L), List.of());
+    RecordingProfile profile = new PprofProfileReader().read(b.write(dir), selection(null, true));
+    assertEquals(
+        Map.of("encoding/json.Marshal", 1L, "main.main", 1L), profile.inclusiveFrameCounts());
+  }
+
+  @Test
+  void aLineNumberSuffixIsDroppedFromTheKey() throws Exception {
+    MinimalPprofBuilder b = new MinimalPprofBuilder();
+    b.addSampleType(b.addString("samples"), b.addString("count"));
+    b.addSample(
+        List.of(
+            location(b, "java/lang/String.indexOf:42"), location(b, "java/lang/String.<init>:7")),
+        List.of(1L),
+        List.of());
+    RecordingProfile profile = new PprofProfileReader().read(b.write(dir), selection(null, true));
+    assertEquals(
+        Map.of("java.lang.String.indexOf", 1L, "java.lang.String.<init>", 1L),
+        profile.inclusiveFrameCounts());
   }
 
   @Test

@@ -31,10 +31,28 @@ public record CompareOptions(
      * the "different execution sample event types" note and are judged as usual.
      */
     NOTE,
-    /** Refuse with an error naming both samplers: the default of the newer entry points. */
+    /**
+     * Refuse with an error naming both samplers: the cross-format default, see {@link #forPair}.
+     */
     REFUSE,
     /** Compare with a note; no change is called significant. */
-    ALLOW
+    ALLOW;
+
+    /**
+     * The policy of the entry points that compare across formats ({@code jfr-shell compare}, {@code
+     * profile_compare}), in one place so they agree. Two JFR recordings are compared as {@code
+     * jfr_compare} compares them ({@link #NOTE}), whatever {@code allowMixed} says, so a pair
+     * {@code jfr_compare} accepts is never refused. With a side of another format, mixed samplers
+     * are refused unless {@code allowMixed}.
+     */
+    public static MixedSamplers forPair(
+        String baselineFormat, String candidateFormat, boolean allowMixed) {
+      if (RecordingProfile.JFR.equals(baselineFormat)
+          && RecordingProfile.JFR.equals(candidateFormat)) {
+        return NOTE;
+      }
+      return allowMixed ? ALLOW : REFUSE;
+    }
   }
 
   public CompareOptions {

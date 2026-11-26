@@ -108,12 +108,30 @@ class ProfileCompareTest {
         result.comparability().stream()
             .anyMatch(n -> n.startsWith("Different execution sample event types")),
         result.comparability().toString());
-    // jfr-shell compare and profile_compare refuse the same pair.
+    // REFUSE itself would refuse the pair; the entry points never pass it for two JFR sides.
     assertThrows(
         IllegalArgumentException.class,
         () ->
             ProfileCompare.compare(
                 jfr("jdk.ExecutionSample", BEFORE), jfr("jdk.NativeMethodSample", AFTER), REFUSE));
+  }
+
+  @Test
+  void twoJfrSidesAreNeverRefusedByTheCrossFormatEntryPoints() {
+    // jfr-shell compare and profile_compare pick their policy here: two recordings get the note
+    // jfr_compare gives, whatever --allow-mixed-samplers says; a pprof side gets the policy.
+    assertEquals(
+        CompareOptions.MixedSamplers.NOTE,
+        CompareOptions.MixedSamplers.forPair("jfr", "jfr", false));
+    assertEquals(
+        CompareOptions.MixedSamplers.NOTE,
+        CompareOptions.MixedSamplers.forPair("jfr", "jfr", true));
+    assertEquals(
+        CompareOptions.MixedSamplers.REFUSE,
+        CompareOptions.MixedSamplers.forPair("jfr", "pprof", false));
+    assertEquals(
+        CompareOptions.MixedSamplers.ALLOW,
+        CompareOptions.MixedSamplers.forPair("pprof", "pprof", true));
   }
 
   @Test

@@ -51,9 +51,14 @@ public enum SamplerKind {
   }
 
   /**
-   * The kind of a pprof (or OTLP) sample type, by its name and unit. {@code samples} names a count
-   * of samples of whatever the profile samples, so it takes the kind of the profile's period type,
-   * or of another sample type in the profile, when that one is CPU or wall.
+   * The kind of a pprof (or OTLP) sample type, by its name and unit: a name starting with {@code
+   * cpu} ({@code cpu}, {@code cpu-time}, {@code cpu_time}, {@code cpu-samples}) is {@link #CPU},
+   * one starting with {@code wall} ({@code wall}, {@code wall-time}, {@code wall_time}) is {@link
+   * #WALL}; {@code alloc_space}/{@code inuse_space} (or any {@code alloc*} in bytes) are {@link
+   * #ALLOC_BYTES}, {@code alloc_objects}/{@code inuse_objects} {@link #ALLOC_COUNT}, and {@code
+   * contentions}, {@code delay}, {@code lock} {@link #LOCK}. Matching ignores case. {@code samples}
+   * names a count of samples of whatever the profile samples, so it takes the kind of the profile's
+   * period type, or of another sample type in the profile, when that one is CPU or wall.
    *
    * @param others the profile's other sample types and its period type as {@code {type, unit}}
    *     pairs, to resolve {@code samples}; may be empty
@@ -75,10 +80,13 @@ public enum SamplerKind {
   private static SamplerKind byName(String type, String unit) {
     String t = lower(type);
     String u = lower(unit);
-    if (t.equals("cpu")) {
+    // Producers spell the same sampler several ways: cpu, cpu-time, cpu_time, cpu-samples (and
+    // jfr2pprof's own names); wall, wall-time, wall_time. A name starting with "cpu" or "wall" is
+    // that kind, whatever its unit: the unit says how it is weighed, not what was sampled.
+    if (t.startsWith("cpu")) {
       return CPU;
     }
-    if (t.equals("wall")) {
+    if (t.startsWith("wall")) {
       return WALL;
     }
     if (t.equals("alloc_space") || t.equals("inuse_space")) {

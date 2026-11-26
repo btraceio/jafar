@@ -93,7 +93,7 @@ public final class JfrCompare implements ProfileReader {
           new TreeMap<>(source.countAllEventTypes(session)).entrySet()) {
         SamplerKind kind = SamplerKind.forJfrEventType(type.getKey());
         if (kind != SamplerKind.UNKNOWN && type.getValue() > 0) {
-          types.add(new SampleTypeInfo(type.getKey(), "count", kind));
+          types.add(new SampleTypeInfo(type.getKey(), null, kind));
         }
       }
       return types;
