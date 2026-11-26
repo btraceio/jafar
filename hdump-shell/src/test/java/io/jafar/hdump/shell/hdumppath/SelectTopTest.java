@@ -65,4 +65,21 @@ class SelectTopTest {
         List.of(5L, 4L),
         values(HdumpPathEvaluator.selectTop(rows(5L, 4L, 3L), new TopOp(2, null))));
   }
+
+  @Test
+  void tiesKeepStreamOrderLikeTheInMemoryTop() {
+    List<Map<String, Object>> in = new ArrayList<>();
+    for (int i = 0; i < 6; i++) {
+      Map<String, Object> m = new HashMap<>();
+      m.put("v", 1L);
+      m.put("i", i);
+      in.add(m);
+    }
+    // Was an arbitrary subset/order of the tied rows; a stable sort + limit keeps 0, 1, 2
+    List<Object> kept =
+        HdumpPathEvaluator.selectTop(in.stream(), new TopOp(3, "v", true)).stream()
+            .map(m -> m.get("i"))
+            .toList();
+    assertEquals(List.of(0, 1, 2), kept);
+  }
 }

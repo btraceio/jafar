@@ -140,17 +140,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   collection (an anonymous `HashMap`, say) through the fields it inherits, where it used to
   return null columns; `top()` and `sortBy(... desc)` put rows with a null value last instead of
   first; and rows after `waste()`, `cacheStats()`, string transforms and joins keep the
-  `class`/`shallow`/`retained` aliases (`select(class, ...)` read `null` after them)
+  `class`/`shallow`/`retained` aliases (`select(class, ...)` read `null` after them), and writing
+  to an alias (`uppercase(class)`) changes the canonical column instead of adding a second one
 - **Heap dumps over 2 GB (INDEXED mode) reported 0 instances for every class.** The two-pass
   parser never set `HeapClass.getInstanceCount()`, so `classes | select(name, instanceCount)` and
-  `hdump_report`'s histogram and waste findings read 0 on any dump AUTO opened in INDEXED mode.
-  The counts now come from the class-instances index (minus each class's own class-object entry),
-  or from the object index when an older index directory lacks it
+  `hdump_report`'s histogram and waste findings read 0 on any dump AUTO opened in INDEXED mode;
+  `getTotalHeapSize()` was 0 too. Both now come from one pass over the object index (class-object
+  entries skipped, primitive arrays counted under `[B`/`[I`/...). Streaming a type through the
+  class-instances index also returned each class's own class object as an extra instance;
+  `hdump_report`'s fallback heap total (instance count x instance size, no headers or arrays) is
+  gone
 - **HdumpPath on heaps over 5M objects: `top(n, field)` returned the n smallest values, in
   ascending order.** The bounded heap evicted its best row instead of its worst. The streaming
-  groupBy sorts also put nulls first when descending. A pipeline that starts with `waste()`,
-  `cacheStats()` or `filter()` and reaches a `top(n)` is now streamed object by object; it used to
-  run on 100 objects of the stream
+  groupBy sorts also put nulls first when descending. A pipeline whose leading `waste()`,
+  `cacheStats()` or `filter()` steps reach `top`, `groupBy`, `count`, `sum` or `stats` is now
+  streamed object by object; it used to run on 100 objects of the stream. Steps after a streamed
+  aggregation get the session resolver, so `join(session=...)` works there; streamed `top()` fails
+  on a missing field and keeps ties in order, as the in-memory `top()` does. `doc/hdumppath.md`
+  now documents what is streamed and what is capped at 100 objects
 - **`cacheStats()` never reported `isLruMode = true`.** The reader decodes a boolean field as
   `Boolean` and the check tested for `Number`; LinkedHashMap subclasses (the usual LRU cache) were
   also not recognised. On a JDK 25 dump with 50 access-order `LinkedHashMap` subclasses,

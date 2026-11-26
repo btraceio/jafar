@@ -65,6 +65,8 @@ class InstanceofAndWasteTest {
         .addClass(11, "com/example/Lru", 10)
         .addObjectArray(202, 6, new long[16])
         .addInstance(103, 11, fieldData().ref(0).ref(0).bool(true).ref(202).i32(2).bytes())
+        .addPrimitiveArray(300, 8, 10) // byte[10]
+        .addPrimitiveArray(301, 8, 20) // byte[20]
         .addObjectArray(200, 6, new long[16])
         .addObjectArray(201, 6, new long[64])
         .addInstance(100, 3, fieldData().ref(200).i32(3).bytes())
@@ -233,6 +235,11 @@ class InstanceofAndWasteTest {
     }
 
     private void assertCountsAndChecks(HeapSession s) {
+      // Primitive arrays carry class id -1 in the index; they used to count 0 in INDEXED mode
+      assertEquals(2, s.getHeapDump().getClassByName("[B").get().getInstanceCount());
+      // Was 0 in INDEXED mode (never set), and hdump_report then summed instanceCount *
+      // instanceSize, which leaves out headers and arrays
+      assertEquals(session.getHeapDump().getTotalHeapSize(), s.getHeapDump().getTotalHeapSize());
       assertEquals(1, s.getHeapDump().getClassByName("com/example/Plain").get().getInstanceCount());
       assertEquals(1, s.getHeapDump().getClassByName("java/util/HashMap").get().getInstanceCount());
       assertEquals(0, s.getHeapDump().getClassByName("java/util/Map").get().getInstanceCount());

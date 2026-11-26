@@ -218,10 +218,13 @@ A glob matches names, not types: `objects/java.util.*Map` also matches
 
 `instanceof` fails instead of returning nothing when:
 
-- no class of that name is in the dump: `instanceof/com.example.Missing: no class named ...`
-- the class looks like an interface (no instances, no instance fields, no subclasses in the dump):
-  the message explains the limitation above. An abstract class with no fields and no subclasses
-  in the dump looks the same and gets the same message.
+- no class of that name (or, for a glob, no class at all) is in the dump:
+  `instanceof/com.example.Missing: no class named ...`
+- every class it matches looks like an interface (no instances, no instance fields, no subclasses
+  in the dump); for a glob, every class the glob matches. The message explains the limitation
+  above. Any field-less class with no live instances and no subclasses looks the same, an abstract
+  class or a static utility class such as `java.util.Objects`. For those, 0 is the answer: query
+  the class without `instanceof` (`objects/java.util.Objects | count`).
 
 ### Array Types
 Query array instances using Java notation or JVM descriptor format:
@@ -1003,11 +1006,26 @@ objects | replace(className, "java/lang/", "j.l.")
 objects | select(class, shallow) | abs(shallow)
 ```
 
+## Heaps Over 5 Million Objects
+
+Above 5,000,000 objects an `objects` query streams instead of building every row in memory. Type
+patterns, predicates and leading `filter(...)` steps are applied while streaming. Then:
+
+- **Streamed exactly:** `waste()`, `cacheStats()` and `filter(...)` (each looks at one row) run per
+  object, followed by one of `top(n, field)`, `groupBy(...)`, `count`, `sum(field)` or
+  `stats(field)`, computed over every selected object. What comes after that step runs on its
+  result. Example: `objects/instanceof/java.util.HashMap | waste() | top(20, wastedBytes)`.
+- **Capped at 100 objects:** any other pipeline, for example one ending in `sortBy(...)`,
+  `select(...)` or `head(n)`, or no pipeline at all, runs on 100 objects of the stream, and only a
+  warning in the log says so. Put an aggregation such as `top(n, field)` before those steps:
+  `... | waste() | top(100, wastedBytes) | select(class, wastedBytes)`.
+
 ## Tips and Best Practices
 
 1. **Start broad, then filter**: Begin with `objects` or `classes`, then add predicates.
 
-2. **Use `instanceof` for polymorphism**: When analyzing interfaces or abstract classes.
+2. **Use `instanceof` for class hierarchies**: It follows superclasses, not interfaces; see
+   [Instanceof](#instanceof-subclass-matching).
 
 3. **Combine with `groupBy`**: Group results for meaningful aggregations.
 

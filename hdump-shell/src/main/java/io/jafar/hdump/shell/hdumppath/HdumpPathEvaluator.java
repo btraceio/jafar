@@ -51,6 +51,21 @@ public final class HdumpPathEvaluator {
    * are never stored; lookups for alias names transparently delegate to canonical names.
    */
   private static final class AliasMap extends LinkedHashMap<String, Object> {
+    /**
+     * Writing to an alias ({@code class}) whose canonical column ({@code className}) is present
+     * writes the canonical column, so an alias never becomes a second, diverging column ({@code
+     * uppercase(class)} used to add {@code class=COM.EXAMPLE.FOO} next to an unchanged {@code
+     * className}). ({@code putAll} does not call this; the rows it copies hold no alias keys.)
+     */
+    @Override
+    public Object put(String key, Object value) {
+      String canonical = FIELD_ALIASES.get(key);
+      if (canonical != null && !super.containsKey(key) && super.containsKey(canonical)) {
+        return super.put(canonical, value);
+      }
+      return super.put(key, value);
+    }
+
     @Override
     public Object get(Object key) {
       Object v = super.get(key);
@@ -207,7 +222,7 @@ public final class HdumpPathEvaluator {
             dump.getObjectCount());
 
         TopOp defaultTop = new TopOp(100, null, false);
-        return evaluateObjectsStreamingWithFilters(dump, session, query, defaultTop, List.of());
+        return evaluateObjectsStreamingWithFilters(dump, session, query, List.of(), defaultTop);
       }
 
       // Peel any leading FilterOps into the query predicates so they are applied during streaming
@@ -238,77 +253,52 @@ public final class HdumpPathEvaluator {
             dump.getObjectCount());
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(
-            dump, session, streamingQuery, defaultTop, List.of());
+            dump, session, streamingQuery, List.of(), defaultTop);
       }
 
-      PipelineOp firstOp = streamingPipeline.get(0);
-      List<PipelineOp> remaining = streamingPipeline.subList(1, streamingPipeline.size());
-
-      // Check if first operation is an aggregation that can be streamed
-      if (firstOp instanceof TopOp topOp) {
-        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, topOp, remaining);
-
-      } else if (firstOp instanceof GroupByOp groupByOp) {
-        // Check if followed by top(N) - if so, use bounded accumulation
-        if (!remaining.isEmpty() && remaining.get(0) instanceof TopOp topOp) {
-          return evaluateObjectsStreamingGroupByTop(
-              dump,
-              session,
-              streamingQuery,
-              groupByOp,
-              topOp,
-              remaining.subList(1, remaining.size()));
-        } else {
-          return evaluateObjectsStreamingWithFilters(
-              dump, session, streamingQuery, groupByOp, remaining);
-        }
-
-      } else if (firstOp instanceof CountOp countOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, session, streamingQuery, countOp, remaining);
-
-      } else if (firstOp instanceof SumOp sumOp) {
-        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, sumOp, remaining);
-
-      } else if (firstOp instanceof StatsOp statsOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, session, streamingQuery, statsOp, remaining);
-
-      } else if (isRowLocal(firstOp)) {
-        // waste(), cacheStats() and filter() only look at one row: stream them object by object
-        // up to a top(N), instead of applying them to the first 100 objects (the cap below).
-        // Found reviewing #225: hdump_report's waste hint starts with waste().
-        int i = 0;
-        while (i < streamingPipeline.size() && isRowLocal(streamingPipeline.get(i))) {
-          i++;
-        }
-        if (i < streamingPipeline.size() && streamingPipeline.get(i) instanceof TopOp topOp) {
-          return evaluateObjectsStreamingWithFilters(
-              dump,
-              session,
-              streamingQuery,
-              streamingPipeline.subList(0, i),
-              topOp,
-              streamingPipeline.subList(i + 1, streamingPipeline.size()));
-        }
+      // Streamed head: leading row-local ops (waste(), cacheStats(), filter(): each row on its
+      // own) run per object, then one op that can consume a stream. Everything after it runs on
+      // that op's (small) result, through the resolver so join() works here as elsewhere.
+      int rowOpCount = 0;
+      while (rowOpCount < streamingPipeline.size()
+          && isRowLocal(streamingPipeline.get(rowOpCount))) {
+        rowOpCount++;
       }
-      {
-        // Other operations - default to top(100) to prevent OOME
+      List<PipelineOp> rowOps = streamingPipeline.subList(0, rowOpCount);
+      PipelineOp head =
+          rowOpCount < streamingPipeline.size() ? streamingPipeline.get(rowOpCount) : null;
+      List<PipelineOp> rest =
+          head == null
+              ? List.of()
+              : streamingPipeline.subList(rowOpCount + 1, streamingPipeline.size());
+
+      List<Map<String, Object>> results;
+      if (rowOps.isEmpty()
+          && head instanceof GroupByOp groupByOp
+          && !rest.isEmpty()
+          && rest.get(0) instanceof TopOp topOp) {
+        // groupBy | top(N): bounded accumulation
+        results =
+            evaluateObjectsStreamingGroupByTop(
+                dump, session, streamingQuery, groupByOp, topOp, List.of());
+        rest = rest.subList(1, rest.size());
+      } else if (isStreamable(head)) {
+        results = evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, rowOps, head);
+      } else {
+        // Nothing here consumes a stream: run every op on 100 objects of the stream
         LOG.warn(
-            "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as first operation.",
+            "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as"
+                + " first operation.",
             dump.getObjectCount());
-
-        TopOp defaultTop = new TopOp(100, null, false);
-        List<Map<String, Object>> results =
+        results =
             evaluateObjectsStreamingWithFilters(
-                dump, session, streamingQuery, defaultTop, List.of());
-
-        // Apply the remaining (non-filter) pipeline ops to the limited results
-        for (PipelineOp op : streamingPipeline) {
-          results = applyPipelineOp(session, results, op, query, resolver);
-        }
-        return results;
+                dump, session, streamingQuery, List.of(), new TopOp(100, null, false));
+        rest = streamingPipeline;
       }
+      for (PipelineOp op : rest) {
+        results = applyPipelineOp(session, results, op, query, resolver);
+      }
+      return results;
     }
 
     // Standard path: materialize all results first
@@ -331,35 +321,50 @@ public final class HdumpPathEvaluator {
   }
 
   /** Streaming evaluation from a filtered stream (supports type patterns and predicates). */
-  private static List<Map<String, Object>> evaluateObjectsStreamingTopFromStream(
-      Stream<HeapObject> stream, long totalObjects, TopOp topOp) {
-    return selectTop(stream.map(HdumpPathEvaluator::objectToMap), topOp);
-  }
-
   /**
    * The {@code top(n, field)} rows of a stream, best first, keeping at most {@code n + 1} rows. The
-   * heap is ordered worst-first so that {@code poll()} evicts the worst row; it used to be ordered
-   * best-first, which evicted the best row and returned the n smallest values in ascending order.
-   * Rows without a value are worst in either direction. Without an order field this is the first
-   * {@code n} rows.
+   * same answer as {@link #applyTop}: rows without a value are worst in either direction, ties keep
+   * their stream order (as a stable sort followed by {@code limit} would), and a field no row
+   * carries fails with the same message. The heap is ordered worst-first so that {@code poll()}
+   * evicts the worst row; it used to be best-first, which evicted the best row and returned the n
+   * smallest values, ascending. Without an order field this is the first {@code n} rows.
    */
   static List<Map<String, Object>> selectTop(Stream<Map<String, Object>> rows, TopOp topOp) {
     if (topOp.orderBy() == null) {
       return rows.limit(topOp.n()).collect(Collectors.toList());
     }
-    Comparator<Map<String, Object>> bestFirst =
+    record Ranked(Map<String, Object> row, long seq) {}
+    Comparator<Map<String, Object>> byValue =
         nullsLastBy(m -> getField(m, topOp.orderBy()), topOp.descending());
-    java.util.PriorityQueue<Map<String, Object>> heap =
+    Comparator<Ranked> bestFirst =
+        Comparator.comparing(Ranked::row, byValue).thenComparingLong(Ranked::seq);
+    java.util.PriorityQueue<Ranked> heap =
         new java.util.PriorityQueue<>(topOp.n() + 1, bestFirst.reversed());
+    long[] seq = {0};
+    Map<String, Object>[] firstRow = new Map[1];
+    boolean[] fieldSeen = {false};
     rows.forEach(
         row -> {
-          heap.add(row);
+          if (firstRow[0] == null) {
+            firstRow[0] = row;
+          }
+          if (!fieldSeen[0] && getField(row, topOp.orderBy()) != null) {
+            fieldSeen[0] = true;
+          }
+          heap.add(new Ranked(row, seq[0]++));
           if (heap.size() > topOp.n()) {
             heap.poll(); // evict the worst
           }
         });
-    List<Map<String, Object>> results = new ArrayList<>(heap);
-    results.sort(bestFirst);
+    if (firstRow[0] != null && !fieldSeen[0]) {
+      requireField(List.of(firstRow[0]), topOp.orderBy(), "top");
+    }
+    List<Ranked> kept = new ArrayList<>(heap);
+    kept.sort(bestFirst);
+    List<Map<String, Object>> results = new ArrayList<>(kept.size());
+    for (Ranked r : kept) {
+      results.add(r.row());
+    }
     return results;
   }
 
@@ -368,13 +373,12 @@ public final class HdumpPathEvaluator {
    * stream to avoid materializing all objects.
    */
   private static List<Map<String, Object>> evaluateObjectsStreamingGroupByFromStream(
-      Stream<HeapObject> stream, long totalObjects, GroupByOp op) {
+      Stream<Map<String, Object>> rows, long totalObjects, GroupByOp op) {
     Map<List<Object>, GroupAccumulator> groups = new LinkedHashMap<>();
     long[] counter = {0};
 
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
+    rows.forEach(
+        map -> {
 
           // Extract group key
           List<Object> key = new ArrayList<>();
@@ -519,13 +523,12 @@ public final class HdumpPathEvaluator {
 
   /** Streaming evaluation from a filtered stream for sum operations. */
   private static List<Map<String, Object>> evaluateObjectsStreamingSumFromStream(
-      Stream<HeapObject> stream, long totalObjects, SumOp op) {
+      Stream<Map<String, Object>> rows, long totalObjects, SumOp op) {
     double[] sum = {0.0};
     long[] counter = {0};
 
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
+    rows.forEach(
+        map -> {
           Object value = map.get(op.field());
           if (value instanceof Number num) {
             sum[0] += num.doubleValue();
@@ -541,16 +544,15 @@ public final class HdumpPathEvaluator {
 
   /** Streaming evaluation from a filtered stream for stats operations. */
   private static List<Map<String, Object>> evaluateObjectsStreamingStatsFromStream(
-      Stream<HeapObject> stream, long totalObjects, StatsOp op) {
+      Stream<Map<String, Object>> rows, long totalObjects, StatsOp op) {
     double[] sum = {0.0};
     double[] min = {Double.POSITIVE_INFINITY};
     double[] max = {Double.NEGATIVE_INFINITY};
     long[] count = {0};
     Map<String, Object>[] firstRow = new Map[1];
 
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
+    rows.forEach(
+        map -> {
           if (firstRow[0] == null) {
             firstRow[0] = map;
           }
@@ -716,16 +718,6 @@ public final class HdumpPathEvaluator {
    * filters during streaming, then delegates to specialized streaming method based on operation
    * type.
    */
-  private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
-      HeapDump dump,
-      HeapSession session,
-      Query query,
-      PipelineOp firstOp,
-      List<PipelineOp> remainingOps) {
-    return evaluateObjectsStreamingWithFilters(
-        dump, session, query, List.of(), firstOp, remainingOps);
-  }
-
   /**
    * Operators whose output for a row depends on that row alone, so they can run while streaming.
    */
@@ -733,18 +725,22 @@ public final class HdumpPathEvaluator {
     return op instanceof WasteOp || op instanceof CacheStatsOp || op instanceof FilterOp;
   }
 
+  /** Operators {@link #evaluateObjectsStreamingWithFilters} can compute from a stream of rows. */
+  private static boolean isStreamable(PipelineOp op) {
+    return op instanceof TopOp
+        || op instanceof GroupByOp
+        || op instanceof CountOp
+        || op instanceof SumOp
+        || op instanceof StatsOp;
+  }
+
   /**
-   * As above, with {@code rowOps} (see {@link #isRowLocal}) applied to each row before {@code
-   * firstOp}, which must then be a {@link TopOp}.
+   * Streams the objects the query's type pattern and predicates select, applies {@code rowOps} (see
+   * {@link #isRowLocal}) to each row, and computes {@code head} (see {@link #isStreamable}) from
+   * the stream without materializing it.
    */
   private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
-      HeapDump dump,
-      HeapSession session,
-      Query query,
-      List<PipelineOp> rowOps,
-      PipelineOp firstOp,
-      List<PipelineOp> remainingOps) {
-
+      HeapDump dump, HeapSession session, Query query, List<PipelineOp> rowOps, PipelineOp head) {
     // Build filtered stream
     Stream<HeapObject> stream;
     String filterDesc = "";
@@ -813,45 +809,33 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    // Delegate to specialized streaming method based on operation type
-    List<Map<String, Object>> results;
+    if (head instanceof CountOp && rowOps.isEmpty()) {
+      return evaluateObjectsStreamingCountFromStream(stream, dump.getObjectCount());
+    }
+    Stream<Map<String, Object>> rows = stream.map(HdumpPathEvaluator::objectToMap);
     if (!rowOps.isEmpty()) {
-      if (!(firstOp instanceof TopOp topOp)) {
-        throw new IllegalStateException("row operators must stream into top(), not " + firstOp);
-      }
-      Stream<Map<String, Object>> rows =
-          stream
-              .map(HdumpPathEvaluator::objectToMap)
-              .flatMap(
-                  row -> {
-                    List<Map<String, Object>> out = List.of(row);
-                    for (PipelineOp op : rowOps) {
-                      out = applyPipelineOp(session, out, op);
-                    }
-                    return out.stream();
-                  });
-      results = selectTop(rows, topOp);
-    } else if (firstOp instanceof TopOp topOp) {
-      results = evaluateObjectsStreamingTopFromStream(stream, dump.getObjectCount(), topOp);
-    } else if (firstOp instanceof GroupByOp groupByOp) {
-      results = evaluateObjectsStreamingGroupByFromStream(stream, dump.getObjectCount(), groupByOp);
-    } else if (firstOp instanceof CountOp) {
-      results = evaluateObjectsStreamingCountFromStream(stream, dump.getObjectCount());
-    } else if (firstOp instanceof SumOp sumOp) {
-      results = evaluateObjectsStreamingSumFromStream(stream, dump.getObjectCount(), sumOp);
-    } else if (firstOp instanceof StatsOp statsOp) {
-      results = evaluateObjectsStreamingStatsFromStream(stream, dump.getObjectCount(), statsOp);
-    } else {
-      throw new IllegalStateException(
-          "Unsupported streaming operation: " + firstOp.getClass().getSimpleName());
+      rows =
+          rows.flatMap(
+              row -> {
+                List<Map<String, Object>> out = List.of(row);
+                for (PipelineOp op : rowOps) {
+                  out = applyPipelineOp(session, out, op);
+                }
+                return out.stream();
+              });
     }
-
-    // Apply remaining pipeline operations
-    for (PipelineOp op : remainingOps) {
-      results = applyPipelineOp(session, results, op);
-    }
-
-    return results;
+    return switch (head) {
+      case TopOp topOp -> selectTop(rows, topOp);
+      case GroupByOp groupByOp ->
+          evaluateObjectsStreamingGroupByFromStream(rows, dump.getObjectCount(), groupByOp);
+      case CountOp c -> List.of(new LinkedHashMap<>(Map.of("count", rows.count())));
+      case SumOp sumOp -> evaluateObjectsStreamingSumFromStream(rows, dump.getObjectCount(), sumOp);
+      case StatsOp statsOp ->
+          evaluateObjectsStreamingStatsFromStream(rows, dump.getObjectCount(), statsOp);
+      default ->
+          throw new IllegalStateException(
+              "Unsupported streaming operation: " + head.getClass().getSimpleName());
+    };
   }
 
   private static List<Map<String, Object>> evaluateObjects(HeapDump dump, Query query) {

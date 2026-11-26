@@ -44,12 +44,15 @@ public final class MinimalHprofBuilder {
 
   private record ObjArray(long id, long arrayClassId, long[] elements) {}
 
+  private record PrimArray(long id, int elemType, int length) {}
+
   private record GcRoot(long objectId) {}
 
   private final List<ClassDef> classes = new ArrayList<>();
   private final List<Instance> instances = new ArrayList<>();
   private final List<GcRoot> roots = new ArrayList<>();
   private final List<ObjArray> arrays = new ArrayList<>();
+  private final List<PrimArray> primArrays = new ArrayList<>();
 
   /** Registers a class with the given address and internal name (e.g. {@code java/lang/String}). */
   public MinimalHprofBuilder addClass(long classId, String internalName) {
@@ -83,6 +86,15 @@ public final class MinimalHprofBuilder {
   /** Adds an object array of the given array class holding the given element ids (0 = null). */
   public MinimalHprofBuilder addObjectArray(long arrayId, long arrayClassId, long... elements) {
     arrays.add(new ObjArray(arrayId, arrayClassId, elements));
+    return this;
+  }
+
+  /**
+   * Adds a zero-filled primitive array; {@code elemType} is an HPROF basic type (8 = byte, 10 =
+   * int, ...). The parser gives it a {@code [B}/{@code [I}/... class; no class needs registering.
+   */
+  public MinimalHprofBuilder addPrimitiveArray(long arrayId, int elemType, int length) {
+    primArrays.add(new PrimArray(arrayId, elemType, length));
     return this;
   }
 
@@ -189,6 +201,16 @@ public final class MinimalHprofBuilder {
       for (long e : arr.elements) {
         h.writeLong(e);
       }
+    }
+
+    // PRIM_ARRAY_DUMP for every primitive array
+    for (PrimArray arr : primArrays) {
+      h.writeByte(0x23);
+      h.writeLong(arr.id);
+      h.writeInt(0); // stack trace
+      h.writeInt(arr.length);
+      h.writeByte(arr.elemType);
+      h.write(new byte[arr.length * fieldWidth(arr.elemType)]);
     }
 
     // ROOT_UNKNOWN for every registered root

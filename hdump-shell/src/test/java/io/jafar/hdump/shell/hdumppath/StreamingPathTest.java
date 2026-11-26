@@ -5,6 +5,7 @@ import static io.jafar.hdump.shell.MinimalHprofBuilder.TYPE_OBJECT;
 import static io.jafar.hdump.shell.MinimalHprofBuilder.fieldData;
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.jafar.hdump.api.HeapDumpParser.ParserOptions;
 import io.jafar.hdump.shell.HeapSession;
 import io.jafar.hdump.shell.MinimalHprofBuilder;
 import io.jafar.hdump.shell.MinimalHprofBuilder.Field;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -25,9 +27,9 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <p>Heap: {@code Object <- AbstractMap <- HashMap(table, size) <- com.example.MyMap}, a field-less
  * {@code java.util.Map}, one HashMap (capacity 16, size 3), one MyMap (capacity 64, size 1), and
- * 150 {@code com.example.Plain} objects after them, by id and in the file. The old non-aggregating
- * cap kept the last 100 objects of the stream (a constant-comparator heap evicts its oldest
- * element), so it never saw a map here.
+ * 150 {@code com.example.Plain} objects after them, by id and in the file, so the stream holds more
+ * than the 100 objects the non-aggregating cap keeps. (The old cap, a heap with a constant
+ * comparator whose {@code poll()} removes the head, kept the 2nd to 100th object and the last one.)
  */
 class StreamingPathTest {
 
@@ -96,7 +98,7 @@ class StreamingPathTest {
 
   @Test
   void wasteThenTopStreamsEveryObject() {
-    // Was waste() over 100 objects only (the last 100, all Plain): no row had a value
+    // Was waste() over the 100 objects the cap kept, which did not include the HashMap
     List<Map<String, Object>> top = run("objects | waste() | top(2, wastedBytes)");
     assertEquals("com.example.MyMap", top.get(0).get("className"));
     assertEquals("java.util.HashMap", top.get(1).get("className"));
@@ -117,5 +119,66 @@ class StreamingPathTest {
   void instanceofInterfaceFailsOnTheStreamingPathToo() {
     assertThrows(
         IllegalArgumentException.class, () -> run("objects/instanceof/java.util.Map | count"));
+  }
+
+  @Test
+  void wasteThenCountAndGroupByStreamEveryObject() {
+    // Were capped at 100 objects: waste() | count said 100
+    assertEquals(154L, ((Number) run("objects | waste() | count").get(0).get("count")).longValue());
+    List<Map<String, Object>> groups =
+        run(
+            "objects/instanceof/java.util.HashMap | waste() | groupBy(class, agg=sum,"
+                + " value=wastedBytes)");
+    assertEquals(2, groups.size());
+  }
+
+  @Test
+  void joinAfterAStreamedHeadReachesTheResolver() {
+    // The streamed paths ran later ops without the resolver: "join() is not supported in this
+    // context". With one, an unknown session is reported as such.
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                HdumpPathEvaluator.evaluate(
+                    session,
+                    HdumpPathParser.parse(
+                        "objects | waste() | top(2, wastedBytes) | join(session=9)"),
+                    ref -> Optional.empty()));
+    assertTrue(e.getMessage().contains("Cannot resolve session: 9"), e.getMessage());
+  }
+
+  @Test
+  void streamedTopOnAMissingFieldFailsLikeTheInMemoryPath() {
+    // Was 3 arbitrary rows on the streaming path, an error on the in-memory one
+    assertThrows(IllegalArgumentException.class, () -> run("objects | top(3, nosuchfield)"));
+  }
+
+  @Test
+  void uppercaseOfAnAliasRewritesTheCanonicalColumn() {
+    Map<String, Object> row =
+        run("objects/com.example.MyMap | waste() | top(1, wastedBytes) | uppercase(class)").get(0);
+    // Was className unchanged plus a second column class=COM.EXAMPLE.MYMAP
+    assertEquals("COM.EXAMPLE.MYMAP", row.get("className"));
+    // (keySet().contains would resolve the alias; check the stored keys)
+    assertFalse(List.copyOf(row.keySet()).contains("class"), row.keySet().toString());
+  }
+
+  @Test
+  void indexedStreamingCountsNoClassObjects(@TempDir Path dir) throws IOException {
+    // The class-instances index files each class's own class object under the class; streaming
+    // through it counted that as an instance (MyMap: 2 instead of 1)
+    Path copy = dir.resolve("copy.hprof");
+    java.nio.file.Files.copy(session.getFilePath(), copy);
+    try (HeapSession indexed = HeapSession.open(copy, ParserOptions.INDEXED)) {
+      List<Map<String, Object>> rows =
+          HdumpPathEvaluator.evaluate(
+              indexed, HdumpPathParser.parse("objects/com.example.MyMap | count"));
+      assertEquals(1L, ((Number) rows.get(0).get("count")).longValue());
+      rows =
+          HdumpPathEvaluator.evaluate(
+              indexed, HdumpPathParser.parse("objects/instanceof/java.util.HashMap | count"));
+      assertEquals(2L, ((Number) rows.get(0).get("count")).longValue());
+    }
   }
 }
