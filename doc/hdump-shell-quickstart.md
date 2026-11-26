@@ -155,6 +155,16 @@ hdump> objects[id = 0x12345] | pathToRoot
 hdump> objects[id = 0x12345] | dominators
 ```
 
+`retained` is an approximate (minimum) retained size until a dominator tree is computed. For heap
+dumps over 2 GB (parsed in indexed mode) it uses `strongrefs.idx` and `strongrefs-offsets.idx`
+next to the other index files (about 8 bytes per object plus 4 per reference; written by the first
+retained-size or path query and reused afterwards) and picks how to compute by free heap:
+everything at once when it fits, otherwise a per-object search with long chains of
+once-referenced objects handled together in batches. To cap the heap it uses, pass the JVM option
+`-Djafar.hdump.retained.strategy=BUDGETED`, e.g.
+`java -Djafar.hdump.retained.strategy=BUDGETED -jar jafar-shell-<version>-all.jar`
+(or set it in `JAVA_TOOL_OPTIONS`).
+
 ### Heap Size Analysis
 
 ```bash

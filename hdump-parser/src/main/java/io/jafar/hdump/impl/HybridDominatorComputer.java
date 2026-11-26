@@ -85,48 +85,48 @@ public final class HybridDominatorComputer {
     // Single pass over all objects — covers all three heuristics at once.
     // Heuristic 1 uses a bounded min-heap so we never sort more than topN+1 entries in memory.
     // [retained, objectId]  — ascending by retained so poll() removes the smallest
-    PriorityQueue<long[]> topNQueue =
-        new PriorityQueue<>(topN + 1, Comparator.comparingLong(a -> a[0]));
+    TopN topNQueue = new TopN(topN);
     int[] leakProneCount = {0};
     int[] patternCount = {0};
 
-    dump.getObjects()
-        .forEach(
-            obj -> {
-              long retained = obj.getRetainedSize();
-              HeapClass cls = obj.getHeapClass();
-              String className = cls != null ? cls.getName() : null;
+    java.util.Map<String, Boolean> matchesByClass = new java.util.HashMap<>();
+    HeapDumpImpl.IndexedObjectVisitor consider =
+        (id, retained, className) -> {
+          // Heuristic 1: maintain bounded top-N by retained size
+          if (retained > 0) {
+            topNQueue.offer(retained, id);
+          }
 
-              // Heuristic 1: maintain bounded top-N by retained size
-              if (retained > 0) {
-                topNQueue.offer(new long[] {retained, obj.getId()});
-                if (topNQueue.size() > topN) {
-                  topNQueue.poll(); // evict smallest
-                }
-              }
+          // Heuristic 2: large instances of known leak-prone classes
+          if (className != null && leakProneClasses.contains(className) && retained > 1024 * 1024) {
+            interesting.add(id);
+            leakProneCount[0]++;
+          }
 
-              // Heuristic 2: large instances of known leak-prone classes
-              if (className != null
-                  && leakProneClasses.contains(className)
-                  && retained > 1024 * 1024) {
-                interesting.add(obj.getId());
-                leakProneCount[0]++;
-              }
-
-              // Heuristic 3: user-provided class patterns
-              if (className != null) {
-                for (Pattern p : compiledPatterns) {
-                  if (p.matcher(className).matches()) {
-                    interesting.add(obj.getId());
-                    patternCount[0]++;
-                    break;
-                  }
-                }
-              }
-            });
+          // Heuristic 3: user-provided class patterns (matched once per class name)
+          if (className != null
+              && !compiledPatterns.isEmpty()
+              && matchesByClass.computeIfAbsent(
+                  className, name -> matchesAny(compiledPatterns, name))) {
+            interesting.add(id);
+            patternCount[0]++;
+          }
+        };
+    if (dump.getObjectIndexReader() != null) {
+      // INDEXED: the same objects in the same order, without loading each through the LRU cache
+      dump.forEachIndexedObject(consider);
+    } else {
+      dump.getObjects()
+          .forEach(
+              obj -> {
+                HeapClass cls = obj.getHeapClass();
+                consider.visit(
+                    obj.getId(), obj.getRetainedSize(), cls != null ? cls.getName() : null);
+              });
+    }
 
     // Drain the top-N queue into the interesting set
-    for (long[] entry : topNQueue) {
+    for (long[] entry : topNQueue.entries()) {
       interesting.add(entry[1]);
     }
     LOG.debug(
@@ -137,6 +137,54 @@ public final class HybridDominatorComputer {
 
     LOG.info("Identified {} interesting objects total", interesting.size());
     return interesting;
+  }
+
+  /**
+   * The bounded top-N of {@code (retained, id)} pairs: offer every pair, then poll the smallest
+   * when over capacity — exactly the {@link PriorityQueue} operations this heuristic always did, so
+   * the selection among equal retained sizes is unchanged (it depends on the heap's array layout,
+   * which every offer/poll permutes). Only the allocation changes: the pair array {@code poll()}
+   * hands back is reused for the next offer, so at most {@code topN + 1} arrays exist instead of
+   * one per object.
+   */
+  static final class TopN {
+    private final int topN;
+    private final PriorityQueue<long[]> queue;
+    private long[] spare;
+
+    TopN(int topN) {
+      this.topN = topN;
+      this.queue = new PriorityQueue<>(topN + 1, Comparator.comparingLong(a -> a[0]));
+    }
+
+    void offer(long retained, long id) {
+      long[] e = spare != null ? spare : new long[2];
+      spare = null;
+      e[0] = retained;
+      e[1] = id;
+      queue.offer(e);
+      if (queue.size() > topN) {
+        spare = queue.poll(); // evict smallest
+      }
+    }
+
+    int size() {
+      return queue.size();
+    }
+
+    /** The kept pairs, in the queue's iteration order. */
+    Iterable<long[]> entries() {
+      return queue;
+    }
+  }
+
+  private static boolean matchesAny(List<Pattern> patterns, String className) {
+    for (Pattern p : patterns) {
+      if (p.matcher(className).matches()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -160,6 +208,27 @@ public final class HybridDominatorComputer {
     LOG.info("Expanding {} interesting objects to include dominator paths...", interesting.size());
 
     LongOpenHashSet expanded = new LongOpenHashSet(interesting);
+
+    HeapGraph graph = dump.pathGraph(); // IN_MEMORY only; null in INDEXED mode
+    if (graph != null) {
+      expandOnGraph(graph, gcRoots, interesting, expanded);
+      LOG.info(
+          "Expanded to {} objects ({}% of heap)",
+          expanded.size(),
+          String.format(Locale.ROOT, "%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
+      return expanded;
+    }
+
+    StrongRefsIndex stored =
+        dump.getObjectIndexReader() != null ? dump.strongRefsIndex() : null; // INDEXED only
+    if (stored != null && stored.start(stored.size()) < Integer.MAX_VALUE - 8) {
+      expandIndexed(dump, stored.view(), gcRoots, interesting, expanded);
+      LOG.info(
+          "Expanded to {} objects ({}% of heap)",
+          expanded.size(),
+          String.format(Locale.ROOT, "%.2f", expanded.size() * 100.0 / dump.getObjectCount()));
+      return expanded;
+    }
 
     // Build reverse reference map for traversal (streams through all objects)
     // In indexed mode with LRU cache, objects are loaded on-demand
@@ -277,6 +346,127 @@ public final class HybridDominatorComputer {
             });
 
     return inboundRefs;
+  }
+
+  /**
+   * {@link #addDominatorPath} for every interesting object at once, on the reverse of the int
+   * graph. The union of the per-object backward BFSes is one multi-source backward BFS: whether a
+   * node is expanded depends only on the node (GC roots are not), not on which BFS reached it.
+   * Interesting objects that are not in the graph stay in {@code result} unexpanded, as before.
+   */
+  private static void expandOnGraph(
+      HeapGraph g, List<GcRootImpl> gcRoots, LongOpenHashSet interesting, LongOpenHashSet result) {
+    final int n = g.size();
+    final int[] ss = g.succStart;
+    final int[] su = g.succ;
+    int[] predStart = new int[n + 1];
+    for (int e = 0, m = ss[n]; e < m; e++) {
+      predStart[su[e] + 1]++;
+    }
+    for (int v = 0; v < n; v++) {
+      predStart[v + 1] += predStart[v];
+    }
+    int[] pred = new int[predStart[n]];
+    int[] fill = new int[n];
+    for (int u = 0; u < n; u++) {
+      for (int e = ss[u], end = ss[u + 1]; e < end; e++) {
+        int v = su[e];
+        pred[predStart[v] + fill[v]++] = u;
+      }
+    }
+
+    boolean[] isRoot = new boolean[n];
+    for (GcRootImpl root : gcRoots) {
+      int r = g.nodeOf(root.getObjectId());
+      if (r >= 0) isRoot[r] = true;
+    }
+    boolean[] seen = new boolean[n];
+    int[] queue = new int[n];
+    int tail = 0;
+    for (long id : interesting) {
+      int v = g.nodeOf(id);
+      if (v >= 0 && !seen[v]) {
+        seen[v] = true;
+        queue[tail++] = v;
+      }
+    }
+    for (int head = 0; head < tail; head++) {
+      int v = queue[head];
+      result.add(g.nodes[v].getId());
+      if (isRoot[v]) continue; // reached a GC root: stop expanding
+      for (int i = predStart[v], end = predStart[v + 1]; i < end; i++) {
+        int p = pred[i];
+        if (!seen[p]) {
+          seen[p] = true;
+          queue[tail++] = p;
+        }
+      }
+    }
+  }
+
+  /**
+   * INDEXED mode: {@link #expandOnGraph} on the reverse of the on-disk strong-reference graph
+   * (predecessor CSR in heap: 4 bytes per id32 plus 4 per reference, against the boxed inbound map
+   * of the generic path). Predecessors are those of {@code getStrongOutboundReferenceIds()} over
+   * {@code getObjects()}: class entries have no references, so iterating every id32 is the same.
+   */
+  private static void expandIndexed(
+      HeapDumpImpl dump,
+      StrongRefsIndex g,
+      List<GcRootImpl> gcRoots,
+      LongOpenHashSet interesting,
+      LongOpenHashSet result) {
+    final int n = g.size();
+    int[] predStart = new int[n + 1];
+    for (int u = 0; u < n; u++) {
+      for (long e = g.start(u), end = g.start(u + 1); e < end; e++) {
+        predStart[g.ref(e) + 1]++;
+      }
+    }
+    for (int v = 0; v < n; v++) {
+      predStart[v + 1] += predStart[v];
+    }
+    // Fill each row from its end (predStart[v + 1] counts down to the row start): no fill array.
+    int[] pred = new int[predStart[n]];
+    for (int u = 0; u < n; u++) {
+      for (long e = g.start(u), end = g.start(u + 1); e < end; e++) {
+        int v = g.ref(e);
+        pred[--predStart[v + 1]] = u;
+      }
+    }
+    // predStart[v + 1] is now the start of row v; shift so predStart[v] is row v's start again
+    System.arraycopy(predStart, 1, predStart, 0, n);
+    predStart[n] = pred.length;
+
+    it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap id32 = dump.getAddressToId32();
+    it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap address = dump.getId32ToAddress();
+    boolean[] isRoot = new boolean[n];
+    for (GcRootImpl root : gcRoots) {
+      int r = id32.get(root.getObjectId());
+      if (r >= 0) isRoot[r] = true;
+    }
+    boolean[] seen = new boolean[n];
+    int[] queue = new int[n];
+    int tail = 0;
+    for (long id : interesting) {
+      int v = id32.get(id);
+      if (v >= 0 && !seen[v]) {
+        seen[v] = true;
+        queue[tail++] = v;
+      }
+    }
+    for (int head = 0; head < tail; head++) {
+      int v = queue[head];
+      result.add(address.get(v));
+      if (isRoot[v]) continue; // reached a GC root: stop expanding
+      for (int i = predStart[v], end = predStart[v + 1]; i < end; i++) {
+        int p = pred[i];
+        if (!seen[p]) {
+          seen[p] = true;
+          queue[tail++] = p;
+        }
+      }
+    }
   }
 
   /**
