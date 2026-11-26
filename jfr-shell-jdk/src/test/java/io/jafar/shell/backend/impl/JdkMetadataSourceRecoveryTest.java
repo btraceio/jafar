@@ -12,10 +12,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import jdk.jfr.EventType;
+import jdk.jfr.consumer.RecordingFile;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,7 +49,8 @@ class JdkMetadataSourceRecoveryTest {
 
   @BeforeEach
   void assumeRecording() {
-    // A git-ignored fixture from ./get_resources.sh (CI fetches it): skip without it.
+    // The build generates this fixture from jfr-shell-tck's tck-test.jfr (test-recordings'
+    // generateTestRecordings); skip rather than fail if a build without that step lacks it.
     Assumptions.assumeTrue(isJfrRecording(RECORDING), "recording not available: " + RECORDING);
   }
 
@@ -79,6 +83,57 @@ class JdkMetadataSourceRecoveryTest {
     assertFalse(partial.isEmpty(), "the merged view is still listed");
     assertTrue(full.containsAll(partial), "nothing is listed that the full scan does not list");
     assertTrue(full.contains(CHUNK_LOCAL) && !partial.contains(CHUNK_LOCAL), partial.toString());
+  }
+
+  /**
+   * The cap counts events: a scan capped at N reads events 1..N. The first event of a type the
+   * merged view lacks sits at a position found here from the recording itself, and a cap one event
+   * short of it must miss the type in both the listing and the lookup.
+   */
+  @Test
+  void capCountsEventsUpToAndIncludingTheCapExactly() throws Exception {
+    Path recording = copy("cap-boundary.jfr");
+    Set<String> merged = new HashSet<>();
+    try (RecordingFile file = new RecordingFile(recording)) {
+      for (EventType type : file.readEventTypes()) {
+        merged.add(type.getName());
+      }
+    }
+    long position = 0;
+    String firstRecovered = null;
+    try (RecordingFile file = new RecordingFile(recording)) {
+      while (file.hasMoreEvents() && firstRecovered == null) {
+        position++;
+        String name = file.readEvent().getEventType().getName();
+        if (!merged.contains(name)) {
+          firstRecovered = name;
+        }
+      }
+    }
+    assertNotNull(firstRecovered, "the fixture has a type only its events carry");
+    long cap = position;
+
+    Set<String> atCap =
+        names(new JdkJfrBackend.JdkMetadataSource(cap, s -> {}).loadAllClasses(recording));
+    Set<String> oneShort =
+        names(new JdkJfrBackend.JdkMetadataSource(cap - 1, s -> {}).loadAllClasses(recording));
+
+    assertTrue(atCap.contains(firstRecovered), firstRecovered + " is event " + cap);
+    assertFalse(oneShort.contains(firstRecovered), "a cap of " + (cap - 1) + " stops before it");
+    assertNotNull(
+        new JdkJfrBackend.JdkMetadataSource(cap, s -> {}).loadClass(recording, firstRecovered));
+    assertNull(
+        new JdkJfrBackend.JdkMetadataSource(cap - 1, s -> {}).loadClass(recording, firstRecovered));
+  }
+
+  @Test
+  void lookupThatRecoversAChunkLocalTypeWarns() throws Exception {
+    Path recording = copy("lookup-warns.jfr");
+
+    new JdkJfrBackend.JdkMetadataSource(Long.MAX_VALUE, warnings::add)
+        .loadClass(recording, CHUNK_LOCAL);
+
+    assertEquals(1, count(CHUNK_LOCAL_WARNING), warnings.toString());
   }
 
   @Test

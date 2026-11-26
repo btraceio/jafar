@@ -337,8 +337,8 @@ public final class JdkJfrBackend implements JfrBackend {
 
     /**
      * Warns that {@code recording} has chunk-local types, unless the previous warning was for the
-     * same recording: the state is one process-wide slot, so A, A warns once, and A, B, A warns
-     * three times.
+     * same recording: the state is one process-wide slot, shared by every source whatever its sink,
+     * so A, A warns once, and A, B, A warns three times.
      */
     private void warnChunkLocalTypes(Path recording) {
       String key = recording.toAbsolutePath().normalize().toString();
