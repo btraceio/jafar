@@ -5,6 +5,7 @@ import io.jafar.mcp.jfr.JfrAnalysisTools;
 import io.jafar.mcp.jfr.JfrCompareTools;
 import io.jafar.mcp.jfr.JfrHelpProvider;
 import io.jafar.mcp.jfr.JfrSessionTools;
+import io.jafar.mcp.jfr.ProfileCompareTools;
 import io.jafar.mcp.lifecycle.BearerAuthFilter;
 import io.jafar.mcp.lifecycle.HealthServlet;
 import io.jafar.mcp.lifecycle.IdleExitWatchdog;
@@ -179,6 +180,7 @@ public final class JafarMcpServer {
   private final JfrSessionTools jfrSessionTools;
   private final JfrAnalysisTools jfrAnalysisTools;
   private final JfrCompareTools jfrCompareTools;
+  private final ProfileCompareTools profileCompareTools;
   private final JafarPrompts jafarPrompts;
   private final JafarResources jafarResources;
   private final HdumpTools hdumpTools;
@@ -242,6 +244,8 @@ public final class JafarMcpServer {
     this.jfrCompareTools =
         new JfrCompareTools(
             sessionRegistry, evaluator, queryParser, resultFactory, this.jfrAnalysisTools);
+    this.profileCompareTools =
+        new ProfileCompareTools(sessionRegistry, pprofSessionRegistry, evaluator, resultFactory);
     this.hdumpTools =
         new HdumpTools(
             heapSessionRegistry,
@@ -760,7 +764,8 @@ public final class JafarMcpServer {
    *
    * <p>JFR tools: jfr_open, jfr_query, jfr_list_types, jfr_close, jfr_help, jfr_flamegraph,
    * jfr_callgraph, jfr_exceptions, jfr_summary, jfr_hotmethods, jfr_use, jfr_tsa, jfr_diagnose,
-   * jfr_stackprofile.
+   * jfr_stackprofile, jfr_compare; and profile_compare, which compares a JFR recording or a pprof
+   * profile against either.
    *
    * <p>Heap dump tools: hdump_open, hdump_close, hdump_query, hdump_summary, hdump_report,
    * hdump_help.
@@ -788,6 +793,7 @@ public final class JafarMcpServer {
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrDiagnoseTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrStackprofileTool()));
     tools.add(withActivityTracking(jfrCompareTools.createJfrCompareTool()));
+    tools.add(withActivityTracking(profileCompareTools.createProfileCompareTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpOpenTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpCloseTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpQueryTool()));

@@ -728,6 +728,73 @@
         }
       }
     }
+  }, {
+    "name" : "profile_compare",
+    "description" : "Compares a candidate profile against a baseline where either side may be a JFR recording or a pprof profile: per-frame self-time shares (and inclusive shares on request), normalised to each side's total, with the same significance rule and findings as jfr_compare. Refuses samplers that measure different things unless allowMixedSamplers; event rates only when both sides are JFR. For two JFR recordings jfr_compare gives the same comparison. Open each side with jfr_open or pprof_open first.",
+    "inputSchema" : {
+      "type" : "object",
+      "properties" : {
+        "baseline" : {
+          "type" : "object",
+          "properties" : {
+            "format" : {
+              "type" : "string",
+              "enum" : [ "jfr", "pprof" ],
+              "description" : "The side's format: jfr (opened with jfr_open) or pprof (opened with pprof_open)."
+            },
+            "sessionId" : {
+              "type" : "string",
+              "description" : "Session ID or alias in that format's sessions. Defaults to that format's current session."
+            },
+            "sampleType" : {
+              "type" : "string",
+              "description" : "This side's sample type: a JFR event type, or a pprof type or type/unit. Overrides the top-level sampleType."
+            }
+          },
+          "required" : [ "format" ]
+        },
+        "candidate" : {
+          "type" : "object",
+          "properties" : {
+            "format" : {
+              "type" : "string",
+              "enum" : [ "jfr", "pprof" ],
+              "description" : "The side's format: jfr (opened with jfr_open) or pprof (opened with pprof_open)."
+            },
+            "sessionId" : {
+              "type" : "string",
+              "description" : "Session ID or alias in that format's sessions. Defaults to that format's current session."
+            },
+            "sampleType" : {
+              "type" : "string",
+              "description" : "This side's sample type: a JFR event type, or a pprof type or type/unit. Overrides the top-level sampleType."
+            }
+          },
+          "required" : [ "format" ]
+        },
+        "sampleType" : {
+          "type" : "string",
+          "description" : "pprof sample type (type or type/unit) for every pprof side. Default: the first CPU sample type, else the first. JFR sides detect their execution-sample event type."
+        },
+        "minDeltaPct" : {
+          "type" : "number",
+          "description" : "Noise floor in percentage points for per-frame changes (default: 1.0)"
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum number of changed frames per list (default: 25)"
+        },
+        "inclusiveFrames" : {
+          "type" : "boolean",
+          "description" : "Also compare inclusive (total-time) frame shares (default: false)"
+        },
+        "allowMixedSamplers" : {
+          "type" : "boolean",
+          "description" : "Compare samplers of different kinds (CPU against wall clock) instead of refusing; no change is then called significant. Allocation against CPU or wall is always refused. Default: false"
+        }
+      },
+      "required" : [ "baseline", "candidate" ]
+    }
   } ],
   "prompts" : [ {
     "name" : "compare",
@@ -741,7 +808,7 @@
       "description" : "Path to the candidate recording",
       "required" : false
     } ],
-    "renderedText" : "Compare the baseline (baseline) against the candidate (candidate).\n\n1. jfr_open both, giving each a clear alias.\n2. Call jfr_compare with baselineSessionId and candidateSessionId.\n3. Read the `comparability` block before anything else. If it reports different execution-sample event types, very different durations, or low sample counts, say so in your answer and temper every conclusion accordingly.\n4. Treat `frames` as shares of samples, not wall-clock time. A frame growing from 3% to 9% of samples means the profile shifted; it is evidence of a slowdown only together with a rate or duration change.\n5. Changes below `minDeltaPct` are withheld deliberately. Do not go looking for smaller ones and present them as findings.\n\nConclude with either a named regression and the frame or metric that carries it, or an explicit \"no regression above the noise floor\". Never claim an improvement without the measurement that shows it.\n\n"
+    "renderedText" : "Compare the baseline (baseline) against the candidate (candidate).\n\n1. jfr_open both, giving each a clear alias.\n2. Call jfr_compare with baselineSessionId and candidateSessionId. If either side is a pprof profile, open it with pprof_open instead and call profile_compare with {format, sessionId} for each side.\n3. Read the `comparability` block before anything else. If it reports different execution-sample event types, very different durations, or low sample counts, say so in your answer and temper every conclusion accordingly.\n4. Treat `frames` as shares of samples, not wall-clock time. A frame growing from 3% to 9% of samples means the profile shifted; it is evidence of a slowdown only together with a rate or duration change.\n5. Changes below `minDeltaPct` are withheld deliberately. Do not go looking for smaller ones and present them as findings.\n\nConclude with either a named regression and the frame or metric that carries it, or an explicit \"no regression above the noise floor\". Never claim an improvement without the measurement that shows it.\n\n"
   }, {
     "name" : "latency",
     "description" : "Investigate response-time problems that are not CPU-bound: contention, parking, queue saturation and blocking I/O.",

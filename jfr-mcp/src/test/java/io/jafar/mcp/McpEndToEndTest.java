@@ -51,6 +51,39 @@ class McpEndToEndTest {
     }
   }
 
+  @Test
+  @Timeout(120)
+  void profileCompareReadsARecordingAndAPprofProfile() throws Exception {
+    try (McpStdioProcessHarness mcp = new McpStdioProcessHarness("profile-compare")) {
+      io.jafar.pprof.MinimalPprofBuilder b = new io.jafar.pprof.MinimalPprofBuilder();
+      b.addSampleType(b.addString("cpu"), b.addString("nanoseconds"));
+      b.setDurationNanos(10_000_000_000L);
+      long leaf =
+          b.addLocation(b.addFunction(b.addString("java/lang/String.indexOf"), b.addString("")), 1);
+      b.addSample(java.util.List.of(leaf), java.util.List.of(10_000_000L), java.util.List.of());
+      Path profile = b.write(mcp.root());
+
+      mcp.call("jfr_open", Map.of("path", findTestJfr().toString(), "alias", "rec"));
+      mcp.call("pprof_open", Map.of("path", profile.toString(), "alias", "prof"));
+      JsonNode result =
+          mcp.contentJson(
+              mcp.call(
+                  "profile_compare",
+                  Map.of(
+                      "baseline", Map.of("format", "jfr", "sessionId", "rec"),
+                      "candidate", Map.of("format", "pprof", "sessionId", "prof"))));
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "pprof", result.at("/candidate/format").asString(), result::toString);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "cpu/nanoseconds", result.at("/candidate/eventType").asString(), result::toString);
+      org.junit.jupiter.api.Assertions.assertFalse(
+          result.at("/candidate/sampleCountKnown").asBoolean(), result::toString);
+      // No count column and no period: shares, but nothing judged.
+      org.junit.jupiter.api.Assertions.assertTrue(
+          result.at("/findings").toString().contains("regression:not-judged"), result::toString);
+    }
+  }
+
   static Path findTestJfr() {
     String override = System.getProperty("mcp.e2e.jfr");
     if (override != null) {
