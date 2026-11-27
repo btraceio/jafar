@@ -36,11 +36,16 @@ backend it selected reports a different version, it prints to stderr, before the
 Warning: this jfr-shell is a development build (0.0.0-SNAPSHOT) but its 'jafar' backend is version 0.29.0, not the one built with it. …
 ```
 
-That line means everything typed into that shell ran the release. The warning is a backstop, not
-a replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from
-a fresh one. `jafar-shell` bundles the backend built with it and uses that one even when a released
-plugin is installed (its `backend` command reports `Version: dev`), so its shadow jar needs no
-flags.
+That line means everything typed into that shell ran the release. The warning is a backstop, not a
+replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from a
+fresh one. Each backend reads its version from the manifest of the jar it was loaded from: the shell
+loads every plugin jar through one class loader, where a package shared by two jars (both backends
+live in `io.jafar.shell.backend.impl`) takes the manifest of whichever jar defined it first, so
+`Class.getPackage()` there names the wrong jar's version (#267). Released backend jars up to 0.29.0
+still read it that way: next to a built `jdk` jar, a released `jafar` plugin reports the `jdk` jar's
+version and the warning stays silent. `jafar-shell` bundles the backend built with it and uses that
+one even when a released plugin is installed (its `backend` command reports `Version: dev`), so its
+shadow jar needs no flags.
 
 > **Case file — verifying 0.29.0.** Fixing `crossref` in `JafarSources`, every
 > built-jar check — "works on a real recording", "a corrupted real recording still prints the clean
