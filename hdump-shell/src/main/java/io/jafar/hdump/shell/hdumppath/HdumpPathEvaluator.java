@@ -1078,7 +1078,12 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    int threadSerial = root.getThreadSerial();
+    // A THREAD_OBJ root's serial is its own accessor: getThreadSerial() is the serial of the
+    // thread a frame or local belongs to, and -1 for THREAD_OBJ (#302)
+    int threadSerial =
+        root.getType() == GcRoot.Type.THREAD_OBJ
+            ? root.getThreadObjSerial()
+            : root.getThreadSerial();
     if (threadSerial >= 0) {
       map.put(GcRootFields.THREAD_SERIAL, threadSerial);
     }

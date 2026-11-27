@@ -170,6 +170,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **HdumpPath `gcroots` rows of thread objects had no `threadSerial` (#302).** The parser keeps a
+  THREAD_OBJ root's serial, but behind `getThreadObjSerial()`; the row read `getThreadSerial()`,
+  which is -1 for THREAD_OBJ, so `gcroots/THREAD_OBJ[threadSerial > 0]` (doc/hdumppath.md) matched
+  nothing. THREAD_OBJ rows now carry it; HotSpot gives a thread's THREAD_OBJ and frame roots the
+  same serial, so `groupBy(threadSerial)` counts now include each thread's object, and threads with
+  no frame roots appear.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

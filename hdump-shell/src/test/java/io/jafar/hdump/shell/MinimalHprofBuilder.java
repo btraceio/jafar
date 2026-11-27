@@ -50,10 +50,13 @@ public final class MinimalHprofBuilder {
 
   private record JavaFrameRoot(long objectId, int threadSerial, int frameNumber) {}
 
+  private record ThreadObjRoot(long objectId, int threadSerial) {}
+
   private final List<ClassDef> classes = new ArrayList<>();
   private final List<Instance> instances = new ArrayList<>();
   private final List<GcRoot> roots = new ArrayList<>();
   private final List<JavaFrameRoot> frameRoots = new ArrayList<>();
+  private final List<ThreadObjRoot> threadRoots = new ArrayList<>();
   private final List<ObjArray> arrays = new ArrayList<>();
   private final List<PrimArray> primArrays = new ArrayList<>();
 
@@ -133,6 +136,12 @@ public final class MinimalHprofBuilder {
   /** Adds a ROOT_JAVA_FRAME GC root (the object id need not exist in the dump). */
   public MinimalHprofBuilder addJavaFrameRoot(long objectId, int threadSerial, int frameNumber) {
     frameRoots.add(new JavaFrameRoot(objectId, threadSerial, frameNumber));
+    return this;
+  }
+
+  /** Adds a ROOT_THREAD_OBJ GC root: a thread object and its thread serial number. */
+  public MinimalHprofBuilder addThreadObjRoot(long objectId, int threadSerial) {
+    threadRoots.add(new ThreadObjRoot(objectId, threadSerial));
     return this;
   }
 
@@ -228,6 +237,14 @@ public final class MinimalHprofBuilder {
       h.writeLong(root.objectId);
       h.writeInt(root.threadSerial);
       h.writeInt(root.frameNumber);
+    }
+
+    // ROOT_THREAD_OBJ: id, u4 thread serial, u4 stack trace serial
+    for (ThreadObjRoot root : threadRoots) {
+      h.writeByte(0x08);
+      h.writeLong(root.objectId);
+      h.writeInt(root.threadSerial);
+      h.writeInt(0);
     }
 
     // ROOT_UNKNOWN for every registered root
