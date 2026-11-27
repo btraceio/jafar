@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -904,9 +905,9 @@ public final class JfrPathEvaluator {
       case JfrPath.QuantilesOp q -> RowOps.applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> RowOps.applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up ->
-          RowOps.applyStringTransform(rows, up.valuePath, String::toUpperCase);
+          RowOps.applyStringTransform(rows, up.valuePath, s -> s.toUpperCase(Locale.ROOT));
       case JfrPath.LowercaseOp lo ->
-          RowOps.applyStringTransform(rows, lo.valuePath, String::toLowerCase);
+          RowOps.applyStringTransform(rows, lo.valuePath, s -> s.toLowerCase(Locale.ROOT));
       case JfrPath.TrimOp tr -> RowOps.applyStringTransform(rows, tr.valuePath, String::trim);
       case JfrPath.AbsOp ab -> RowOps.applyNumberTransform(rows, ab.valuePath, Math::abs);
       case JfrPath.RoundOp ro -> RowOps.applyNumberTransform(rows, ro.valuePath, Math::round);

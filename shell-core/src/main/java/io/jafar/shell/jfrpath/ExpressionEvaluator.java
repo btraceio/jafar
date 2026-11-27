@@ -9,6 +9,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** Evaluates select() computed expressions: binary ops, functions and string templates. */
@@ -147,7 +148,7 @@ final class ExpressionEvaluator {
 
   static Object evaluateFunction(
       String funcName, List<JfrPath.Expr> args, Map<String, Object> row) {
-    switch (funcName.toLowerCase()) {
+    switch (funcName.toLowerCase(Locale.ROOT)) {
       case "if":
         return evalIf(args, row);
       case "substring":

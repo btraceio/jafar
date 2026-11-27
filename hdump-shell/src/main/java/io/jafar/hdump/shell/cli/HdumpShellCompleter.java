@@ -17,6 +17,7 @@ import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
@@ -78,7 +79,7 @@ public final class HdumpShellCompleter implements Completer {
       return;
     }
 
-    String cmd = words.get(0).toLowerCase();
+    String cmd = words.get(0).toLowerCase(Locale.ROOT);
 
     // report command has no further completion
     if ("report".equals(cmd)) {

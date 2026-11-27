@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.jline.reader.Completer;
@@ -59,7 +60,7 @@ public final class JfrTuiAdapter implements TuiAdapter {
     String[] parts = command.trim().split("\\s+");
     if (parts.length == 0) return null;
 
-    String first = parts[0].toLowerCase();
+    String first = parts[0].toLowerCase(Locale.ROOT);
     // Metadata browser
     if (isMetadataSummaryCommand(parts, first)) return "metadata";
     // Constants browser

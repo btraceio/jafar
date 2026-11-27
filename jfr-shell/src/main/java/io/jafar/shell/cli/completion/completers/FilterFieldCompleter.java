@@ -8,6 +8,7 @@ import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -110,7 +111,7 @@ public final class FilterFieldCompleter implements ContextCompleter {
     if (lookupType != null && !lookupType.isEmpty()) {
       List<String> fieldNames = metadata.getFieldNames(lookupType);
       for (String fieldName : fieldNames) {
-        if (fieldName.toLowerCase().startsWith(partial.toLowerCase())) {
+        if (fieldName.toLowerCase(Locale.ROOT).startsWith(partial.toLowerCase(Locale.ROOT))) {
           candidates.add(noSpace(fullPrefix + nestedPath + fieldName));
         }
       }
@@ -126,7 +127,8 @@ public final class FilterFieldCompleter implements ContextCompleter {
     // Suggest filter functions
     for (FunctionSpec spec : FILTER_FUNCTIONS) {
       String func = spec.name() + "(";
-      if (func.toLowerCase().startsWith(partial.toLowerCase()) || partial.isEmpty()) {
+      if (func.toLowerCase(Locale.ROOT).startsWith(partial.toLowerCase(Locale.ROOT))
+          || partial.isEmpty()) {
         candidates.add(noSpace(fullPrefix + nestedPath + func));
       }
     }

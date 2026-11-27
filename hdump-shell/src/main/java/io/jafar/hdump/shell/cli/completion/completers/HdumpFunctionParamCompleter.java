@@ -5,6 +5,7 @@ import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.CompletionContextType;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.jline.reader.Candidate;
 
@@ -277,7 +278,7 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
     }
 
     // Check if function is an aggregate function (we're inside sum(...), avg(...), etc.)
-    if (AGGREGATE_FUNCTIONS.contains(functionName.toLowerCase())) {
+    if (AGGREGATE_FUNCTIONS.contains(functionName.toLowerCase(Locale.ROOT))) {
       return parseValueExprPartial(partial, "");
     }
 
@@ -415,7 +416,7 @@ public final class HdumpFunctionParamCompleter implements ContextCompleter<Hdump
     String line = ctx.fullLine();
     if (line == null) return baseFields;
 
-    String lower = line.toLowerCase();
+    String lower = line.toLowerCase(Locale.ROOT);
     boolean hasWaste = lower.contains("waste()") || lower.contains("waste(");
     boolean hasJoin = lower.contains("join(");
 
