@@ -103,7 +103,9 @@ rc=0; python3 "$render" --artifact "$W/m" --run-url "$URL" >/dev/null 2>&1 || rc
 [ "$rc" -eq 2 ] && ok "refused: report.json is not JSON" || bad "not JSON accepted (exit $rc)"
 
 # --------------------------------------------------------------- poster: a fake GitHub API
-# GET  /repos/o/r/pulls                    open PRs (fixture: #7 head aaa..., #8 head bbb...)
+# GET  /repos/o/r/commits/<sha>/pulls      PRs associated with a commit: every PR of the fixture
+#                                          (#7 head aaa..., #8 head bbb..., #9 merged, head ddd...),
+#                                          so the poster must pick by head commit itself
 # GET  /repos/o/r/issues/<n>/comments      per PR: COMMENTS_<n>.json in the state dir
 # POST /repos/o/r/issues/<n>/comments      create; PATCH /repos/o/r/issues/comments/<id>
 # Every request is appended to requests.log.
@@ -125,7 +127,7 @@ class H(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if "page=2" in self.path:
             return self.reply([])
-        if path == "/repos/o/r/pulls":
+        if path.startswith("/repos/o/r/commits/") and path.endswith("/pulls"):
             return self.reply(json.load(open(f"{state}/pulls.json")))
         if path.startswith("/repos/o/r/issues/") and path.endswith("/comments"):
             n = path.split("/")[5]
@@ -146,7 +148,10 @@ S="$W/api"
 mkdir -p "$S"
 A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-printf '[{"number":7,"head":{"sha":"%s"}},{"number":8,"head":{"sha":"%s"}}]' "$A" "$B" > "$S/pulls.json"
+D=dddddddddddddddddddddddddddddddddddddddd
+printf '[{"number":7,"head":{"sha":"%s"},"state":"open"},{"number":8,"head":{"sha":"%s"},"state":"open"},
+         {"number":9,"head":{"sha":"%s"},"state":"closed","merged_at":"2026-11-27T15:14:46Z"}]' \
+    "$A" "$B" "$D" > "$S/pulls.json"
 python3 "$W/fake.py" "$S" &
 server_pid=$!
 for _ in $(seq 1 50); do [ -s "$S/port" ] && break; sleep 0.1; done
@@ -161,13 +166,20 @@ post_run() { # post_run <head sha> <pull_requests json> [comment file]
 
 # The run names its PR: that one, without listing open PRs.
 out=$(post_run "$A" '[{"number":7}]' 2>&1) && grep -q '^POST /repos/o/r/issues/7/comments ' "$S/requests.log" \
-    && ! grep -q 'GET /repos/o/r/pulls' "$S/requests.log" \
+    && ! grep -q 'GET /repos/o/r/commits/' "$S/requests.log" \
     && ok "PR from the run's metadata: comment created on #7" || bad "metadata PR" "$out
 $(cat "$S/requests.log")"
 
 # A fork PR: pull_requests is empty, so the open PR whose head is the run's head commit.
 out=$(post_run "$B" '[]' 2>&1) && grep -q '^POST /repos/o/r/issues/8/comments ' "$S/requests.log" \
     && ok "fork PR: found by head commit (#8)" || bad "fork PR lookup" "$out
+$(cat "$S/requests.log")"
+
+# A PR merged while the run was still going: GitHub leaves pull_requests empty, and the PR is
+# found by its head commit among the commit's PRs, merged or not (perf-ab on #315 hit this).
+out=$(post_run "$D" '[]' 2>&1) && grep -q '^POST /repos/o/r/issues/9/comments ' "$S/requests.log" \
+    && grep -q '^GET /repos/o/r/commits/'"$D"'/pulls ' "$S/requests.log" \
+    && ok "merged PR: found by head commit (#9)" || bad "merged PR lookup" "$out
 $(cat "$S/requests.log")"
 
 # An earlier perf-ab comment by the bot is edited; a human's comment with the marker is not.
