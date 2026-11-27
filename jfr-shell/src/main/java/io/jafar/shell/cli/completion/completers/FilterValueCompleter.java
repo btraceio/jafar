@@ -5,6 +5,7 @@ import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -30,7 +31,7 @@ public final class FilterValueCompleter implements ContextCompleter {
   @Override
   public void complete(
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
-    String partial = ctx.partialInput().toLowerCase();
+    String partial = ctx.partialInput().toLowerCase(Locale.ROOT);
 
     // Suggest value templates
     for (String[] template : VALUE_TEMPLATES) {
@@ -38,7 +39,7 @@ public final class FilterValueCompleter implements ContextCompleter {
       String display = template[1];
       String description = template[2];
 
-      if (value.toLowerCase().startsWith(partial) || partial.isEmpty()) {
+      if (value.toLowerCase(Locale.ROOT).startsWith(partial) || partial.isEmpty()) {
         candidates.add(candidate(value, display, description));
       }
     }

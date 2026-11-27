@@ -7,6 +7,7 @@ import io.jafar.shell.jfrpath.JfrPath.Query;
 import io.jafar.shell.jfrpath.JfrPathEvaluator;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -83,7 +84,7 @@ public final class JfrQueryEvaluator implements QueryEvaluator {
 
   @Override
   public String getOperatorHelp(String operator) {
-    return switch (operator.toLowerCase()) {
+    return switch (operator.toLowerCase(Locale.ROOT)) {
       case "count" -> "count() - Count total results";
       case "stats" -> "stats(field) - Get statistics (min, max, avg, sum, count)";
       case "groupby", "group" ->

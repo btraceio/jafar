@@ -4,6 +4,7 @@ import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.llm.LlmSettings;
 import java.lang.reflect.Array;
 import java.util.Collection;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 
@@ -240,7 +241,7 @@ public final class ConditionEvaluator {
       throw new IllegalArgumentException("Expected ')' after function argument at position " + pos);
     }
 
-    return switch (name.toLowerCase()) {
+    return switch (name.toLowerCase(Locale.ROOT)) {
       case "exists" -> variableExists(arg);
       case "empty" -> variableEmpty(arg);
       default -> throw new IllegalArgumentException("Unknown function: " + name);
