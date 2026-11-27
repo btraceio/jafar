@@ -213,10 +213,11 @@ class SketchAggregationTest {
             "\"p50\": 2.32521728E8",
             "\"p90\": 7.08837376E8",
             "\"p99\": 7.8118912E8",
-            "\"stddev\": 2.329920258251914E8",
-            "\"count\": 160,")) {
+            "\"stddev\": 2.329920258251914E8")) {
       assertTrue(output.contains(pair), pair + " in " + output);
     }
+    // count 160, whichever key follows it
+    assertTrue(output.matches("(?s).*\"count\": 160\\s*[,}].*"), output);
   }
 
   @Test

@@ -97,8 +97,8 @@ class BetweenFilterFunctionTest {
   // test-ap.jfr's 160 jdk.GCHeapSummary events: heapUsed from 67108864 (2 events) to 786432000
   // (1 event), 646971392 once; gcId 0-79, two events each. After GC heapUsed is a quarter of the
   // Before GC one, below 250M. (Seeded in test-recordings Shapes.writeGc: a change there changes
-  // these numbers.) (jdk.ExecutionSample, which these tests
-  // used, has no duration: every between() on it matched nothing, #299.)
+  // these numbers.) jdk.ExecutionSample, which these tests used, has no duration: every between()
+  // on it matched nothing (#299).
 
   /** The count a {@code show ... | count()} printed. */
   private long count(String command) throws Exception {
