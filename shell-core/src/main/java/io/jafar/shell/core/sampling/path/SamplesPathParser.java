@@ -207,8 +207,8 @@ public final class SamplesPathParser {
       case "top" -> parseTopOp();
       case "groupby", "group" -> parseGroupByOp();
       case "stats" -> parseStatsOp();
-      case "head" -> new SamplesPath.HeadOp(parseSingleIntArg());
-      case "tail" -> new SamplesPath.TailOp(parseSingleIntArg());
+      case "head" -> new SamplesPath.HeadOp(parseSingleCountArg("head"));
+      case "tail" -> new SamplesPath.TailOp(parseSingleCountArg("tail"));
       case "filter", "where" -> parseFilterOp();
       case "select" -> parseSelectOp();
       case "sortby", "sort", "orderby" -> parseSortByOp();
@@ -221,7 +221,7 @@ public final class SamplesPathParser {
   private SamplesPath.TopOp parseTopOp() {
     expect('(');
     skipWs();
-    int n = (int) parseLongArg();
+    int n = parseCountArg("top");
     skipWs();
     String byField = null;
     boolean ascending = false;
@@ -361,13 +361,42 @@ public final class SamplesPathParser {
 
   // ---- Helpers ----
 
-  private int parseSingleIntArg() {
+  private int parseSingleCountArg(String what) {
     expect('(');
     skipWs();
-    long n = parseLongArg();
+    int n = parseCountArg(what);
     skipWs();
     expect(')');
-    return (int) n;
+    return n;
+  }
+
+  /**
+   * A count: a whole number of 0 or more that fits an int (#312: it was cast with {@code (int)}, so
+   * {@code head(-1)} was accepted and {@code head(3000000000)} wrapped to a negative count).
+   */
+  private int parseCountArg(String what) {
+    int start = pos;
+    if (!isAtEnd() && peek() == '-') advance();
+    while (!isAtEnd() && (Character.isDigit(peek()) || peek() == '.')) advance();
+    String text = input.substring(start, pos);
+    double d;
+    try {
+      d = Double.parseDouble(text);
+    } catch (NumberFormatException e) {
+      throw new SamplesPathParseException("Expected integer at position " + start);
+    }
+    // The rule JfrPath and HdumpPath apply: whole, 0 or more, an int (2.0 is 2)
+    if (d < 0 || d != Math.rint(d) || d > Integer.MAX_VALUE) {
+      throw new SamplesPathParseException(
+          what
+              + " expects a whole number of 0 or more, at most "
+              + Integer.MAX_VALUE
+              + ", got '"
+              + text
+              + "' at position "
+              + start);
+    }
+    return (int) d;
   }
 
   private String parseSingleStringArg() {
@@ -377,17 +406,6 @@ public final class SamplesPathParser {
     skipWs();
     expect(')');
     return s;
-  }
-
-  private long parseLongArg() {
-    int start = pos;
-    if (!isAtEnd() && peek() == '-') advance();
-    while (!isAtEnd() && Character.isDigit(peek())) advance();
-    try {
-      return Long.parseLong(input.substring(start, pos));
-    } catch (NumberFormatException e) {
-      throw new SamplesPathParseException("Expected integer at position " + start);
-    }
   }
 
   private void consumeEmptyParens() {

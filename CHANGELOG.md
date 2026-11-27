@@ -204,6 +204,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed in `subList`), and `minPct=` is 0 or more. `quantiles()` now rejects values outside 0..1:
   `quantiles(50, 90)` printed `p5000`/`p9000` columns holding the maximum; write
   `quantiles(0.5, 0.9)`.
+- **Heap dump and pprof/OTLP count arguments were not checked (#312).** HdumpPath read `head`,
+  `tail`, `top`, `depth=`, `threshold=`, `minsize=` and `join(session=)` with `intValue()`:
+  `head(-1)` reached `limit(-1)`, `head(2.5)` became 2, and `head(3000000000)` or `minsize=3GB`
+  wrapped to a negative number. The samples queries of pprof-shell and otlp-shell cast `head`,
+  `tail` and `top` with `(int)`. Each count now takes a whole number from 0 to 2147483647 and fails
+  to parse naming the argument otherwise, by the rule JfrPath applies since #304 (`2.0` is 2). The
+  byte sizes `minsize=` and `dominators(minRetained=)` reject a negative value (`minRetained=-5MB`
+  meant the default) and still round a fraction of a byte down. A number too large for a long
+  (`9223372036854775807K`) is now a parse error in HdumpPath and JfrPath filters instead of
+  wrapping, and a malformed HdumpPath number (`1e`) is reported as such instead of escaping as a
+  `NumberFormatException`. In JfrPath expressions (`select(... as)`, `groupBy(...)`), `-.5` and
+  `.5` are numbers: `select(-.5 + v as x)` read `-.5` as a field and gave 0.0, and `.5` did not
+  parse.
 - **JfrPath `[...]` and `filter(...)` disagreed on `== null` and on indexed paths (#309).**
   `[x == null]` matched nothing for a missing `x` while `filter(x == null)` matched every such row,
   and `filter(stackTrace/frames/0/lineNumber >= 0)` read `0` as a map key and matched nothing while
