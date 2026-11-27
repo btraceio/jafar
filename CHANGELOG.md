@@ -353,6 +353,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   element size). `HeapObject.getShallowSize()`, still an `int`, is capped at `Integer.MAX_VALUE`
   instead of going negative; retained sizes are summed from it, so such an object counts as
   `Integer.MAX_VALUE` bytes in them, an undercount, not a negative
+- **`show ... --format json` wrote arrays as strings (#266).** A stack trace's `frames`, an
+  `ArrayType` in the untyped model of both backends, came out as one JSON string of its `toString`
+  text (`"frames": "[{method={hidden=false, ...`), in jfr-shell and in the unified shell. One writer
+  (`io.jafar.shell.core.JsonText`) now serves `show --format json` in both shells and `tail --format
+  json`: parser wrappers are written as what they hold (an `ArrayType` as its array, a `ComplexType`
+  as its map), any Java array is a JSON array, and a non-finite `double` or `float` is `null` (it
+  was a bare `NaN`, which is not JSON). Constants nested inside a value keep their wrapper maps
+  (`"name": {"string": "libmPow"}`), as before; only cells are unwrapped. An `Iterable` that is not
+  a collection is written as its string in all three (the unified shell and `tail` wrote it as an
+  array). One-shot `jfr-shell show <file> ...` also no longer prints
+  `Opened session #1: ...` on stdout before the result, so its JSON pipes into a parser as the
+  tutorial shows (`-Djfr.shell.verbose=true` or `JFR_SHELL_VERBOSE` brings the line back). One-shot
+  `metadata` no longer prints `Note: 'types' is deprecated`, which it printed because it runs the
+  `types` command internally
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

@@ -325,6 +325,10 @@ jafar-shell compare before.otlp after.otlp --list-sample-types
 
 All non-interactive commands execute without prompts, making them suitable for automation and CI pipelines.
 
+The stdout of `show`, `metadata`, `chunks` and `constants` carries the result only, so `--format
+json` output pipes into a JSON parser. With `-Djfr.shell.verbose=true` or `JFR_SHELL_VERBOSE=1`
+they also print notes such as `Opened session #1: <file>` on stdout, before the result.
+
 ## Metadata Field Paths (mini guide)
 
 Use `show metadata/<Type>` with JfrPath to explore metadata. The `fields` view
