@@ -71,7 +71,7 @@ public final class HdumpPathParser {
           advance(); // consume '='
           skipWs();
         }
-        rootParam = parseNumber().intValue();
+        rootParam = parseCount("duplicates(depth=)");
         skipWs();
       }
       expect(')');
@@ -463,6 +463,7 @@ public final class HdumpPathParser {
   }
 
   private Number parseNumber() {
+    int start = pos;
     StringBuilder sb = new StringBuilder();
 
     // Optional sign
@@ -512,11 +513,85 @@ public final class HdumpPathParser {
       throw new HdumpPathParseException("Expected number at position " + pos);
     }
 
-    if (isFloat) {
-      return Double.parseDouble(numStr) * multiplier;
-    } else {
-      return Long.parseLong(numStr) * multiplier;
+    try {
+      if (isFloat) {
+        return Double.parseDouble(numStr) * multiplier;
+      }
+      // Exact: 9223372036854775807K wrapped around silently
+      return Math.multiplyExact(Long.parseLong(numStr), multiplier);
+    } catch (NumberFormatException e) {
+      throw new HdumpPathParseException("Invalid number: " + numStr + " at position " + start);
+    } catch (ArithmeticException e) {
+      throw new HdumpPathParseException("Number out of range: " + numStr + " at position " + start);
     }
+  }
+
+  /**
+   * A count or size argument: a whole number of 0 or more that fits an int (#312: {@code head(-1)}
+   * reached {@code limit(-1)}, {@code head(2.5)} became 2, {@code head(3000000000)} wrapped).
+   *
+   * @param what the argument, as the message names it
+   */
+  private int parseCount(String what) {
+    int start = pos;
+    Number num;
+    try {
+      num = parseNumber();
+    } catch (HdumpPathParseException e) {
+      throw countError(what, start, e);
+    }
+    double d = num.doubleValue();
+    if (d < 0 || d != Math.rint(d) || d > Integer.MAX_VALUE) {
+      throw countError(what, start, null);
+    }
+    return num.intValue();
+  }
+
+  /**
+   * A size in bytes: 0 or more and at most {@code max}; a fraction of a byte ({@code 1.3MB}) rounds
+   * down (#312).
+   */
+  private long parseSize(String what, long max) {
+    int start = pos;
+    Number num;
+    try {
+      num = parseNumber();
+    } catch (HdumpPathParseException e) {
+      throw sizeError(what, max, start, e);
+    }
+    double d = num.doubleValue();
+    if (d < 0 || d > max || Double.isNaN(d)) {
+      throw sizeError(what, max, start, null);
+    }
+    return num instanceof Double ? (long) Math.floor(d) : num.longValue();
+  }
+
+  private HdumpPathParseException sizeError(String what, long max, int start, Throwable cause) {
+    String message =
+        what
+            + " expects a size of 0 or more, at most "
+            + max
+            + " bytes, got '"
+            + input.substring(start, pos).trim()
+            + "' at position "
+            + start;
+    return cause == null
+        ? new HdumpPathParseException(message)
+        : new HdumpPathParseException(message, cause);
+  }
+
+  private HdumpPathParseException countError(String what, int start, Throwable cause) {
+    String message =
+        what
+            + " expects a whole number of 0 or more, at most "
+            + Integer.MAX_VALUE
+            + ", got '"
+            + input.substring(start, pos).trim()
+            + "' at position "
+            + start;
+    return cause == null
+        ? new HdumpPathParseException(message)
+        : new HdumpPathParseException(message, cause);
   }
 
   private PipelineOp parsePipelineOp() {
@@ -615,7 +690,7 @@ public final class HdumpPathParser {
     expect('(');
     skipWs();
 
-    int n = parseNumber().intValue();
+    int n = parseCount("top");
     String orderBy = null;
     boolean descending = true;
 
@@ -889,7 +964,7 @@ public final class HdumpPathParser {
   private HeadOp parseHeadOp() {
     expect('(');
     skipWs();
-    int n = parseNumber().intValue();
+    int n = parseCount("head");
     skipWs();
     expect(')');
     return new HeadOp(n);
@@ -898,7 +973,7 @@ public final class HdumpPathParser {
   private TailOp parseTailOp() {
     expect('(');
     skipWs();
-    int n = parseNumber().intValue();
+    int n = parseCount("tail");
     skipWs();
     expect(')');
     return new TailOp(n);
@@ -1087,13 +1162,13 @@ public final class HdumpPathParser {
         skipWs();
         expect('=');
         skipWs();
-        threshold = parseNumber().intValue();
+        threshold = parseCount("checkLeaks(threshold=)");
       } else if (lookahead("minsize=") || lookahead("minsize =")) {
         matchKeyword("minsize");
         skipWs();
         expect('=');
         skipWs();
-        minSize = parseNumber().intValue();
+        minSize = (int) parseSize("checkLeaks(minsize=)", Integer.MAX_VALUE);
       } else {
         throw new HdumpPathParseException(
             "Expected detector=, filter=, threshold=, or minsize= parameter");
@@ -1124,7 +1199,7 @@ public final class HdumpPathParser {
             while (peek() != '=') advance();
             advance(); // consume '='
             skipWs();
-            minRetained = parseNumber().longValue();
+            minRetained = parseSize("dominators(minRetained=)", Long.MAX_VALUE);
           } else if (lookahead("groupBy=") || lookahead("groupby=")) {
             while (peek() != '=') advance();
             advance(); // consume '='
@@ -1157,7 +1232,7 @@ public final class HdumpPathParser {
           advance(); // consume '='
           skipWs();
         }
-        maxDepth = parseNumber().intValue();
+        maxDepth = parseCount("retainedBreakdown(depth=)");
         skipWs();
       }
       expect(')');
@@ -1182,7 +1257,7 @@ public final class HdumpPathParser {
         if (peek() == '"' || peek() == '\'') {
           sessionRef = parseStringLiteral();
         } else if (Character.isDigit(peek())) {
-          sessionRef = String.valueOf(parseNumber().intValue());
+          sessionRef = String.valueOf(parseCount("join(session=)"));
         } else {
           sessionRef = parseIdentifier();
         }

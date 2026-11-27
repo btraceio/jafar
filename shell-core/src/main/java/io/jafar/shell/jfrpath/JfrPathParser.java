@@ -546,9 +546,12 @@ public final class JfrPathParser {
 
     try {
       if (dot) return Double.parseDouble(num) * multiplier;
-      return Long.parseLong(num) * multiplier;
+      // Exact: 9223372036854775807K wrapped around silently (#312)
+      return Math.multiplyExact(Long.parseLong(num), multiplier);
     } catch (NumberFormatException e) {
       throw error("Invalid number literal: " + num);
+    } catch (ArithmeticException e) {
+      throw error("Number literal out of range: " + num);
     }
   }
 
@@ -1482,7 +1485,10 @@ public final class JfrPathParser {
 
       // Check for literal (number or string)
       char first = (char) peek();
-      if (Character.isDigit(first) || first == '"' || first == '\'') {
+      if (Character.isDigit(first)
+          || first == '"'
+          || first == '\''
+          || (first == '.' && Character.isDigit((char) peekAhead(1)))) {
         return true;
       }
 
@@ -1625,9 +1631,10 @@ public final class JfrPathParser {
       return parseStringLiteralOrTemplate();
     }
 
-    // Number literal
+    // Number literal: 5, -5, .5 and -.5 (#312: -.5 was read as the field path ["-", "5"])
     if (Character.isDigit((char) peek())
-        || (peek() == '-' && Character.isDigit((char) peekAhead(1)))) {
+        || startsNegativeNumber()
+        || (peek() == '.' && Character.isDigit((char) peekAhead(1)))) {
       return new JfrPath.Literal(parseNumberLiteral());
     }
 

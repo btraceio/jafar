@@ -749,6 +749,11 @@ Expressions support arithmetic operations, string concatenation, and built-in fu
 - `*` - Multiplication
 - `/` - Division
 
+Number literals in expressions may be negative or start with the decimal point (`-1`, `-0.5`,
+`.5`, `-.5`). Unlike filter literals, they take no unit suffix (`5s`, `1MB`). Put spaces around a
+minus that subtracts: a field name may contain `-`, so `v-1` and `v-.5` read as field paths, while
+`v - 1` and `v -.5` subtract.
+
 ```
 # Convert bytes to kilobytes
 events/jdk.FileRead | select(bytesRead / 1024 as kilobytes)
