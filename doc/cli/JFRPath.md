@@ -434,7 +434,14 @@ Filter rows in the pipeline using the same predicate syntax as path filters, wit
 ```
 events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | filter(sum>1048576)
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(count>100)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(startsWith(key, "worker-"))
+events/jdk.ExecutionSample | filter(len(stackTrace/frames) > 50) | count()
 ```
+
+The predicate functions (`contains`, `between`, `len(...) > n`, ...) work as in path filters. Two
+differences remain: in `filter(...)`, `field == null` is a presence check (it matches rows without
+the field), and a plain comparison reads a nested path by map keys only, not array indexes
+(`frames/0`).
 
 ### Distinct
 ```

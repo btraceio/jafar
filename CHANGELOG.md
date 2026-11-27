@@ -260,6 +260,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read while the next attempt waited, it would have released that attempt before its own session was
   initialized. The hidden id and its wait now belong to each connection, and a timed-out attempt
   keeps hiding its late reply.
+- **JfrPath function conditions in `| filter(...)` matched nothing; `len()` comparisons did not
+  parse (#303).** The pipeline filter had no case for a function condition, so `filter(between(...))`,
+  `filter(contains(...))` and the other functions matched no row while the same `[...]` predicate
+  matched, and an unknown function (`filter(foo(x))`) matched nothing instead of failing. It now
+  evaluates functions with the `[...]` predicates' code, an unknown one fails as there, `and`/`or`
+  short-circuit as there, and a value function compared (`filter(len(name) > 3)`) is compared by its
+  value. The documented `[len(path)>50]` failed with "Expected ']'": a function followed by a
+  comparison was read as a boolean function. It now parses, in `[...]` and in `filter(...)`; a
+  boolean function compared (`contains(...) = true`) fails to parse naming it. `=` and `!=` in
+  `[...]` (and the `any:`/`all:` forms) now compare a number with a numeric literal by exact value,
+  whatever their types: `[len(path) = 7]` matched nothing, since a length is an `Integer` and the
+  literal is not. The same held for short, byte, float and double fields (and `int` fields under
+  the `jdk` backend, which reports them as `Integer`), numeric strings, and decimal literals
+  (`[gcId = 0.0]`): such `=` queries now match, and `!=` ones match fewer rows. Integral values
+  compare exactly, a double or float by its decimal form (a float field `= 0.1` now matches), and a
+  string only when it is an ASCII decimal number.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
