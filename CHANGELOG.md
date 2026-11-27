@@ -180,6 +180,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compare kept the hidden-class address in the form `Handler$$Lambda.0x00007fd6a823c220`** - the
   address after a dot, as `tck-test.jfr` stores hidden lambda classes, was not removed, so the same
   lambda had a different name in each run. It is now removed like the `/0x...` form
+- **`jfr_use` and `jfr_diagnose` called a count "% of CPU time spent waiting or blocked" (#263).**
+  `cpu.saturation.value` held the sum of the `jdk.ContainerCPUThrottling` counters
+  (`"unit": "slices"`) or, without `jdk.CPULoad`, the number of samples in blocking states, and the
+  insight and the finding read it as a percentage: on `test-dd.jfr` "Investigate thread blocking:
+  16356.0% of CPU time spent waiting/blocked". The sum was wrong too: those counters are the
+  cgroup's running totals, so throttling is the change between readings. The value is now a
+  percentage (`"unit": "%"`) with `"source"` saying what it measures:
+  - `"containerThrottling"`: the share of CFS periods throttled between the throttling readings
+    nearest the window, which can cover more than the window (`measuredFromEpochNanos`/
+    `measuredToEpochNanos`); on `test-dd.jfr` 84.3%, 506 of 600 periods over 59.9 s. Intervals
+    with inconsistent counters (one decreased, more periods throttled than elapsed, or periods
+    counted between two readings at the same instant) are skipped
+    and counted in `intervalsSkipped`. The value is `"N/A"` for a window that ends before it
+    starts, with fewer than two readable readings, when no interval covers the window, when every
+    interval is skipped, or when no period elapsed.
+  - `"threadStates"`: the share of samples in blocking states.
+
+  Throttling is reported as such, with raising the container's CPU limit as the action, instead of
+  sending the agent to `jfr_tsa`, and the summary's `overallAssessment` only weighs a saturation
+  given in percent
 - **Filtered JfrPath queries threw an exception per event** - a filter resolves its field path
   for every event it tests, and the path parser told a field name from an index by catching
   `NumberFormatException` from `Integer.parseInt`. `events/bench.Common[bucket=7] | count()` on a
