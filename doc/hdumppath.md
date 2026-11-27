@@ -857,7 +857,7 @@ open dump.hprof
 classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample")
 
 # Find high-alloc, low-retention classes (churn)
-classes | join(session=1, root="jdk.ObjectAllocationSample") | filter(allocCount > 1000 and retained < 1MB)
+objects | groupBy(className, agg=sum, value=retainedSize) | join(session=1, root="jdk.ObjectAllocationSample", by=className) | filter(allocCount > 1000 and retainedSize < 1MB)
 
 # Top classes by allocation weight
 classes | join(session=1, root="jdk.ObjectAllocationSample") | sortBy(allocWeight desc) | top(20)

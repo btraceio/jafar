@@ -140,7 +140,7 @@ public final class LanguageReference {
       On the classes root the join key is inferred as `name`; by=class applies to the objects root.
 
       Examples:
-        classes | sortBy(retained desc) | top(20)
+        objects | groupBy(className, agg=sum, value=retainedSize) | top(20, by=retainedSize)
         objects/java.util.HashMap | waste() | sortBy(wastedBytes desc) | top(20)
         clusters | sortBy(score desc) | top(10)
         classes/com.example.Entry | retentionPaths()
