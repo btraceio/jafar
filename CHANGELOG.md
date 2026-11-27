@@ -317,6 +317,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and with no values its quantiles are `null`, not NaN, as are `quantiles()`'s.
   `decorateByTime()`/`decorateByKey()` anywhere but first (after another operator, or on a
   variable's rows) fail instead of being skipped.
+- **HdumpPath `filter` on a field that is no column returned nothing without a word (#295).**
+  `classes | filter(retained > 10MB)` returned no rows, while `top` and `sortBy` on the same field
+  fail; it led the jfr-mcp `leak-hunt` prompt astray (#289). A `filter(...)` or `[...]` predicate
+  that matches no row because it compares a field that is no column of its rows now fails, naming
+  the columns (`classes` with `retained` gets `top`'s hint to aggregate `objects`). A column the
+  root can have but these rows lack (`arrayLength` on non-arrays, `retainedSize` before it is
+  computed) is not an error; after a stage that builds new rows the columns are the keys they
+  carry. When the input is an operator's error row, the filter reports that error. `ages[...]`
+  predicates on the age columns (`estimatedAge`, `ageBucket`) now run after the ages are computed:
+  they matched nothing. `ages` and `gcroots` queries that read a retained size now compute retained
+  sizes first, as `objects` queries do: `gcroots[retained > 1KB] | count` gave 0 until another query
+  had computed them.
 - **The jfr-mcp `leak-hunt` prompt's retained-size queries did not run (#289).** `classes` rows have
   no `retained` column, and step 3 (`classes | sortBy(retained desc) | top(20)`) failed with "Field
   'retained' is not available on classes". Step 6 joined classes `by=class` (on the `classes` root
@@ -324,8 +336,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then filtered on `retained > 10MB`, which returned no rows at all. Both now rank `objects |
   groupBy(className, agg=sum, value=retainedSize)`, and step 6 joins those groups `by=className` and
   keeps the classes with allocation samples. The same broken examples in the LLM language reference
-  (`ask`), doc/cli/AskTutorial.md and doc/hdumppath.md are corrected. `filter` on an absent field
-  still returns nothing silently (#295)
+  (`ask`), doc/cli/AskTutorial.md and doc/hdumppath.md are corrected.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
