@@ -397,6 +397,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   join(session=N, root="jdk.ObjectAllocationSample")` compared the two spellings, so every lambda
   had `allocCount = null`. Both sides are now keyed with `+` before the address, which is kept: two
   lambdas of one class stay apart, and a recording and a dump from different runs still do not match
+- **jfr-mcp wrote the parser's wrappers as Java beans (#283).** `jfr_query` rows hold the untyped
+  parser's `ArrayType` and `ComplexType`, which the result's Jackson mapper, and the MCP SDK for the
+  structured content, wrote as beans: a stack trace's `frames` came out as `{"array": [...], "type":
+  "[Ljava.lang.Object;"}` and every constant as `{"simpleType": ..., "value": ...}`. Every tool
+  result is now made of plain values first: a wrapper becomes what it holds, an array becomes a
+  list, map keys keep their order, and a non-finite `double` or `float` becomes `null` (Jackson
+  wrote the string `"NaN"` or `"Infinity"` where a number belongs). Constants nested inside keep
+  their wrapper maps (`"name": {"string": "libmPow"}`), as the cells of `show --format json` do
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
