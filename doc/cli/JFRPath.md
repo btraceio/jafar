@@ -149,7 +149,8 @@ metadata/jdk.types.Method[name="toString"]
 
 ### Numeric Literals and Units
 
-Numeric literals accept unit suffixes, so a filter reads the way the value does.
+Numeric literals may be negative (`[delta > -1]`, `between(x, -10, 10)`, `-0.5`, `-.5`), and accept
+unit suffixes, so a filter reads the way the value does.
 
 **Size suffixes** are binary and apply to byte-valued fields:
 

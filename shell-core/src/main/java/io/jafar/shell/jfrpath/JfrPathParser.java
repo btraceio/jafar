@@ -353,7 +353,9 @@ public final class JfrPathParser {
       skipWs();
       if (peek() == '"' || peek() == '\'') {
         args.add(new io.jafar.shell.jfrpath.JfrPath.LiteralArg(parseLiteral()));
-      } else if (Character.isDigit((char) peek())) {
+      } else if (Character.isDigit((char) peek()) || startsNegativeNumber()) {
+        // A negative bound was read as a field named "-1" (#304: between(f, -1, 5) failed with
+        // 'For input string: "null"')
         args.add(new io.jafar.shell.jfrpath.JfrPath.LiteralArg(parseLiteral()));
       } else {
         args.add(new io.jafar.shell.jfrpath.JfrPath.PathArg(parsePathSegments()));
@@ -481,8 +483,11 @@ public final class JfrPathParser {
       return Boolean.FALSE;
     }
 
-    // number (int or decimal)
+    // number (int or decimal), optionally negative (#304: [gcId > -1] was "Expected literal")
     int start = pos;
+    if (startsNegativeNumber()) {
+      pos++;
+    }
     boolean dot = false;
     while (!eof()) {
       char c = (char) peek();
@@ -656,7 +661,9 @@ public final class JfrPathParser {
           } else {
             Object lit = parseLiteral();
             if (!(lit instanceof Number)) throw error("quantiles() expects numeric quantiles 0..1");
-            qs.add(((Number) lit).doubleValue());
+            double q = ((Number) lit).doubleValue();
+            if (q < 0 || q > 1) throw error("quantiles() expects numeric quantiles 0..1");
+            qs.add(q);
           }
           skipWs();
         }
@@ -809,7 +816,7 @@ public final class JfrPathParser {
         // First arg is the count
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("top() expects numeric count");
-        n = ((Number) lit).intValue();
+        n = count(lit, "top()");
         skipWs();
         // Parse optional by=/asc= named params or positional field + asc/desc keywords
         while (peek() == ',') {
@@ -846,7 +853,7 @@ public final class JfrPathParser {
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("head() expects numeric count");
-        n = ((Number) lit).intValue();
+        n = count(lit, "head()");
         skipWs();
         expect(')');
       }
@@ -858,7 +865,7 @@ public final class JfrPathParser {
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("tail() expects numeric count");
-        n = ((Number) lit).intValue();
+        n = count(lit, "tail()");
         skipWs();
         expect(')');
       }
@@ -1372,13 +1379,14 @@ public final class JfrPathParser {
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("buckets= expects a number");
-        buckets = ((Number) lit).intValue();
+        buckets = count(lit, "buckets=");
       } else if (startsWithIgnoreCase("minPct=")) {
         pos += 7;
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("minPct= expects a number");
         minPct = ((Number) lit).doubleValue();
+        if (minPct < 0) throw error("minPct= expects a percentage of 0 or more");
       } else if (peek() != ')' && peek() != ',') {
         throw error("stackprofile() expects direction=, buckets=, or minPct= parameters");
       }
@@ -1816,6 +1824,30 @@ public final class JfrPathParser {
 
   private int peek() {
     return eof() ? -1 : input.charAt(pos);
+  }
+
+  /**
+   * A count argument: a literal may be negative since #304, a count may not ("fromIndex(0) >
+   * toIndex(-1)" otherwise).
+   */
+  private int count(Object lit, String what) {
+    Number num = (Number) lit;
+    double d = num.doubleValue();
+    // Whole, 0 or more, and an int: (int) 3000000000 wrapped to a negative count
+    if (d < 0 || d != Math.rint(d) || d > Integer.MAX_VALUE) {
+      throw error(what + " expects a whole count of 0 or more, at most " + Integer.MAX_VALUE);
+    }
+    return num.intValue();
+  }
+
+  /** Whether a minus sign followed by a digit or a decimal point and digit starts here. */
+  private boolean startsNegativeNumber() {
+    if (peek() != '-' || pos + 1 >= input.length()) {
+      return false;
+    }
+    char next = input.charAt(pos + 1);
+    return Character.isDigit(next)
+        || (next == '.' && pos + 2 < input.length() && Character.isDigit(input.charAt(pos + 2)));
   }
 
   private boolean eof() {

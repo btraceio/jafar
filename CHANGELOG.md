@@ -195,6 +195,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **JfrPath negative numbers did not parse (#304).** `[gcId > -1]` failed with "Expected literal",
+  and in a function `[between(gcId, -1, 5)]` the bound was read as a field named `-1` and failed
+  with 'For input string: "null"'. Negative integers and decimals (`-1`, `-0.5`, `-.5`) are now
+  literals, in `[...]`, `filter(...)` and function arguments. Counts still may not be negative:
+  `head(-1)`, `tail`, `top` and `stackprofile(buckets=)` take a whole count of 0 to 2147483647 and
+  fail to parse naming the operator otherwise (`head(3000000000)` wrapped to a negative count, and
+  failed in `subList`), and `minPct=` is 0 or more. `quantiles()` now rejects values outside 0..1:
+  `quantiles(50, 90)` printed `p5000`/`p9000` columns holding the maximum; write
+  `quantiles(0.5, 0.9)`.
 - **JfrPath `[...]` and `filter(...)` disagreed on `== null` and on indexed paths (#309).**
   `[x == null]` matched nothing for a missing `x` while `filter(x == null)` matched every such row,
   and `filter(stackTrace/frames/0/lineNumber >= 0)` read `0` as a map key and matched nothing while
