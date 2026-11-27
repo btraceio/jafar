@@ -337,6 +337,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   groupBy(className, agg=sum, value=retainedSize)`, and step 6 joins those groups `by=className` and
   keeps the classes with allocation samples. The same broken examples in the LLM language reference
   (`ask`), doc/cli/AskTutorial.md and doc/hdumppath.md are corrected.
+- **The Tutorial's thread-state filter matched nothing on JDK recordings (#288).** JDK recordings
+  name thread states as HotSpot does (`STATE_RUNNABLE`, ...), so
+  `events/jdk.ExecutionSample[state="RUNNABLE"]` in doc/cli/Tutorial.md counted 0, and the
+  `isRunnable()` helpers in doc/parser/TypedAPITutorial.md were never true. The examples now use
+  `STATE_RUNNABLE`, and the Tutorial says that state names are the producer's (the Datadog profiler
+  writes `RUNNABLE`). jfr-shell tests that filtered on `RUNNABLE` passed while matching nothing;
+  they now use the recording's names and assert what matched.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

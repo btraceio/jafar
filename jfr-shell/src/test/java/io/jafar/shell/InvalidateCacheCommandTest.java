@@ -192,7 +192,8 @@ class InvalidateCacheCommandTest {
   void invalidateOneOfMultipleVariables() {
     // Create multiple lazy query variables
     dispatcher.dispatch("set result1 = events/jdk.ExecutionSample | count()");
-    dispatcher.dispatch("set result2 = events/jdk.ExecutionSample[state=\"RUNNABLE\"] | count()");
+    dispatcher.dispatch(
+        "set result2 = events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\"] | count()");
 
     // Invalidate only one
     dispatcher.dispatch("invalidate result1");
@@ -254,7 +255,7 @@ class InvalidateCacheCommandTest {
   @Test
   void invalidateFilteredQuery() {
     // Create a lazy variable with filters
-    dispatcher.dispatch("set filtered = events/jdk.ExecutionSample[state=\"RUNNABLE\"]");
+    dispatcher.dispatch("set filtered = events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\"]");
 
     // Invalidate it
     dispatcher.dispatch("invalidate filtered");
@@ -331,7 +332,8 @@ class InvalidateCacheCommandTest {
     dispatcher.dispatch("set result = events/jdk.ExecutionSample | count()");
 
     // Reassign to a different query
-    dispatcher.dispatch("set result = events/jdk.ExecutionSample[state=\"RUNNABLE\"] | count()");
+    dispatcher.dispatch(
+        "set result = events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\"] | count()");
 
     // Invalidate the reassigned variable
     dispatcher.dispatch("invalidate result");

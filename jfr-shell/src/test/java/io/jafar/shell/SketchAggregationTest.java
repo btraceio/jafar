@@ -152,22 +152,29 @@ class SketchAggregationTest {
 
   @Test
   void sketchWithFilter() throws Exception {
-    dispatcher.dispatch("show events/jdk.ExecutionSample[state=\"RUNNABLE\"]/duration | sketch()");
+    dispatcher.dispatch(
+        "show events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\"]/startTime | sketch()");
 
     String output = io.getOutput();
     assertNotNull(output);
     assertTrue(output.length() > 0, "Should produce output");
     assertTrue(output.contains("min") || output.contains("Min"), "Should contain statistics");
+    // test-ap.jfr's samples have no duration, so startTime is sketched. 6467 of its 8000 are
+    // STATE_RUNNABLE; [state="RUNNABLE"] matches none (#288)
+    assertTrue(output.contains("6467"), output);
   }
 
   @Test
   void sketchWithComplexFilter() throws Exception {
     dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[state=\"RUNNABLE\" and duration > 0]/duration | sketch()");
+        "show events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\" and startTime < 1704067230000000000]/startTime"
+            + " | sketch()");
 
     String output = io.getOutput();
     assertNotNull(output);
     assertTrue(output.length() > 0, "Should produce output");
+    // Both clauses count: 6467 are STATE_RUNNABLE, 4063 in the window, 3263 both
+    assertTrue(output.contains("3263"), output);
   }
 
   // ==================== Sketch Output Validation ====================
@@ -301,10 +308,12 @@ class SketchAggregationTest {
   @Test
   void sketchInPipeline() throws Exception {
     // Sketch as part of a longer pipeline
-    dispatcher.dispatch("show events/jdk.ExecutionSample[state=\"RUNNABLE\"]/duration | sketch()");
+    dispatcher.dispatch(
+        "show events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\"]/startTime | sketch()");
 
     String output = io.getOutput();
     assertNotNull(output);
     assertTrue(output.length() > 0, "Should work in pipeline");
+    assertTrue(output.contains("6467"), output);
   }
 }
