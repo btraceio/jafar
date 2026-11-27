@@ -763,17 +763,17 @@ public final class Main implements Callable<Integer> {
 
   /**
    * {@code compare <baseline> <candidate>}: the {@code jfr_compare} comparison, headless, for JFR
-   * recordings and pprof profiles in any pairing. Exits 0 when the comparison ran, whatever it
-   * found; 1 when it could not run (a missing or unreadable file, an unknown event or sample type,
-   * samplers that measure different things); and 2 on a usage error (a missing or malformed
-   * argument), with the message and usage on stderr. It reports where time moved; it does not
-   * decide whether a build got slower.
+   * recordings, pprof profiles and OTLP profiles in any pairing. Exits 0 when the comparison ran,
+   * whatever it found; 1 when it could not run (a missing or unreadable file, an unknown event or
+   * sample type, samplers that measure different things); and 2 on a usage error (a missing or
+   * malformed argument), with the message and usage on stderr. It reports where time moved; it does
+   * not decide whether a build got slower.
    *
    * <p>A file that starts with JFR's magic is read as a recording. Any other file goes to the first
    * module on the class path whose {@code canHandle} claims it and that has a {@link
    * io.jafar.shell.core.compare.ProfileReader}; when none does, it is read as a recording, so a
    * file that is neither fails with "cannot read JFR recording". jfr-shell's own jar knows JFR
-   * only; the {@code jafar-shell} jar adds the pprof module.
+   * only; the {@code jafar-shell} jar adds the pprof and OTLP modules.
    */
   @CommandLine.Command(
       name = "compare",
@@ -781,7 +781,8 @@ public final class Main implements Callable<Integer> {
       description =
           "Compare a candidate recording or profile against a baseline: per-frame self and"
               + " inclusive time shares, and event rates when both are JFR recordings. Each side"
-              + " is a JFR recording or a pprof profile (pprof needs the jafar-shell jar).")
+              + " is a JFR recording, a pprof profile or an OTLP profiles file (.otlp); pprof and"
+              + " OTLP need the jafar-shell jar.")
   static class CompareCommand implements Callable<Integer> {
     @CommandLine.Parameters(
         index = "0",
@@ -797,20 +798,20 @@ public final class Main implements Callable<Integer> {
         names = {"--sample-type"},
         paramLabel = "<type[/unit]>",
         description =
-            "pprof sample type, for every pprof side (default: the first CPU sample type, else"
-                + " the first)")
+            "pprof or OTLP sample type, for every pprof and OTLP side (default: the first CPU"
+                + " sample type, else the first)")
     private String sampleType;
 
     @CommandLine.Option(
         names = {"--baseline-sample-type"},
         paramLabel = "<type[/unit]>",
-        description = "pprof sample type of the baseline; overrides --sample-type")
+        description = "pprof or OTLP sample type of the baseline; overrides --sample-type")
     private String baselineSampleType;
 
     @CommandLine.Option(
         names = {"--candidate-sample-type"},
         paramLabel = "<type[/unit]>",
-        description = "pprof sample type of the candidate; overrides --sample-type")
+        description = "pprof or OTLP sample type of the candidate; overrides --sample-type")
     private String candidateSampleType;
 
     @CommandLine.Option(
@@ -946,7 +947,7 @@ public final class Main implements Callable<Integer> {
                   + path
                   + ": it is a "
                   + module.getDisplayName()
-                  + " file, and only JFR recordings and pprof profiles can be compared");
+                  + " file, and only JFR recordings, pprof and OTLP profiles can be compared");
         }
         return reader;
       }
@@ -976,16 +977,16 @@ public final class Main implements Callable<Integer> {
             + " --sample-type";
       }
       if (sampleType != null && baseReader == null && candReader == null) {
-        return "--sample-type selects a pprof sample type, and both files are JFR recordings: use"
-            + " --event-type";
+        return "--sample-type selects a pprof or OTLP sample type, and both files are JFR"
+            + " recordings: use --event-type";
       }
       if (baselineSampleType != null && baseReader == null) {
-        return "--baseline-sample-type selects a pprof sample type, and the baseline is a JFR"
-            + " recording: use --event-type";
+        return "--baseline-sample-type selects a pprof or OTLP sample type, and the baseline is a"
+            + " JFR recording: use --event-type";
       }
       if (candidateSampleType != null && candReader == null) {
-        return "--candidate-sample-type selects a pprof sample type, and the candidate is a JFR"
-            + " recording: use --event-type";
+        return "--candidate-sample-type selects a pprof or OTLP sample type, and the candidate is"
+            + " a JFR recording: use --event-type";
       }
       return null;
     }
@@ -1023,7 +1024,7 @@ public final class Main implements Callable<Integer> {
             isJfr(path)
                 ? ""
                 : " (it is not a JFR recording, and no module on the class path reads it: pprof"
-                    + " profiles are read by the jafar-shell jar)";
+                    + " and OTLP profiles are read by the jafar-shell jar)";
         throw new IllegalArgumentException(
             "cannot read JFR recording " + path + ": " + describe(e) + hint, e);
       }

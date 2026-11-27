@@ -232,12 +232,12 @@ public class CommandDispatcher {
   public static boolean isVerboseEnabled() {
     String prop = System.getProperty("jfr.shell.verbose");
     if (prop != null) {
-      String v = prop.trim().toLowerCase();
+      String v = prop.trim().toLowerCase(Locale.ROOT);
       return v.equals("1") || v.equals("on") || v.equals("true");
     }
     String env = System.getenv("JFR_SHELL_VERBOSE");
     if (env != null) {
-      String v = env.trim().toLowerCase();
+      String v = env.trim().toLowerCase(Locale.ROOT);
       return v.equals("1") || v.equals("on") || v.equals("true");
     }
     return false;

@@ -5,6 +5,7 @@ import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.CompletionContextType;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.jline.reader.Candidate;
 
@@ -23,11 +24,11 @@ public final class PprofPipelineOperatorCompleter
   @Override
   public void complete(
       CompletionContext ctx, PprofMetadataService metadata, List<Candidate> candidates) {
-    String partial = ctx.partialInput().toLowerCase();
+    String partial = ctx.partialInput().toLowerCase(Locale.ROOT);
     String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
 
     for (String op : metadata.getOperators()) {
-      if (op.toLowerCase().startsWith(partial)) {
+      if (op.toLowerCase(Locale.ROOT).startsWith(partial)) {
         boolean noParam = NO_PARAM_OPS.contains(op);
         String value = noParam ? op + "()" : op + "(";
         candidates.add(candidateNoSpace(prefix + value, getTemplate(op), getDescription(op)));
