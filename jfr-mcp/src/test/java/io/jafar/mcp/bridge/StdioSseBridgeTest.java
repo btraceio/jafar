@@ -31,6 +31,19 @@ class StdioSseBridgeTest {
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final long WAIT_MS = 10_000;
 
+  /**
+   * How long the bridge waits for the daemon during a (re)connect: for the stream to announce its
+   * message endpoint, and for the replayed initialize to be answered. A request sent while the
+   * bridge must (re)connect is delivered only if one of three attempts gets both within it; when
+   * all three time out the bridge fails the request and the daemon never sees it (#257: 1.5 s, on a
+   * loaded CI runner). Three attempts fit in {@link #WAIT_MS}, so a failed reconnect still shows
+   * the bridge's error. Production waits 10 seconds.
+   */
+  private static final Duration HANDSHAKE_TIMEOUT = Duration.ofSeconds(3);
+
+  /** For a test of a replay the daemon never answers: its three attempts must fit in WAIT_MS. */
+  private static final Duration SHORT_HANDSHAKE_TIMEOUT = Duration.ofMillis(1500);
+
   private FakeSseDaemon daemon;
   private PipedOutputStream toBridge;
   private final BlockingQueue<String> stdoutLines = new LinkedBlockingQueue<>();
@@ -50,6 +63,15 @@ class StdioSseBridgeTest {
 
   private void start(boolean requireAuth, String tokenToSend, StdioSseBridge.Hooks hooks)
       throws Exception {
+    start(requireAuth, tokenToSend, hooks, HANDSHAKE_TIMEOUT);
+  }
+
+  private void start(
+      boolean requireAuth,
+      String tokenToSend,
+      StdioSseBridge.Hooks hooks,
+      Duration handshakeTimeout)
+      throws Exception {
     daemon = new FakeSseDaemon().start(requireAuth);
     toBridge = new PipedOutputStream();
     PipedInputStream bridgeIn = new PipedInputStream(toBridge, 1 << 16);
@@ -61,7 +83,7 @@ class StdioSseBridgeTest {
             bridgeIn,
             bridgeOut,
             new PrintStream(diag, true, StandardCharsets.UTF_8),
-            Duration.ofMillis(1500),
+            handshakeTimeout,
             hooks != null ? hooks : new StdioSseBridge.Hooks() {});
     bridgeThread = new Thread(() -> exitCode.set(bridge.run()), "bridge-under-test");
     bridgeThread.setDaemon(true);
@@ -145,7 +167,39 @@ class StdioSseBridgeTest {
       }
       Thread.sleep(20);
     }
-    throw new AssertionError("daemon never received " + count + " x " + method);
+    throw new AssertionError(
+        "daemon never received "
+            + count
+            + " x "
+            + method
+            + " within "
+            + WAIT_MS
+            + "ms; it received "
+            + daemon.received().stream().map(FakeSseDaemon.Received::method).toList()
+            + "; bridge diagnostics: "
+            + diag.toString(StandardCharsets.UTF_8)
+            + "; bridge threads:\n"
+            + bridgeThreads());
+  }
+
+  /** The stacks of the bridge's and the fake daemon's threads, for a timeout's message. */
+  private static String bridgeThreads() {
+    StringBuilder out = new StringBuilder();
+    Thread.getAllStackTraces()
+        .forEach(
+            (thread, stack) -> {
+              String name = thread.getName();
+              // The bridge's threads, and the fake daemon's (Jetty's pool)
+              if (name.startsWith("jfr-mcp-bridge")
+                  || name.equals("bridge-under-test")
+                  || name.startsWith("qtp")) {
+                out.append(name).append(" (").append(thread.getState()).append(")\n");
+                for (StackTraceElement frame : stack) {
+                  out.append("    at ").append(frame).append('\n');
+                }
+              }
+            });
+    return out.toString();
   }
 
   @Test
@@ -433,7 +487,7 @@ class StdioSseBridgeTest {
 
   @Test
   void aHandshakeReplayTheDaemonNeverAnswersFailsTheRequestInsteadOfHanging() throws Exception {
-    start(true, FakeSseDaemon.TOKEN);
+    start(true, FakeSseDaemon.TOKEN, null, SHORT_HANDSHAKE_TIMEOUT);
     handshake();
     daemon.answerInitialize(false);
     daemon.dropAllSessions();
