@@ -344,6 +344,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `STATE_RUNNABLE`, and the Tutorial says that state names are the producer's (the Datadog profiler
   writes `RUNNABLE`). jfr-shell tests that filtered on `RUNNABLE` passed while matching nothing;
   they now use the recording's names and assert what matched.
+- **A heap dump with an array over 2 GB reported a negative heap size (#262).** The shallow size
+  (header estimate plus data) was computed in `int`, so an array whose shallow size exceeds
+  `Integer.MAX_VALUE` bytes wrapped to a negative number. That number went into
+  `getTotalHeapSize()` (a dump holding one 300-million-element `long[]` reported -2,147,483,629
+  bytes in both parsing modes) and into retained sizes (-2,147,483,629 for that array, in both
+  modes). The heap total now adds exact `long` sizes (an indexed array's from its length and
+  element size). `HeapObject.getShallowSize()`, still an `int`, is capped at `Integer.MAX_VALUE`
+  instead of going negative; retained sizes are summed from it, so such an object counts as
+  `Integer.MAX_VALUE` bytes in them, an undercount, not a negative
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
