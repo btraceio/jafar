@@ -377,6 +377,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloaded it). In `jafar-shell`, a `-b`
   before `script` now runs the script in the unified shell, as `script -b` does, and `script -b`
   checks the backend instead of falling back to the default for an unknown one
+- **The dev-build backend warning was wrong for both in-tree backends (#267).** `JdkJfrBackend`
+  reported the JDK's version (`25.0.5.1+2-LTS`) as its own, so a `-SNAPSHOT` shell warned that its
+  `jdk` backend was not the one built with it even when `-Djfr.shell.backend.jars` loaded exactly
+  that jar. `JafarBackend` read its version through `Class.getPackage()`; the shell loads every
+  plugin jar through one class loader, where both backends' package takes the manifest of whichever
+  jar defines it first, so a released `jafar` backend next to a built `jdk` jar reported the `jdk`
+  jar's version and the warning about the stale `jafar` stayed silent. Both now report the
+  `Implementation-Version` of the jar they were loaded from, or `dev` from a classes directory, a
+  jar with no or a blank attribute, or an unreadable location; the `backend` command shows that
+  version (`dev` for the backends bundled in the `jafar-shell` jar, where the `jdk` backend used to
+  show the JDK's version). Released backend jars up to 0.29.0 keep the old code, so a released
+  `jafar` plugin next to a built `jdk` jar is still not flagged. The warning still compares versions
+  only, so it cannot tell a stale SNAPSHOT jar from a fresh one
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

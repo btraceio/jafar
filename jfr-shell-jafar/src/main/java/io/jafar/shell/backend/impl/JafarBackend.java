@@ -43,10 +43,39 @@ public final class JafarBackend implements JfrBackend {
 
   @Override
   public String getVersion() {
-    // Could read from manifest, but keeping it simple
-    return getClass().getPackage().getImplementationVersion() != null
-        ? getClass().getPackage().getImplementationVersion()
-        : "dev";
+    return buildVersion(JafarBackend.class);
+  }
+
+  /**
+   * The {@code Implementation-Version} in the manifest of the jar {@code type} was loaded from, or
+   * {@code dev} (a classes directory, or a jar without the attribute). Read from that jar itself,
+   * not from {@link Class#getPackage()}: the jdk backend has classes in this package too, and the
+   * shell loads every plugin jar through one class loader, where the package's version is whichever
+   * jar defined it first. A released jafar backend next to a built jdk jar reported the jdk jar's
+   * version and hid the stale-backend warning (#267). The jdk backend has the same method: a plugin
+   * cannot rely on a shell-core helper an older shell lacks.
+   */
+  static String buildVersion(Class<?> type) {
+    try {
+      java.security.CodeSource source = type.getProtectionDomain().getCodeSource();
+      if (source == null || source.getLocation() == null) {
+        return "dev";
+      }
+      Path location = Path.of(source.getLocation().toURI());
+      if (!java.nio.file.Files.isRegularFile(location)) {
+        return "dev"; // a classes directory
+      }
+      try (java.util.jar.JarFile jar = new java.util.jar.JarFile(location.toFile())) {
+        java.util.jar.Manifest manifest = jar.getManifest();
+        String version =
+            manifest == null
+                ? null
+                : manifest.getMainAttributes().getValue("Implementation-Version");
+        return version == null || version.isBlank() ? "dev" : version;
+      }
+    } catch (java.io.IOException | java.net.URISyntaxException | RuntimeException e) {
+      return "dev"; // no manifest to read: treated as a build of this tree, as before
+    }
   }
 
   @Override
