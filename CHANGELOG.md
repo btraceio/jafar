@@ -30,8 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as stored, and a trailing `:<line>` (jfr2pprof's `includeLineNumbers`) is not part of a frame's
   name. pprof records no truncation, so inclusive moves are judged with a note. The comparison is now `ProfileCompare` in
   `io.jafar.shell.core.compare`; `JfrCompare` reads recordings, `PprofProfileReader` (`pprof-shell`)
-  reads profiles, and a module offers its reader through `ShellModule.profileReader()`. OTLP is not
-  covered yet. See [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
+  reads profiles, and a module offers its reader through `ShellModule.profileReader()`. See
+  [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
+- **OTLP profiles in `compare` and `profile_compare`** - an OTLP profiles file (`.otlp`) can be
+  compared against a JFR recording, a pprof profile or another OTLP file: `compare` reads it from
+  the `jafar-shell` jar, and `profile_compare` takes `{format: otlp, sessionId}` for a session
+  `otlp_open` opened. `OtlpProfileReader` (`otlp-shell`) follows the pprof reader's rules. A file's
+  sample types are its profiles' distinct `type/unit` pairs (`--list-sample-types`,
+  `--sample-type`); the selected type reads every profile of that type. Counts come from a `count`
+  sample type (not an allocation or lock one), one per sample timestamp, or values over the period.
+  async-profiler's agent sample-type names (`perf_events` with a `perf_events/ns` period, `itimer`,
+  `ctimer`, `wall`, `object_sampler`, `malloc_tracer`, `lock_tracer`) have their kinds, and its
+  frame-type marks (`byte[]_[i]`, `_[k]`) are not part of a frame's name. Checked against real
+  async-profiler 4.6 files (`otlp-shell/src/test/resources/real/`): one run as JFR, OTLP and pprof
+  gives identical frames and counts
 - **Work budgets** (`gradle/work-budgets.properties`, the `workTest` tasks of `parser-core` and
   `parser-codegen`) - a ratchet gate on how much work a parse does, counted rather than timed:
   chunks started and read, events read and decoded, varints read, values skipped, constant-pool
@@ -183,6 +195,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **OTLP: stacks, attributes and values of real files** - OtlpPath (`show samples`, the `otlp_*`
+  MCP tools) took OTLP table indices as one-based and resolved every stack, location, function and
+  attribute to the entry before it; opentelemetry-proto v1.10.0 puts each table's zero value at
+  index 0 and async-profiler 4.6 writes it, so indices are absolute. A sample's value is now the sum
+  of its values, or its timestamp count when it has none (`jfrconv -o otlp` writes one value per
+  timestamp, or none), not its first value. The OTLP parser refuses older `v1development` layouts
+  (opentelemetry-proto v1.7.0, which async-profiler 4.1 writes; v1.8.0 and v1.9.0 samples with
+  attributes) instead of misreading them
 - **`groupBy`, `stats()`, `quantiles()` and `timerange()` got slower with more parser threads** -
   each updated one shared accumulator under a lock for every event. They now accumulate per thread
   and merge after the parse. On a 4.16 GB recording at the new default of 4 threads:

@@ -1,8 +1,9 @@
 # Cross-format profile compare (JFR, pprof, OTLP)
 
-Status: design accepted, 2026-11-26; v1 (JFR and pprof, decision D7) built. Every decision in
-section 7 was taken as recommended; section 8 lists what was not verified, and section 9 what v1
-did differently from this plan, section 10 what real Go and async-profiler files showed.
+Status: design accepted, 2026-11-26; v1 (JFR and pprof, decision D7) built; OTLP added
+2026-11-27 (D7 (b) now done). Every decision in section 7 was taken as recommended; section 8 lists
+what was not verified, and section 9 what v1 did differently from this plan, section 10 what real
+Go and async-profiler pprof files showed, section 11 what real async-profiler OTLP files showed.
 
 Origin: idea 2 of the 2026-11 brainstorm. PR #252 moved the comparison into
 `shell-core/src/main/java/io/jafar/shell/core/compare/`. `RecordingProfile` already looks
@@ -317,7 +318,7 @@ The tests:
 7. **D7. OTLP scope in v1.** Options: (a) pprof only, OTLP in a follow-up; (b) both. *Recommend
    (a).* The OTLP shell has open questions (section 8: index base, empty `values`, multiple values)
    that should be settled against a real exporter's output first, and there is no OTLP fixture
-   from a real exporter.
+   from a real exporter. *Done 2026-11-27: settled against async-profiler 4.6, see section 11.*
 8. **D8. Default pprof sample type.** Options: (a) the first CPU-kind type; (b) the *last* type,
    which is what (I believe) the Go `pprof` tool does without `default_sample_type`; (c) parse
    field 14. *Recommend (a) now, (c) later* (that change touches the gated pprof API).
@@ -340,9 +341,10 @@ The tests:
 - **OTLP index base.** `OtlpPathEvaluator` subtracts 1 from stack, location, function and
   attribute indices (`:92,114,118,122`), and `MinimalOtlpBuilder` writes those tables without a
   sentinel at index 0. The two agree with each other. I did not check either against a
-  spec-conformant exporter that writes the zero entry.
+  spec-conformant exporter that writes the zero entry. *Checked in section 11: both were wrong.*
 - **OTLP values.** I did not check the OTLP spec's rule for samples with empty `values` (counted
   per timestamp?) or with several values. The shell's `values.get(0)` behaviour may undercount.
+  *Checked in section 11: it did.*
 - **Other tools' pprof output.** I did not check what async-profiler or Go write for Java/Go
   function names, sample types or period. The sampler-kind table in section 4 is a proposal, not a
   survey. *Checked in section 10.*
@@ -458,3 +460,97 @@ Open (not changed; each needs a decision):
 - **`JfrAnalyses.isNativeFrame`** calls any name with `<` native, so a constructor
   (`MethodHandle.<init>`) gets `type: native` in compare rows. Shared with other analyses, so not
   changed here.
+
+## 11. OTLP, checked against async-profiler (2026-11-27)
+
+The OTLP reader and the compare were checked against files async-profiler wrote: 4.6 (the latest
+release) with its agent's `otlp` output and `jfrconv -o otlp`, and 4.1's agent. The files, the
+program, the exact commands and the sha256 are in `otlp-shell/src/test/resources/real/README.md`;
+`RealOtlpProfilesTest` (otlp-shell), `RealOtlpCompareTest` (jafar-shell), `ProfileCompareToolTest`
+and `McpEndToEndTest` (jfr-mcp) read them. No other producer was tried: the OpenTelemetry eBPF
+profiler needs a privileged host kernel.
+
+What the files are (decoded field by field against `profiles.proto` of each opentelemetry-proto
+tag, independently of the parser):
+
+| | async-profiler 4.6 agent | 4.6 `jfrconv -o otlp` | 4.1 agent |
+|---|---|---|---|
+| Layout | v1.10.0 | v1.10.0 | v1.7.0 |
+| Profiles per file | 1 (only JFR output takes several events) | 1 | 1, two sample types |
+| Sample type | engine name: `perf_events/count`, `wall/count`, `object_sampler/count` | `cpu/count`, `allocations/count`; `--wall` is also `cpu/count` | `<engine>/count` and `<engine>/ns` |
+| Period | `perf_events/ns` 10 ms, `wall/ns` 50 ms, `object_sampler/bytes` 524,287 | `cpu/nanoseconds` | none |
+| Values | one per record, samples aggregated over equal stacks | none (timestamps only), or one per timestamp for a multi-event JFR | two per record |
+| Timestamps | none | one per sample | none |
+| `time_unix_nano`, `duration_nano` | set (about 2.02 s) | set | none |
+| Zero value at index 0 | every table, `string_table[0] = ""` | the same | no: `string_table[0]` is the engine name |
+| Function fields | `name` only | `name` only | `name` only |
+| `Line.line` | 0 | the line number | 0 |
+| Attributes | none | `thread.name` per sample | none |
+| Frame names | slashed Java, `.0x...` hidden classes, bare native/kernel symbols; `_[i]`/`_[k]` frame-type marks | the same, without marks | the same as the 4.6 agent |
+
+The open questions of section 8, answered:
+
+- **Index base.** Every table carries its zero value at index 0 and indices are absolute, as
+  v1.10.0 requires ("MUST be the zero value ... and present"). `OtlpPathEvaluator` subtracted 1, so
+  on a real file stack 1 resolved to the empty stack 0 and every other index to the entry before;
+  `MinimalOtlpBuilder` omitted the zero values, so its tests agreed. Both fixed; the parser was
+  already right (its Javadoc said index 0 is the sentinel).
+- **Empty `values`.** v1.10.0: a sample has values or timestamps, and with timestamps only "each
+  point" counts 1. `jfrconv` writes exactly that. The shell read 0 (216 samples read as 0).
+- **Several values.** With timestamps, one value per timestamp, each the value of that event
+  (`jfrconv` on a multi-event JFR, values up to 13). `values.get(0)` read 85 of 1,161 samples. A
+  sample's value is now the sum, or the timestamp count without values.
+- **Sample types, period, duration, timestamps.** One sample type per profile (singular since
+  v1.8.0), period type and period beside it, `time_unix_nano` (fixed64) and `duration_nano`; see
+  the table. The reader's duration is from the first profile start to the last end, else the
+  timestamp span.
+- **Frame naming.** `Function.name` only; no system name, file or start line from either. The
+  compare keys by name, so nothing is lost; JFR, `jfrconv` OTLP and `jfrconv` pprof of one run give
+  identical leaf and inclusive maps (216 samples).
+- **Several profiles per file.** Not from async-profiler. The reader lists the distinct
+  `type/unit` pairs, selects one, and reads every profile of it together (a collector may batch
+  several; the merge is a choice, not something a real file showed).
+
+Fixed, each with a test that fails without the fix (commit messages carry the assertions):
+
+- OtlpPath's index base (above), and `MinimalOtlpBuilder` writes the zero values.
+- OtlpPath's value of a sample with no or several values (above).
+- The parser read v1.7.0 files without error into garbage (`Profile` field 3 is packed
+  `location_indices` there, `Sample` fields 1 to 3 are a location slice and the values). It now
+  refuses them, and v1.8.0/v1.9.0 samples with attributes (their `Sample` field 3 is packed
+  `attribute_indices`, where v1.10.0 has the int32 `link_index`), naming the layout. No API
+  signature changed.
+- `SamplerKind` did not know async-profiler's engine names, so its CPU OTLP was `UNKNOWN` and CPU
+  against wall was compared with a note instead of refused; `FrameNames` kept the agent's `_[i]`
+  marks, so its allocation leaves (`byte[]_[i]`) would not match its JFR or pprof.
+
+What OTLP support does differently from section 4/5:
+
+- **Counts have no partner column.** Each OTLP profile has one sample type, and samples cannot be
+  paired across profiles. Instead, timestamps count: when every sample of a non-`count`, non-
+  allocation, non-lock profile has timestamps, each is an observation.
+- **`perf_events` is CPU only with its `perf_events/ns` period type**, because the engine also
+  samples hardware counters.
+- **The selection merges profiles of one type**, and says so in `sampleTypeChosen`.
+
+Open (each needs a decision):
+
+- **v1.8.0 and v1.9.0 files.** Their `Sample` has `values = 2`, `attribute_indices = 3`; v1.10.0
+  swapped them. A sample with attributes is refused; one without is read with its values as
+  attribute indices and no values, so its weight is 0. No producer of those versions was at hand.
+  Options: (a) keep refusing what can be detected; (b) read both layouts, choosing by a heuristic
+  over the whole file; (c) add a version option. Recommended: (a) until a real v1.8/v1.9 file is
+  seen, then (b) against it.
+- **async-profiler 4.1 (v1.7.0) is refused, not read.** Reading it needs a second layout and a
+  model with several sample types per profile, which changes the gated `OtlpProfile.Profile`
+  record. Recommended: refuse (4.6 is current), unless users ask.
+- **`jfrconv --wall -o otlp` names its wall profile `cpu/count`**, as in pprof (section 10).
+  Recommended: document (done) and report upstream; the agent's own `wall/count` is right.
+- **`jfrconv --cpu --total -o otlp`** writes `cpu/nanoseconds` with timestamps and no values, so by
+  v1.10.0 each sample weighs 1 nanosecond; the shares are right, the unit is not. Recommended:
+  report upstream; the reader counts the timestamps, so counts are right.
+- **The agent's `object_sampler/count` counts sampled allocations** (1,405, about the 1,430 of 4.1's
+  pprof), but every allocation count is treated as an estimate (section 10's open item), so an
+  async-profiler allocation pair is not judged. The same decision applies.
+- **`OtlpSession.getStatistics()`** reports table sizes including the zero values (one more than the
+  real entries). Cosmetic; not changed.
