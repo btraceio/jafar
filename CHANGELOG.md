@@ -211,6 +211,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The buffer is not unmapped at close directly: event values resolve constant-pool entries from it
   lazily, and a read after an explicit unmap could crash the JVM
+- **A closed recording could stay mapped after `jfr_close` (#279).** `CloseReleasesMappedFileTest`
+  failed on CI: the file was still mapped after the collection `jfr_close` requests. It was not
+  reproduced on demand (6 of 150 runs once, then 0 of 750), so the two changes below close the gaps
+  found rather than a confirmed cause:
+  - `StreamingChunkParser.close()` shut its chunk parsing pool down without waiting, so its worker
+    threads, whose thread-locals hold the last parse's data, could outlive the call. When a parse
+    failed, `close()` could return while another chunk's task was still running on the file.
+    `close()` now waits up to 5 seconds in all for the pool to terminate and its threads to end,
+    then interrupts the tasks still running and logs a warning for each thread still alive. An
+    interrupted `close()` stops waiting and keeps the interrupt; a `close()` called from one of the
+    parser's own threads (a listener) does not wait. The threads are now named
+    `jafar-chunk-parser-<n>`, numbered across parsers.
+  - `jfr_close`, `hdump_close` and the `--attach` server's release of disconnected clients' sessions
+    request a follow-up collection 500 ms after the last close, on a daemon thread, in case a buffer
+    was still briefly held while the first collection ran. It is requested on every close (closes
+    within 500 ms of each other share one): there is no portable way to ask the JVM whether the file
+    is still mapped
 - **Numbers in tool payloads, reports and shell output followed the JVM default locale (#224).**
   On a ru-RU or de-DE host `jfr_summary` returned `"pct": "66,6%"` and `"topMethod": "... (34,9%)"`,
   `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON

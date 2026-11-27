@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,6 +30,23 @@ public final class StreamingChunkParser implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(StreamingChunkParser.class);
 
   private final ExecutorService executor;
+
+  /** The name prefix of the chunk parsing threads; each is numbered. */
+  static final String WORKER_THREAD_PREFIX = "jafar-chunk-parser-";
+
+  /** Numbers the chunk parsing threads across parsers, so that thread dumps tell them apart. */
+  private static final java.util.concurrent.atomic.AtomicInteger WORKER_COUNT =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  /** How long close() waits, in all, for the chunk parsing threads to end. */
+  private static final long CLOSE_TIMEOUT_MILLIS = 5_000;
+
+  /** The part of {@link #CLOSE_TIMEOUT_MILLIS} left to tasks interrupted at its end. */
+  private static final long CLOSE_INTERRUPT_RESERVE_MILLIS = 250;
+
+  /** The pool's threads, so close() can wait for them to end. */
+  private final java.util.Queue<Thread> workers =
+      new java.util.concurrent.ConcurrentLinkedQueue<>();
 
   private boolean closed = false;
   private final ParserContextFactory contextFactory;
@@ -63,8 +81,9 @@ public final class StreamingChunkParser implements AutoCloseable {
         Executors.newFixedThreadPool(
             parallelism == 0 ? defaultParallelism() : parallelism,
             r -> {
-              Thread t = new Thread(r);
+              Thread t = new Thread(r, WORKER_THREAD_PREFIX + WORKER_COUNT.incrementAndGet());
               t.setDaemon(true);
+              workers.add(t);
               return t;
             });
   }
@@ -386,6 +405,52 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (!closed) {
       closed = true;
       executor.shutdown();
+      // Wait for the workers to end. Until a thread ends, its thread-locals keep the last parse's
+      // data reachable, and through it the mapped file: a collection requested right after close,
+      // as jfr-mcp's jfr_close does, could miss it and leave the file mapped (#279). A worker
+      // closing its own parser cannot wait for itself.
+      if (!workers.contains(Thread.currentThread())) {
+        awaitWorkers();
+      }
+      workers.clear();
+    }
+  }
+
+  /**
+   * Waits up to {@link #CLOSE_TIMEOUT_MILLIS} in all for the pool to terminate and its threads to
+   * end; the pool reports termination just before its threads end. Interrupts the tasks still
+   * running near the deadline, or when the caller is interrupted (its interrupt status is kept),
+   * and leaves the interrupted tasks the rest of the time to end.
+   */
+  private void awaitWorkers() {
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CLOSE_TIMEOUT_MILLIS);
+    try {
+      if (!executor.awaitTermination(
+          CLOSE_TIMEOUT_MILLIS - CLOSE_INTERRUPT_RESERVE_MILLIS, TimeUnit.MILLISECONDS)) {
+        executor.shutdownNow();
+      }
+      for (Thread worker : workers) {
+        long left = deadline - System.nanoTime();
+        if (left <= 0) {
+          break;
+        }
+        // Ceiling, so a positive remainder never becomes join(0), which waits forever
+        worker.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(left + 999_999)));
+      }
+    } catch (InterruptedException e) {
+      executor.shutdownNow();
+      Thread.currentThread().interrupt();
+    }
+    if (!executor.isTerminated()) {
+      // A task still runs; a thread of a terminated pool is only ending
+      for (Thread worker : workers) {
+        if (worker.isAlive()) {
+          log.warn(
+              "Chunk parsing thread {} is still running after close(); the recording it reads may"
+                  + " stay open until it ends",
+              worker.getName());
+        }
+      }
     }
   }
 

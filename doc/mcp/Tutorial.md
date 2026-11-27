@@ -230,11 +230,12 @@ Closes a JFR recording session.
 
 Recordings are read through memory-mapped buffers, and the JDK unmaps a buffer only after a garbage
 collection has found it unreachable. On Windows a mapped file cannot be deleted, moved or
-overwritten, so after closing a session `jfr_close` (and `hdump_close`) requests a collection; the
-JDK's cleaner thread then unmaps the file shortly afterwards. With the default collector that is a
-full, stop-the-world collection, which pauses every client of a shared `--attach` server. The
-request does nothing when the server runs with `-XX:+DisableExplicitGC`; the file is then released
-by the next collection that happens on its own.
+overwritten, so after closing a session `jfr_close` (and `hdump_close`) requests a collection, and a
+follow-up one 500 ms after the last close, in case a buffer was still briefly in use during the
+first; the JDK's cleaner thread then unmaps the file shortly afterwards. With the default collector
+each is a full, stop-the-world collection, which pauses every client of a shared `--attach` server.
+The requests do nothing when the server runs with `-XX:+DisableExplicitGC`; the file is then
+released by the next collection that happens on its own.
 
 **Parameters:**
 | Name | Type | Required | Description |
