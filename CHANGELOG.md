@@ -170,6 +170,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **JfrPath `[...]` and `filter(...)` disagreed on `== null` and on indexed paths (#309).**
+  `[x == null]` matched nothing for a missing `x` while `filter(x == null)` matched every such row,
+  and `filter(stackTrace/frames/0/lineNumber >= 0)` read `0` as a map key and matched nothing while
+  the `[...]` form matched. Both now treat `= null`/`!= null` as presence checks (a missing or null
+  field, a missing step on a nested path included), and `filter(...)` reads array indexes as
+  `[...]` does: so a slice that is not the last part of a path now fails in `filter(...)` as in
+  `[...]`. A path crossing an array without an index does not resolve, and reads as missing. The
+  `any:`/`all:`/`none:` forms are unchanged.
 - **JfrPath function conditions in `| filter(...)` matched nothing; `len()` comparisons did not
   parse (#303).** The pipeline filter had no case for a function condition, so `filter(between(...))`,
   `filter(contains(...))` and the other functions matched no row while the same `[...]` predicate
