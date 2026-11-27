@@ -20,6 +20,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -280,7 +281,7 @@ public final class JfrSessionTools {
       List<String> filteredTypes = new ArrayList<>();
       for (String eventType : eventTypes) {
         if (filter != null && !filter.isBlank()) {
-          if (!eventType.toLowerCase().contains(filter.toLowerCase())) {
+          if (!eventType.toLowerCase(Locale.ROOT).contains(filter.toLowerCase(Locale.ROOT))) {
             continue;
           }
         }
@@ -469,7 +470,7 @@ public final class JfrSessionTools {
     }
 
     String content =
-        switch (topic.toLowerCase()) {
+        switch (topic.toLowerCase(Locale.ROOT)) {
           case "overview" -> getOverviewHelp();
           case "filters" -> getFiltersHelp();
           case "pipeline" -> getPipelineHelp();

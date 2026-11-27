@@ -103,6 +103,31 @@ class StreamingPathTest {
   }
 
   @Test
+  void filterOnAFieldNoRowHasFailsWhileStreaming() {
+    // #295. Each shape takes a different streamed path: a leading filter() runs with the query's
+    // predicates (count from the stream, or a top() head), one after a row op runs per row
+    for (String query :
+        List.of(
+            "objects | filter(nosuch > 1) | count()",
+            "objects[nosuch > 1] | top(5, shallow)",
+            "objects | waste() | filter(nosuch > 1) | top(5, shallow)",
+            "objects | filter(nosuch > 1)")) {
+      IllegalArgumentException e =
+          assertThrows(IllegalArgumentException.class, () -> run(query), query);
+      assertTrue(
+          e.getMessage().startsWith("filter: field 'nosuch'"), query + ": " + e.getMessage());
+    }
+    // After a streamed top() the rows are still objects: a column none of them has (no Strings
+    // here) is no error
+    assertEquals(List.of(), run("objects | top(5, shallow) | filter(stringValue = \"x\")"));
+    // A field only some streamed rows have filters as before: the arrays of lengths 16, 20, 64
+    assertEquals(
+        3L,
+        ((Number) run("objects | filter(arrayLength > 15) | count()").get(0).get("count"))
+            .longValue());
+  }
+
+  @Test
   void wasteThenTopStreamsEveryObject() {
     // Was waste() over the 100 objects the cap kept, which did not include the HashMap
     List<Map<String, Object>> top = run("objects | waste() | top(2, wastedBytes)");

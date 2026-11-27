@@ -100,6 +100,9 @@ Operators are chained with `|`:
 samples | groupBy(thread, sum(cpu)) | head(10)
 ```
 
+The counts of `head(n)`, `tail(n)` and `top(n)` are whole numbers from 0 to 2147483647: `head(-1)`
+or `head(2.5)` fails to parse.
+
 ---
 
 ### `count()`

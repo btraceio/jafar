@@ -16,6 +16,21 @@ import java.util.Map;
  */
 public final class JfrFindings {
 
+  /**
+   * {@code cpu.saturation.source} in {@code jfr_use}'s result: container CPU throttling, the share
+   * of cgroup CFS periods the container was throttled in, measured between the {@code
+   * jdk.ContainerCPUThrottling} readings nearest the window (the counters count from the
+   * container's start; the measured span is given as {@code measuredFromEpochNanos}..{@code
+   * measuredToEpochNanos}).
+   */
+  public static final String SATURATION_CONTAINER_THROTTLING = "containerThrottling";
+
+  /**
+   * {@code cpu.saturation.source} in {@code jfr_use}'s result: the share of execution samples in
+   * blocking thread states, used when the recording has no {@code jdk.CPULoad} events.
+   */
+  public static final String SATURATION_THREAD_STATES = "threadStates";
+
   private JfrFindings() {}
 
   /** Derives findings from a {@code jfr_use} resource-metrics map. */
@@ -29,20 +44,36 @@ public final class JfrFindings {
     Map<String, Object> cpu = asMap(resourceMetrics.get("cpu"));
     if (cpu != null && !cpu.containsKey("error")) {
       Map<String, Object> saturation = asMap(cpu.get("saturation"));
-      if (saturation != null && saturation.get("value") instanceof Number value) {
+      if (saturation != null
+          && "%".equals(saturation.get("unit"))
+          && saturation.get("value") instanceof Number value) {
         double satPct = value.doubleValue();
         if (satPct > 30) {
+          boolean throttling = SATURATION_CONTAINER_THROTTLING.equals(saturation.get("source"));
+          Finding.Builder finding = Finding.of("cpu", "saturation").warning();
+          if (throttling) {
+            finding
+                .title("CPU saturation: container throttled in %.1f%% of CPU periods", satPct)
+                .description(
+                    "The container's CPU quota held the JVM back in a substantial share of"
+                        + " scheduling periods: threads were ready to run but not allowed to.")
+                .action(
+                    "Raise the container's CPU limit or reduce CPU demand; throttling does not"
+                        + " show up as lock contention in jfr_tsa");
+          } else {
+            finding
+                .title("CPU saturation: %.1f%% of execution samples in blocking states", satPct)
+                .description(
+                    "Threads are spending a substantial share of their time off-CPU. The"
+                        + " bottleneck is contention or waiting, not raw compute.")
+                .action("Run jfr_tsa to identify which threads wait and on what");
+          }
           findings.add(
-              Finding.of("cpu", "saturation")
-                  .warning()
-                  .title("CPU saturation: %.1f%% of CPU time spent waiting or blocked", satPct)
-                  .description(
-                      "Threads are spending a substantial share of their time off-CPU. The"
-                          + " bottleneck is contention or waiting, not raw compute.")
+              finding
                   .source(source)
                   .evidence("saturationPct", satPct)
+                  .evidence("saturationSource", saturation.get("source"))
                   .evidence("assessment", cpu.get("assessment"))
-                  .action("Run jfr_tsa to identify which threads wait and on what")
                   .build());
         }
       }

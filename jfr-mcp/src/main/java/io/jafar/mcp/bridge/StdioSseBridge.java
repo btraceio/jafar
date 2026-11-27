@@ -110,6 +110,12 @@ public final class StdioSseBridge {
 
     /** On an SSE reader thread: a response has been relayed or dropped. */
     default void responseHandled(String idKey) {}
+
+    /**
+     * On the stdin thread: the replayed initialize was not answered in time, and the connection it
+     * was sent on is not yet closed.
+     */
+    default void replayTimedOut() {}
   }
 
   private static final Hooks NO_HOOKS = new Hooks() {};
@@ -117,8 +123,6 @@ public final class StdioSseBridge {
   private final Hooks hooks;
 
   private volatile boolean closing;
-  private volatile String swallowId;
-  private volatile CountDownLatch swallowLatch = new CountDownLatch(0);
 
   // All guarded by this.
   private Connection connection;
@@ -164,6 +168,16 @@ public final class StdioSseBridge {
      */
     final Set<String> failed = ConcurrentHashMap.newKeySet();
 
+    /**
+     * The id of the replayed initialize whose reply this stream must hide from the client, or
+     * {@code null}. Per connection (#318): a reply that comes late, on the stream of an attempt
+     * that gave up, is swallowed there, and cannot release another attempt's wait.
+     */
+    volatile String swallowId;
+
+    /** Opens when this stream carried the reply to {@link #swallowId}, or ended. */
+    final CountDownLatch swallowed = new CountDownLatch(1);
+
     Connection(DaemonEndpoint endpoint, HttpURLConnection http, InputStream stream) {
       this.endpoint = endpoint;
       this.http = http;
@@ -172,6 +186,7 @@ public final class StdioSseBridge {
 
     void close() {
       dead = true;
+      swallowed.countDown(); // a dead connection's replay gets no answer, whoever closed it
       // HttpURLConnection.disconnect() closes the response stream first, and closing a chunked
       // stream waits for the reader thread's blocked read(): done inline it would stall the caller
       // (often while holding the bridge lock) until the daemon next sent something. Nothing the
@@ -377,18 +392,22 @@ public final class StdioSseBridge {
     if (init == null || init.idJson() == null) {
       return; // cannot happen for a line we cached, but never replay what we cannot match
     }
-    swallowId = init.idJson();
-    swallowLatch = new CountDownLatch(1);
+    c.swallowId = init.idJson();
     int status = postTo(c, initializeLine);
     if (status >= 300) {
       throw new IOException("the daemon rejected the re-initialize: HTTP " + status);
     }
-    if (!swallowLatch.await(handshakeTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-      swallowId = null;
+    if (!c.swallowed.await(handshakeTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+      // c.swallowId stays set: a reply that still comes on this stream is not the client's
+      hooks.replayTimedOut();
       throw new IOException(
           "the daemon did not answer the re-initialize within "
               + handshakeTimeout.toMillis()
               + "ms");
+    }
+    if (c.dead) {
+      // The stream ended during the wait (#321): the answer, if any, went with it
+      throw new IOException("the daemon's SSE stream ended during the re-initialize");
     }
     if (initializedLine != null) {
       postTo(c, initializedLine);
@@ -485,9 +504,9 @@ public final class StdioSseBridge {
       return;
     }
     String idKey = frame.idJson();
-    if (idKey.equals(swallowId)) {
-      swallowId = null;
-      swallowLatch.countDown();
+    if (idKey.equals(c.swallowId)) {
+      c.swallowId = null;
+      c.swallowed.countDown();
       return;
     }
     hooks.responseArriving(idKey);
@@ -518,6 +537,8 @@ public final class StdioSseBridge {
     // No bridge lock here: post() may hold it for a whole POST or handshake replay, and what is in
     // flight must not wait for that. ensureConnected() replaces a dead connection by itself.
     c.dead = true;
+    // A replay waiting on this stream will get no answer: let it fail now, not at its timeout
+    c.swallowed.countDown();
     if (!closing) {
       // The request being delivered is post()'s: it reconnects and delivers it, or fails it, or,
       // if this connection already accepted it, settleAccepted() sees it dead and fails it. The
