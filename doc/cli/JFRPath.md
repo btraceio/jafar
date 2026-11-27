@@ -133,6 +133,12 @@ Simple field comparisons:
 - `<=` : Less than or equal
 - `~` : Regex match
 
+Against `null`, `=` and `!=` are presence checks: `[field = null]` matches events where the field
+is missing or null (a missing step on a nested path included), `[field != null]` events where it is
+present. A path that crosses an array needs an index (`frames/0/lineNumber`); without one it does
+not resolve, and reads as missing. The `any:`/`all:`/`none:` forms keep their own rules: there a
+missing list or element matches nothing.
+
 **Examples**:
 ```
 events/jdk.FileRead[bytesRead>1000]
@@ -143,7 +149,8 @@ metadata/jdk.types.Method[name="toString"]
 
 ### Numeric Literals and Units
 
-Numeric literals accept unit suffixes, so a filter reads the way the value does.
+Numeric literals may be negative (`[delta > -1]`, `between(x, -10, 10)`, `-0.5`, `-.5`), and accept
+unit suffixes, so a filter reads the way the value does.
 
 **Size suffixes** are binary and apply to byte-valued fields:
 
@@ -434,7 +441,14 @@ Filter rows in the pipeline using the same predicate syntax as path filters, wit
 ```
 events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | filter(sum>1048576)
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(count>100)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(startsWith(key, "worker-"))
+events/jdk.ExecutionSample | filter(len(stackTrace/frames) > 50) | count()
 ```
+
+The predicate functions (`contains`, `between`, `len(...) > n`, ...) work as in path filters, and
+so do nested paths with array indexes (`stackTrace/frames/0/lineNumber`). In both, `field == null`
+is a presence check: it matches rows where the field is missing or null, and `field != null` rows
+where it is present.
 
 ### Distinct
 ```
@@ -740,6 +754,11 @@ Expressions support arithmetic operations, string concatenation, and built-in fu
 - `-` - Subtraction
 - `*` - Multiplication
 - `/` - Division
+
+Number literals in expressions may be negative or start with the decimal point (`-1`, `-0.5`,
+`.5`, `-.5`). Unlike filter literals, they take no unit suffix (`5s`, `1MB`). Put spaces around a
+minus that subtracts: a field name may contain `-`, so `v-1` and `v-.5` read as field paths, while
+`v - 1` and `v -.5` subtract.
 
 ```
 # Convert bytes to kilobytes

@@ -1523,7 +1523,7 @@ public final class HeapDumpImpl implements HeapDump {
     objectCount++;
 
     int shallowSize = shallowSize(false, false, reader.getIdSize(), dataSize);
-    totalHeapSize += shallowSize;
+    totalHeapSize += exactShallowSize(false, false, reader.getIdSize(), dataSize);
     obj.setShallowSize(shallowSize);
 
     // Eagerly extract references for small objects (adaptive optimization)
@@ -1554,8 +1554,8 @@ public final class HeapDumpImpl implements HeapDump {
     cacheObject(objId, obj);
     objectCount++;
 
-    int shallowSize = shallowSize(true, false, reader.getIdSize(), dataSize);
-    totalHeapSize += shallowSize;
+    int shallowSize = shallowSize(true, false, reader.getIdSize(), dataSizeLong);
+    totalHeapSize += exactShallowSize(true, false, reader.getIdSize(), dataSizeLong);
     obj.setShallowSize(shallowSize);
 
     // Eagerly extract array references (cheap - contiguous block)
@@ -1587,8 +1587,8 @@ public final class HeapDumpImpl implements HeapDump {
     cacheObject(objId, obj);
     objectCount++;
 
-    int shallowSize = shallowSize(false, true, reader.getIdSize(), dataSize);
-    totalHeapSize += shallowSize;
+    int shallowSize = shallowSize(false, true, reader.getIdSize(), dataSizeLong);
+    totalHeapSize += exactShallowSize(false, true, reader.getIdSize(), dataSizeLong);
     obj.setShallowSize(shallowSize);
 
     cls.incrementInstanceCount();
@@ -1716,7 +1716,10 @@ public final class HeapDumpImpl implements HeapDump {
       // Compute shallowSize including object header overhead, matching in-memory mode formulas
       int shallowSize =
           shallowSize(
-              meta.isObjectArray(), meta.isPrimitiveArray(), reader.getIdSize(), meta.dataSize);
+              meta.isObjectArray(),
+              meta.isPrimitiveArray(),
+              reader.getIdSize(),
+              exactDataSize(meta, reader.getIdSize()));
       obj.setShallowSize(shallowSize);
 
       if (meta.isArray()) {
@@ -1825,16 +1828,41 @@ public final class HeapDumpImpl implements HeapDump {
   /**
    * Approximate shallow size of an object, the same in both parsing modes: header estimate plus
    * field or element bytes. The one formula for in-memory parsing, indexed materialization and the
-   * INDEXED-mode heap total.
+   * heap total. Exact: an array's data can exceed {@code Integer.MAX_VALUE} bytes (#262).
    */
-  static int shallowSize(boolean objectArray, boolean primitiveArray, int idSize, int dataSize) {
+  static long exactShallowSize(
+      boolean objectArray, boolean primitiveArray, int idSize, long dataSize) {
     if (objectArray) {
-      return idSize * 2 + 12 + dataSize;
+      return idSize * 2L + 12 + dataSize;
     }
     if (primitiveArray) {
-      return idSize + 12 + dataSize;
+      return idSize + 12L + dataSize;
     }
-    return idSize * 2 + 8 + dataSize;
+    return idSize * 2L + 8 + dataSize;
+  }
+
+  /**
+   * {@link #exactShallowSize} as {@link io.jafar.hdump.api.HeapObject#getShallowSize()} reports it:
+   * capped at {@code Integer.MAX_VALUE} rather than wrapped to a negative number (#262).
+   */
+  static int shallowSize(boolean objectArray, boolean primitiveArray, int idSize, long dataSize) {
+    return (int)
+        Math.min(
+            Integer.MAX_VALUE, exactShallowSize(objectArray, primitiveArray, idSize, dataSize));
+  }
+
+  /**
+   * An indexed object's exact data size. The index stores it as an {@code int}, capped at {@code
+   * Integer.MAX_VALUE}; an array's is recomputed from its length and element size.
+   */
+  static long exactDataSize(ObjectIndexReader.ObjectMetadata meta, int idSize) {
+    if (meta.isObjectArray() && meta.arrayLength >= 0) {
+      return (long) meta.arrayLength * idSize;
+    }
+    if (meta.isPrimitiveArray() && meta.arrayLength >= 0) {
+      return (long) meta.arrayLength * BasicType.sizeOf(meta.elementType, idSize);
+    }
+    return meta.dataSize;
   }
 
   /** True for the primitive array class names {@code [Z [C [F [D [B [S [I [J}. */
@@ -1886,7 +1914,9 @@ public final class HeapDumpImpl implements HeapDump {
       if (meta == null || meta.fileOffset == 0) {
         continue; // a class object's own entry
       }
-      heapSize += shallowSize(meta.isObjectArray(), meta.isPrimitiveArray(), idSize, meta.dataSize);
+      heapSize +=
+          exactShallowSize(
+              meta.isObjectArray(), meta.isPrimitiveArray(), idSize, exactDataSize(meta, idSize));
       if (meta.classId == -1 && meta.isPrimitiveArray()) {
         int t = meta.elementType;
         if (t >= 0 && t < primitiveCounts.length) {

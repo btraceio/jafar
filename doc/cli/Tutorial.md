@@ -193,7 +193,7 @@ Use `[...]` to filter results:
 events/jdk.FileRead[bytesRead>1000000]
 
 # String equality
-events/jdk.ExecutionSample[state="RUNNABLE"]
+events/jdk.ExecutionSample[state="STATE_RUNNABLE"]
 
 # Regex match
 events/jdk.FileRead[path~"/tmp/.*"]
@@ -204,6 +204,12 @@ events/jdk.ExecutionSample[sampledThread/javaName~"main"]
 # Multiple conditions
 events/jdk.FileRead[bytesRead>1000 and path~".*\\.log"]
 ```
+
+A string filter compares the value the recording holds. Thread states are the producer's names:
+JDK recordings write HotSpot's (`STATE_RUNNABLE`, `STATE_PARKED`,
+`STATE_BLOCKED_ON_MONITOR_ENTER`, ...), the Datadog profiler writes `RUNNABLE`, `PARKED`, ...;
+other producers may differ. `[state="RUNNABLE"]` matches nothing on a JDK recording;
+`groupBy(state)` shows the names a recording uses.
 
 ### Operators
 
@@ -1203,7 +1209,7 @@ jfr> events/jdk.ExecutionSample --limit 5
 jfr> events/jdk.ExecutionSample | groupBy(state)
 
 # 5. Deep dive
-jfr> events/jdk.ExecutionSample[state="RUNNABLE"] | groupBy(sampledThread/javaName) | top(10, by=count)
+jfr> events/jdk.ExecutionSample[state="STATE_RUNNABLE"] | groupBy(sampledThread/javaName) | top(10, by=count)
 ```
 
 ## Next Steps

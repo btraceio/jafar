@@ -224,7 +224,9 @@ public final class HdumpPathEvaluator {
     // If the query references retained size, ensure it is computed before evaluation starts.
     // This prevents per-object lazy computation mid-stream (which would be a side-effect of
     // objectToMap() after the switch to getRetainedSizeIfAvailable()).
-    if (query.root() == Root.OBJECTS
+    // ages and gcroots rows carry the same retainedSize column (#295: ages[...] | top(n,
+    // retained) failed, and gcroots[retained > 1KB] counted 0 until another query computed it)
+    if ((query.root() == Root.OBJECTS || query.root() == Root.AGES || query.root() == Root.GCROOTS)
         && !dump.hasDominators()
         && session != null
         && queryNeedsRetainedSize(query)) {
@@ -309,8 +311,12 @@ public final class HdumpPathEvaluator {
                 dump, session, streamingQuery, List.of(), new TopOp(100, null, false));
         rest = streamingPipeline;
       }
+      // Object rows still, unless a streamed head other than top() built new ones (groups, a count)
+      Set<String> shape =
+          !isStreamable(head) || head instanceof TopOp ? columnsOf(Root.OBJECTS) : null;
       for (PipelineOp op : rest) {
-        results = applyPipelineOp(session, results, op, query, resolver);
+        results = applyStage(session, results, op, query, resolver, shape);
+        shape = keepsRows(op) ? withAddedColumns(shape, op) : null;
       }
       return results;
     }
@@ -326,9 +332,11 @@ public final class HdumpPathEvaluator {
           case AGES -> evaluateAges(session, query);
         };
 
-    // Apply pipeline operations
+    // Apply pipeline operations; a filter knows its rows' columns while they are the root's
+    Set<String> shape = columnsOf(query.root());
     for (PipelineOp op : query.pipeline()) {
-      results = applyPipelineOp(session, results, op, query, resolver);
+      results = applyStage(session, results, op, query, resolver, shape);
+      shape = keepsRows(op) ? withAddedColumns(shape, op) : null;
     }
 
     return results;
@@ -684,8 +692,12 @@ public final class HdumpPathEvaluator {
     }
 
     // Apply predicates
-    if (!query.predicates().isEmpty()) {
-      stream = stream.filter(obj -> matchesAllPredicates(objectToMap(obj), query.predicates()));
+    FilterFieldCheck check =
+        query.predicates().isEmpty()
+            ? null
+            : FilterFieldCheck.of(query.predicates(), columnsOf(Root.OBJECTS));
+    if (check != null) {
+      stream = stream.filter(obj -> check.test(objectToMap(obj)));
       if (!filterDesc.isEmpty()) {
         filterDesc += " with predicates";
       } else {
@@ -694,31 +706,50 @@ public final class HdumpPathEvaluator {
     }
 
     if (head instanceof CountOp && rowOps.isEmpty()) {
-      return evaluateObjectsStreamingCountFromStream(stream, dump.getObjectCount());
+      List<Map<String, Object>> count =
+          evaluateObjectsStreamingCountFromStream(stream, dump.getObjectCount());
+      verify(check);
+      return count;
     }
     Stream<Map<String, Object>> rows = stream.map(HdumpPathEvaluator::objectToMap);
+    // One check per filter() over the whole stream: each row passes through on its own
+    Map<PipelineOp, FilterFieldCheck> rowChecks = new IdentityHashMap<>();
+    for (PipelineOp op : rowOps) {
+      if (op instanceof FilterOp f) {
+        rowChecks.put(op, FilterFieldCheck.of(List.of(f.predicate()), columnsOf(Root.OBJECTS)));
+      }
+    }
     if (!rowOps.isEmpty()) {
       rows =
           rows.flatMap(
               row -> {
                 List<Map<String, Object>> out = List.of(row);
                 for (PipelineOp op : rowOps) {
-                  out = applyPipelineOp(session, out, op);
+                  FilterFieldCheck rowCheck = rowChecks.get(op);
+                  out =
+                      rowCheck != null
+                          ? out.stream().filter(rowCheck::test).toList()
+                          : applyPipelineOp(session, out, op);
                 }
                 return out.stream();
               });
     }
-    return switch (head) {
-      case TopOp topOp -> selectTop(rows, topOp);
-      case GroupByOp groupByOp -> groupRows(rows, groupByOp);
-      case CountOp ignored -> List.of(new LinkedHashMap<>(Map.of("count", rows.count())));
-      case SumOp sumOp -> evaluateObjectsStreamingSumFromStream(rows, dump.getObjectCount(), sumOp);
-      case StatsOp statsOp ->
-          evaluateObjectsStreamingStatsFromStream(rows, dump.getObjectCount(), statsOp);
-      default ->
-          throw new IllegalStateException(
-              "Unsupported streaming operation: " + head.getClass().getSimpleName());
-    };
+    List<Map<String, Object>> result =
+        switch (head) {
+          case TopOp topOp -> selectTop(rows, topOp);
+          case GroupByOp groupByOp -> groupRows(rows, groupByOp);
+          case CountOp ignored -> List.of(new LinkedHashMap<>(Map.of("count", rows.count())));
+          case SumOp sumOp ->
+              evaluateObjectsStreamingSumFromStream(rows, dump.getObjectCount(), sumOp);
+          case StatsOp statsOp ->
+              evaluateObjectsStreamingStatsFromStream(rows, dump.getObjectCount(), statsOp);
+          default ->
+              throw new IllegalStateException(
+                  "Unsupported streaming operation: " + head.getClass().getSimpleName());
+        };
+    verify(check);
+    rowChecks.values().forEach(HdumpPathEvaluator::verify);
+    return result;
   }
 
   private static List<Map<String, Object>> evaluateObjects(HeapDump dump, Query query) {
@@ -759,7 +790,14 @@ public final class HdumpPathEvaluator {
 
     // Apply predicates
     if (!query.predicates().isEmpty()) {
-      stream = stream.filter(obj -> matchesAllPredicates(objectToMap(obj), query.predicates()));
+      FilterFieldCheck check = FilterFieldCheck.of(query.predicates(), columnsOf(Root.OBJECTS));
+      List<Map<String, Object>> rows =
+          stream
+              .map(HdumpPathEvaluator::objectToMap)
+              .filter(check::test)
+              .collect(Collectors.toList());
+      verify(check);
+      return rows;
     }
 
     // Warn about memory usage for large unfiltered queries
@@ -793,10 +831,7 @@ public final class HdumpPathEvaluator {
         stream.map(HdumpPathEvaluator::classToMap).collect(Collectors.toList());
 
     if (!query.predicates().isEmpty()) {
-      results =
-          results.stream()
-              .filter(map -> matchesAllPredicates(map, query.predicates()))
-              .collect(Collectors.toList());
+      results = filterRows(results, query.predicates(), columnsOf(Root.CLASSES));
     }
 
     return results;
@@ -807,7 +842,7 @@ public final class HdumpPathEvaluator {
 
     // Filter by type
     if (query.typePattern() != null) {
-      String typeStr = query.typePattern().toUpperCase();
+      String typeStr = query.typePattern().toUpperCase(Locale.ROOT);
       try {
         GcRoot.Type type = GcRoot.Type.valueOf(typeStr);
         stream = stream.filter(root -> root.getType() == type);
@@ -822,10 +857,7 @@ public final class HdumpPathEvaluator {
         stream.map(HdumpPathEvaluator::gcRootToMap).collect(Collectors.toList());
 
     if (!query.predicates().isEmpty()) {
-      results =
-          results.stream()
-              .filter(map -> matchesAllPredicates(map, query.predicates()))
-              .collect(Collectors.toList());
+      results = filterRows(results, query.predicates(), columnsOf(Root.GCROOTS));
     }
 
     return results;
@@ -836,10 +868,7 @@ public final class HdumpPathEvaluator {
     List<Map<String, Object>> results = new ArrayList<>(clusterResult.rows());
 
     if (!query.predicates().isEmpty()) {
-      results =
-          results.stream()
-              .filter(map -> matchesAllPredicates(map, query.predicates()))
-              .collect(Collectors.toList());
+      results = filterRows(results, query.predicates(), columnsOf(Root.CLUSTERS));
     }
 
     return results;
@@ -850,10 +879,7 @@ public final class HdumpPathEvaluator {
     SubgraphFingerprinter.Result result = session.getOrComputeDuplicates(depth);
     List<Map<String, Object>> rows = new ArrayList<>(result.rows());
     if (!query.predicates().isEmpty()) {
-      rows =
-          rows.stream()
-              .filter(m -> matchesAllPredicates(m, query.predicates()))
-              .collect(Collectors.toList());
+      rows = filterRows(rows, query.predicates(), columnsOf(Root.DUPLICATES));
     }
     return rows;
   }
@@ -927,17 +953,24 @@ public final class HdumpPathEvaluator {
   }
 
   private static List<Map<String, Object>> evaluateAges(HeapSession session, Query query) {
-    // Delegate object filtering to evaluateObjects, then enrich with age data
+    // Delegate object filtering to evaluateObjects, then enrich with age data. Predicates on the
+    // age columns run after the enrichment: run before it, ages[estimatedAge > 50] matched nothing
+    boolean onObjectColumns =
+        query.predicates().stream()
+            .allMatch(p -> FilterFieldCheck.comparesOnly(p, columnsOf(Root.OBJECTS)));
     Query objectsQuery =
         new Query(
             Root.OBJECTS,
             query.typePattern(),
             query.instanceof_(),
-            query.predicates(),
+            onObjectColumns ? query.predicates() : List.of(),
             List.of(),
             0);
     List<Map<String, Object>> objectRows = evaluateObjects(session.getHeapDump(), objectsQuery);
-    return applyEstimateAge(session, objectRows);
+    List<Map<String, Object>> aged = applyEstimateAge(session, objectRows);
+    return onObjectColumns || query.predicates().isEmpty()
+        ? aged
+        : filterRows(aged, query.predicates(), columnsOf(Root.AGES));
   }
 
   private static List<Map<String, Object>> applyEstimateAge(
@@ -1092,6 +1125,28 @@ public final class HdumpPathEvaluator {
   }
 
   // === Predicate matching ===
+
+  /**
+   * The rows matching every predicate; fails when none does because a compared field is absent from
+   * every row (#295).
+   */
+  private static List<Map<String, Object>> filterRows(
+      List<Map<String, Object>> rows, List<Predicate> predicates, Set<String> known) {
+    FilterFieldCheck check = FilterFieldCheck.of(predicates, known);
+    List<Map<String, Object>> kept = rows.stream().filter(check::test).collect(Collectors.toList());
+    verify(check);
+    return kept;
+  }
+
+  /** {@link #matchesAllPredicates}, for {@link FilterFieldCheck}. */
+  static boolean matchesAll(Map<String, Object> map, List<Predicate> predicates) {
+    return matchesAllPredicates(map, predicates);
+  }
+
+  /** {@link #extractFieldValue}, for {@link FilterFieldCheck}. */
+  static Object fieldValue(Map<String, Object> map, List<String> path) {
+    return extractFieldValue(map, path);
+  }
 
   private static boolean matchesAllPredicates(Map<String, Object> map, List<Predicate> predicates) {
     for (Predicate pred : predicates) {
@@ -1266,6 +1321,119 @@ public final class HdumpPathEvaluator {
     return applyPipelineOp(session, results, op);
   }
 
+  /**
+   * {@link #applyPipelineOp}, with a {@code filter()} checked against {@code shape}: the columns of
+   * the root its rows still are, or null once a stage reshaped them (#295).
+   */
+  private static List<Map<String, Object>> applyStage(
+      HeapSession session,
+      List<Map<String, Object>> results,
+      PipelineOp op,
+      Query query,
+      SessionResolver resolver,
+      Set<String> shape) {
+    if (op instanceof FilterOp f) {
+      return filterRows(results, List.of(f.predicate()), shape);
+    }
+    return applyPipelineOp(session, results, op, query, resolver);
+  }
+
+  /**
+   * Whether {@code op} keeps its input rows as they are (fewer, reordered, or with columns added),
+   * so they keep their root's columns. The others build new rows (groups, values, paths, reports).
+   */
+  private static boolean keepsRows(PipelineOp op) {
+    return switch (op) {
+      case FilterOp _,
+          TopOp _,
+          SortByOp _,
+          HeadOp _,
+          TailOp _,
+          JoinOp _,
+          WasteOp _,
+          CacheStatsOp _,
+          ThreadOwnerOp _,
+          EstimateAgeOp _,
+          DominatedSizeOp _,
+          LenOp _,
+          UppercaseOp _,
+          LowercaseOp _,
+          TrimOp _,
+          ReplaceOp _,
+          AbsOp _,
+          RoundOp _,
+          FloorOp _,
+          CeilOp _ ->
+          true;
+      default -> false;
+    };
+  }
+
+  /**
+   * {@code shape} with the columns {@code op} adds to only some rows: {@code dominatedSize()} adds
+   * its columns to the THREAD_OBJ rows of {@code gcroots} alone. (The other ops that keep rows add
+   * their keys to every row, a null value included, so the rows' keys show them.)
+   */
+  private static Set<String> withAddedColumns(Set<String> shape, PipelineOp op) {
+    // Only gcroots rows (objectId) get them: objects and classes rows never do
+    if (shape == null
+        || !(op instanceof DominatedSizeOp)
+        || !shape.contains(GcRootFields.OBJECT_ID)) {
+      return shape;
+    }
+    Set<String> columns = new HashSet<>(shape);
+    columns.addAll(List.of("threadName", "dominated", "dominatedCount"));
+    return Set.copyOf(columns);
+  }
+
+  /**
+   * The columns a row of {@code root} can have, whether or not a given row carries them, aliases
+   * included. Rows of a root carry only some: an array's length, a computed retained size, a
+   * String's value, a frame root's frame number.
+   */
+  static Set<String> columnsOf(Root root) {
+    return ROOT_COLUMNS.get(root);
+  }
+
+  private static final Map<Root, Set<String>> ROOT_COLUMNS = rootColumns();
+
+  private static Map<Root, Set<String>> rootColumns() {
+    Set<String> objects = new HashSet<>(constants(ObjectFields.class));
+    objects.add("fields");
+    Set<String> ages = new HashSet<>(objects);
+    ages.addAll(constants(HdumpPath.AgeFields.class));
+    Map<Root, Set<String>> columns = new EnumMap<>(Root.class);
+    columns.put(Root.OBJECTS, Set.copyOf(objects));
+    columns.put(Root.CLASSES, constants(ClassFields.class));
+    columns.put(Root.GCROOTS, constants(GcRootFields.class));
+    columns.put(Root.CLUSTERS, constants(HdumpPath.ClusterFields.class));
+    columns.put(Root.DUPLICATES, constants(HdumpPath.DuplicateFields.class));
+    columns.put(Root.AGES, Set.copyOf(ages));
+    return columns;
+  }
+
+  /** The values of {@code holder}'s public static String constants: its column names. */
+  private static Set<String> constants(Class<?> holder) {
+    Set<String> names = new HashSet<>();
+    for (java.lang.reflect.Field f : holder.getFields()) {
+      if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) && f.getType() == String.class) {
+        try {
+          names.add((String) f.get(null));
+        } catch (IllegalAccessException e) {
+          throw new IllegalStateException(e);
+        }
+      }
+    }
+    return Set.copyOf(names);
+  }
+
+  /** Fails, naming the field, when {@code check} filtered rows on a field none of them has. */
+  private static void verify(FilterFieldCheck check) {
+    if (check != null) {
+      check.verify("filter");
+    }
+  }
+
   private static List<Map<String, Object>> applyPipelineOp(
       HeapSession session, List<Map<String, Object>> results, PipelineOp op) {
     return switch (op) {
@@ -1298,10 +1466,10 @@ public final class HdumpPathEvaluator {
               });
       case UppercaseOp u ->
           applyStringTransform(
-              results, u.field(), v -> v instanceof String s ? s.toUpperCase() : v);
+              results, u.field(), v -> v instanceof String s ? s.toUpperCase(Locale.ROOT) : v);
       case LowercaseOp l ->
           applyStringTransform(
-              results, l.field(), v -> v instanceof String s ? s.toLowerCase() : v);
+              results, l.field(), v -> v instanceof String s ? s.toLowerCase(Locale.ROOT) : v);
       case TrimOp t ->
           applyStringTransform(results, t.field(), v -> v instanceof String s ? s.trim() : v);
       case ReplaceOp r ->
@@ -1695,12 +1863,7 @@ public final class HdumpPathEvaluator {
           && !results.isEmpty()
           && results.get(0).containsKey(ClassFields.NAME)
           && !results.get(0).containsKey(ObjectFields.RETAINED_SIZE)) {
-        throw new IllegalArgumentException(
-            "Field '"
-                + op.orderBy()
-                + "' is not available on classes. "
-                + "To aggregate retained sizes by class, use: "
-                + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
+        throw new IllegalArgumentException(retainedOnClassesMessage(op.orderBy()));
       }
       requireField(results, op.orderBy(), "top");
 
@@ -1755,7 +1918,21 @@ public final class HdumpPathEvaluator {
 
   // === Retained size dependency analysis ===
 
-  private static boolean isRetainedField(String field) {
+  /** The column an alias names ({@code class} is {@code className}); any other name as it is. */
+  static String canonicalField(String field) {
+    return FIELD_ALIASES.getOrDefault(field, field);
+  }
+
+  /** The error for a retained-size field asked of classes, which have none. */
+  static String retainedOnClassesMessage(String field) {
+    return "Field '"
+        + field
+        + "' is not available on classes. "
+        + "To aggregate retained sizes by class, use: "
+        + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)";
+  }
+
+  static boolean isRetainedField(String field) {
     return ObjectFields.RETAINED.equals(field) || ObjectFields.RETAINED_SIZE.equals(field);
   }
 
@@ -1829,7 +2006,7 @@ public final class HdumpPathEvaluator {
   /** Checks if a field name indicates memory values. */
   private static boolean isMemoryFieldName(String fieldName) {
     if (fieldName == null) return false;
-    String lower = fieldName.toLowerCase();
+    String lower = fieldName.toLowerCase(Locale.ROOT);
     return lower.endsWith("size")
         || lower.contains("shallow")
         || lower.contains("retained")
@@ -1921,12 +2098,7 @@ public final class HdumpPathEvaluator {
           && !results.isEmpty()
           && results.get(0).containsKey(ClassFields.NAME)
           && !results.get(0).containsKey(ObjectFields.RETAINED_SIZE)) {
-        throw new IllegalArgumentException(
-            "Field '"
-                + sf.field()
-                + "' is not available on classes. "
-                + "To aggregate retained sizes by class, use: "
-                + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
+        throw new IllegalArgumentException(retainedOnClassesMessage(sf.field()));
       }
 
       requireField(results, sf.field(), "sortBy");

@@ -255,8 +255,10 @@ public final class PprofProfileReader implements ProfileReader {
    *       profile pairs it with {@code cpu/nanoseconds}), or {@code <x>-samples}/{@code
    *       <x>_samples} in {@code count} for {@code <x>-time}/{@code <x>_time};
    *   <li>{@code value / period}, when the period has the selected column's unit and the kind is
-   *       not allocation (an allocation period is a byte sampling rate, and the values are already
-   *       scaled by it);
+   *       neither allocation nor lock: an allocation period is a byte sampling rate, and the values
+   *       are already scaled by it; Go's mutex and block profiles write period 1 whatever the
+   *       sampling rate, with each contention already scaled by that rate ({@code
+   *       runtime/pprof.printCountCycleProfile}, {@code runtime.saveBlockEventStack});
    *   <li>otherwise unknown: the comparison then calls nothing significant.
    * </ol>
    */
@@ -276,22 +278,27 @@ public final class PprofProfileReader implements ProfileReader {
           true, partner, 0, "counts: the " + p.type() + "/" + p.unit() + " column");
     }
     PprofProfile.ValueType periodType = profile.periodType();
-    if (!kind.isAllocation()
+    if (!scaled
         && profile.period() > 0
         && periodType != null
         && unit.equalsIgnoreCase(periodType.unit())) {
       return new CountSource(
           true, column, profile.period(), "counts: value / period " + profile.period());
     }
+    String label = selected.type() + "/" + unit;
     return new CountSource(
         false,
         column,
         0,
-        "observation counts unknown: no sample-count column for "
-            + selected.type()
-            + "/"
-            + unit
-            + ", and no period to divide by");
+        scaled
+            ? "observation counts unknown: "
+                + label
+                + (kind == SamplerKind.LOCK ? " is a lock" : " is an allocation")
+                + " measure, which producers scale up from the sampled events (so its period does"
+                + " not give counts either), and no column counts the samples"
+            : "observation counts unknown: no sample-count column for "
+                + label
+                + ", and no period to divide by");
   }
 
   /** The count column paired with {@code column} by producer convention, or {@code -1}. */

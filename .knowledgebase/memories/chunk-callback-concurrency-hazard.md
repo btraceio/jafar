@@ -18,7 +18,7 @@ callbacks for *different chunks of one recording* run in parallel.
 **The hazard.** `StreamingChunkParser`
 (`parser-core/src/main/java/io/jafar/parser/internal_api/StreamingChunkParser.java`)
 parses each chunk of the file-mapped `parse(Path, ...)` route as a task submitted
-to a fixed pool of `Math.max(availableProcessors() - 2, 1)` daemon threads
+to a fixed pool of `availableProcessors()` daemon threads (until 2026-11 it was `max(availableProcessors() - 2, 1)`)
 (`StreamingChunkParser#executor`, `submitParsingTask`); only the
 `parse(InputStream, ...)` route is sequential. A plain instance field in a
 listener is therefore written by two chunk threads and one chunk's values
