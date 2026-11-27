@@ -571,7 +571,17 @@ final class Aggregations {
       String sortBy,
       boolean ascending)
       throws Exception {
-    Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
+    // One map per thread that adds to it, merged after the parse: chunk threads used to update one
+    // map under one lock for every event, so groupBy got slower, not faster, with more threads.
+    java.util.concurrent.ConcurrentLinkedQueue<Map<Object, GroupAccumulator>> partials =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+    ThreadLocal<Map<Object, GroupAccumulator>> local =
+        ThreadLocal.withInitial(
+            () -> {
+              Map<Object, GroupAccumulator> partial = new LinkedHashMap<>();
+              partials.add(partial);
+              return partial;
+            });
     // How many events the key was offered. Only used to tell "nothing matched the filter" apart
     // from "the key path matched nothing in events that were there" — see reportUnmatchedKey.
     LongAdder offered = new LongAdder();
@@ -602,7 +612,7 @@ final class Aggregations {
             map -> {
               offered.increment();
               addToGroups(
-                  groups,
+                  local.get(),
                   map,
                   keyTokens,
                   keyExpr,
@@ -622,7 +632,7 @@ final class Aggregations {
             map -> {
               offered.increment();
               addToGroups(
-                  groups,
+                  local.get(),
                   map,
                   keyTokens,
                   keyExpr,
@@ -639,7 +649,7 @@ final class Aggregations {
           eval.evaluate(session, new Query(query.root, query.segments, query.predicates));
       for (Map<String, Object> row : rows) {
         addToGroups(
-            groups,
+            local.get(),
             row,
             keyTokens,
             keyExpr,
@@ -650,6 +660,9 @@ final class Aggregations {
             valueTokens);
       }
     }
+
+    Map<Object, GroupAccumulator> groups = mergeGroups(partials, keyDisplay);
+    local.remove();
 
     if (groups.isEmpty() && offered.sum() > 0) {
       reportUnmatchedKey(session, query, keyDisplay, offered.sum());
@@ -674,9 +687,8 @@ final class Aggregations {
   /**
    * Adds one event (or row) to the groups it belongs to.
    *
-   * <p>Called from several chunk-parsing threads at once. Keys and values are worked out from the
-   * event first, without a lock; only the update of {@code groups} and its accumulators is
-   * serialized, on {@code groups}.
+   * <p>Called from several chunk-parsing threads at once, each with its own {@code groups} (see
+   * {@link #mergeGroups}), so nothing here is locked.
    */
   private static void addToGroups(
       Map<Object, GroupAccumulator> groups,
@@ -703,19 +715,58 @@ final class Aggregations {
       vals = valueTokens == null ? List.of() : PathValues.extractAllValues(map, valueTokens);
     }
 
-    synchronized (groups) {
-      for (Object key : keys) {
-        GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
-        if (counting) {
-          acc.add(1);
-        } else {
-          for (Object val : vals) {
-            if (val instanceof Number n) {
-              acc.add(n.doubleValue());
-            }
+    for (Object key : keys) {
+      GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
+      if (counting) {
+        acc.add(1);
+      } else {
+        for (Object val : vals) {
+          if (val instanceof Number n) {
+            acc.add(n.doubleValue());
           }
         }
       }
+    }
+  }
+
+  /**
+   * Merges the per-thread groups of one groupBy into one map, keeping the distinct-group cap: each
+   * thread's map is capped as it grows (see {@link #groupFor}), and the merged map is capped here.
+   * Groups appear in the order the threads first met them, thread by thread; with chunks parsed in
+   * parallel that order was never deterministic, and a single-threaded caller keeps its own.
+   */
+  static Map<Object, GroupAccumulator> mergeGroups(
+      java.util.Collection<Map<Object, GroupAccumulator>> partials, String keyDisplay) {
+    java.util.Iterator<Map<Object, GroupAccumulator>> it = partials.iterator();
+    if (!it.hasNext()) {
+      return new LinkedHashMap<>();
+    }
+    Map<Object, GroupAccumulator> merged = it.next();
+    while (it.hasNext()) {
+      for (Map.Entry<Object, GroupAccumulator> e : it.next().entrySet()) {
+        GroupAccumulator acc = merged.get(e.getKey());
+        if (acc == null) {
+          checkGroupCap(merged.size(), keyDisplay, e.getKey());
+          merged.put(e.getKey(), e.getValue());
+        } else {
+          acc.merge(e.getValue());
+        }
+      }
+    }
+    return merged;
+  }
+
+  private static void checkGroupCap(int size, String keyDisplay, Object key) {
+    int cap = maxGroups();
+    if (size >= cap) {
+      throw new IllegalArgumentException(
+          "groupBy: distinct-group cap of "
+              + cap
+              + " reached on key '"
+              + keyDisplay
+              + "' (offending key: "
+              + key
+              + "); narrow the key or raise the cap with -Djafar.groupby.maxGroups=<n>");
     }
   }
 
@@ -751,17 +802,7 @@ final class Aggregations {
     return groups.computeIfAbsent(
         key,
         k -> {
-          int cap = maxGroups();
-          if (groups.size() >= cap) {
-            throw new IllegalArgumentException(
-                "groupBy: distinct-group cap of "
-                    + cap
-                    + " reached on key '"
-                    + keyDisplay
-                    + "' (offending key: "
-                    + k
-                    + "); narrow the key or raise the cap with -Djafar.groupby.maxGroups=<n>");
-          }
+          checkGroupCap(groups.size(), keyDisplay, k);
           return new GroupAccumulator(aggFunc);
         });
   }
@@ -880,6 +921,14 @@ final class Aggregations {
       sum += value;
       min = Math.min(min, value);
       max = Math.max(max, value);
+    }
+
+    /** Adds {@code other}'s values to this one's, as if they had been added here. */
+    void merge(GroupAccumulator other) {
+      count += other.count;
+      sum += other.sum;
+      min = Math.min(min, other.min);
+      max = Math.max(max, other.max);
     }
 
     Object getResult() {
