@@ -254,6 +254,13 @@ final class RowOps {
     return field;
   }
 
+  /** {@code stats()} and the p50/p90/p99 {@code quantiles()} of the rows, in one row. */
+  static List<Map<String, Object>> applySketch(List<Map<String, Object>> rows, List<String> path) {
+    Map<String, Object> out = new HashMap<>(applyStats(rows, path).get(0));
+    out.putAll(applyQuantiles(rows, path, List.of(0.5, 0.9, 0.99)).get(0));
+    return List.of(out);
+  }
+
   static List<Map<String, Object>> applyQuantiles(
       List<Map<String, Object>> rows, List<String> path, List<Double> qs) {
     List<Double> values = new ArrayList<>();
@@ -269,7 +276,10 @@ final class RowOps {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("count", (long) values.size());
     for (double q : qs) {
-      result.put(Aggregations.pcol(q), Aggregations.quantileNearestRank(values, q));
+      // null with no values, as Aggregations.aggregateQuantiles has it: NaN is no JSON (#305)
+      result.put(
+          Aggregations.pcol(q),
+          values.isEmpty() ? null : Aggregations.quantileNearestRank(values, q));
     }
     return List.of(result);
   }

@@ -123,7 +123,7 @@ tasks.register('test8', Test) {
 // StreamingChunkParser's pool threads, so the aggregate (caller delta + pool threads' absolute
 // counters) is what a regression moves.
 //
-// -XX:ActiveProcessorCount=4 pins the chunk pool at 2 threads (max(processors - 2, 1)), matching
+// -XX:ActiveProcessorCount=2 pins the chunk pool at 2 threads (one per processor), matching
 // tck-test.jfr's 2 chunks; a pool following the host CPU count would vary the thread-to-chunk
 // mapping and, with it, the measured figure.
 //
@@ -141,7 +141,7 @@ tasks.register('allocationTest', Test) {
     include 'io/jafar/parser/alloc/**'
     javaLauncher.set(j21LauncherProvider)
     useJUnitPlatform()
-    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    jvmArgs '-XX:ActiveProcessorCount=2', '-Xmx2g', '-XX:TieredStopAtLevel=1'
     systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
     // A budget change re-runs the gate, and so does a fixture change: without the recording as
     // an input, an edited tck-test.jfr would leave the task UP-TO-DATE with a stale verdict.
@@ -169,7 +169,7 @@ tasks.register('allocationTest8', Test) {
     javaLauncher.set(j8LauncherProvider)
     dependsOn tasks.named('compileTest8JavaCompat')
     useJUnitPlatform()
-    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    jvmArgs '-XX:ActiveProcessorCount=2', '-Xmx2g', '-XX:TieredStopAtLevel=1'
     systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
     inputs.file(allocationBudgetsFile)
     inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))

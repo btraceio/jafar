@@ -845,7 +845,7 @@ public final class JfrAnalyses {
         || methodName.contains(">::")
         || methodName.contains("::")
         || methodName.startsWith("_")
-        || methodName.toLowerCase().contains("atomic");
+        || methodName.toLowerCase(Locale.ROOT).contains("atomic");
   }
 
   public Map<String, Object> use(AnalysisTarget target, Map<String, Object> args, Progress progress)
@@ -885,7 +885,7 @@ public final class JfrAnalyses {
       // CPU Resource Analysis
       if (resources.contains("cpu")) {
         progress.step(step++, totalSteps, "Analyzing CPU...");
-        resourceMetrics.put("cpu", analyzeCpuResource(target, timeFilter));
+        resourceMetrics.put("cpu", analyzeCpuResource(target, timeFilter, window));
       }
 
       // Memory Resource Analysis
@@ -923,14 +923,19 @@ public final class JfrAnalyses {
     }
   }
 
-  Map<String, Object> analyzeCpuResource(AnalysisTarget target, String timeFilter) {
+  Map<String, Object> analyzeCpuResource(
+      AnalysisTarget target, String timeFilter, TimeWindow window) {
     Map<String, Object> cpu = new LinkedHashMap<>();
 
     try {
       // Query jdk.CPULoad events for actual CPU utilization
-      String cpuLoadQuery = "events/jdk.CPULoad" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(cpuLoadQuery);
-      List<Map<String, Object>> cpuLoadEvents = evaluator.evaluate(target.session(), parsed);
+      // A recording that does not declare jdk.CPULoad (not every producer is the JDK) falls back
+      // to the thread states as one with no such events does; querying the type would throw
+      List<Map<String, Object>> cpuLoadEvents =
+          target.session().getAvailableTypes().contains("jdk.CPULoad")
+              ? evaluator.evaluate(
+                  target.session(), JfrPathParser.parse("events/jdk.CPULoad" + timeFilter))
+              : List.of();
 
       if (!cpuLoadEvents.isEmpty()) {
         // Calculate statistics from jdk.CPULoad events
@@ -1008,57 +1013,20 @@ public final class JfrAnalyses {
           cpu.put("utilization", utilization);
 
           // Check for container CPU throttling
-          Map<String, Object> saturation = new LinkedHashMap<>();
+          Map<String, Object> saturation;
           try {
-            String throttleQuery = "events/jdk.ContainerCPUThrottling" + timeFilter;
-            JfrPath.Query throttleParsed = JfrPathParser.parse(throttleQuery);
+            // All readings, not just the window's: the counters are running totals, so the
+            // window's throttling is measured against the readings that bracket it (#263).
             List<Map<String, Object>> throttleEvents =
-                evaluator.evaluate(target.session(), throttleParsed);
-
-            long totalThrottledTime = 0;
-            long totalThrottledSlices = 0;
-            long totalElapsedSlices = 0;
-
-            for (Map<String, Object> event : throttleEvents) {
-              Object throttledTime = Values.get(event, "cpuThrottledTime");
-              Object throttledSlices = Values.get(event, "cpuThrottledSlices");
-              Object elapsedSlices = Values.get(event, "cpuElapsedSlices");
-
-              if (throttledTime instanceof Number) {
-                totalThrottledTime += ((Number) throttledTime).longValue();
-              }
-              if (throttledSlices instanceof Number) {
-                totalThrottledSlices += ((Number) throttledSlices).longValue();
-              }
-              if (elapsedSlices instanceof Number) {
-                totalElapsedSlices += ((Number) elapsedSlices).longValue();
-              }
-            }
-
-            if (!throttleEvents.isEmpty()) {
-              saturation.put("throttledTimeNs", totalThrottledTime);
-              saturation.put("throttledSlices", totalThrottledSlices);
-              saturation.put("elapsedSlices", totalElapsedSlices);
-
-              if (totalThrottledTime > 0) {
-                saturation.put("value", totalThrottledSlices);
-                saturation.put("unit", "slices");
-                saturation.put(
-                    "detail",
-                    String.format(
-                        Locale.ROOT,
-                        "Container throttled %d times, %d ns total",
-                        totalThrottledSlices,
-                        totalThrottledTime));
-              } else {
-                saturation.put("value", 0);
-                saturation.put("detail", "No container CPU throttling detected");
-              }
-            } else {
-              saturation.put("value", 0);
-              saturation.put("detail", "Container throttling events not available");
-            }
+                evaluator.evaluate(
+                    target.session(), JfrPathParser.parse("events/jdk.ContainerCPUThrottling"));
+            saturation =
+                containerThrottlingSaturation(
+                    throttleEvents,
+                    window == null ? null : window.fromEpochNanos(),
+                    window == null ? null : window.toEpochNanos());
           } catch (Exception e) {
+            saturation = new LinkedHashMap<>();
             saturation.put("value", "N/A");
             saturation.put("detail", "Could not check container throttling: " + e.getMessage());
           }
@@ -1109,6 +1077,26 @@ public final class JfrAnalyses {
         long runnableCount = counters.get(1);
         long saturatedCount = counters.get(2);
         long totalSamples = counters.get(0);
+        if (runnableCount == totalSamples) {
+          // Every sample RUNNABLE: what a CPU sampler records, whatever the threads did (#276)
+          String why = statesUninformative(eventType, totalSamples);
+          Map<String, Object> utilization = new LinkedHashMap<>();
+          utilization.put("value", "N/A");
+          utilization.put("detail", why);
+          utilization.put("note", "Enable jdk.CPULoad events for CPU utilization.");
+          cpu.put("utilization", utilization);
+          Map<String, Object> saturation = new LinkedHashMap<>();
+          saturation.put("source", JfrFindings.SATURATION_THREAD_STATES);
+          saturation.put("value", "N/A");
+          saturation.put("detail", why);
+          cpu.put("saturation", saturation);
+          Map<String, Object> errors = new LinkedHashMap<>();
+          errors.put("value", 0);
+          errors.put("detail", "No compilation failures detected");
+          cpu.put("errors", errors);
+          cpu.put("assessment", "UNKNOWN");
+          return cpu;
+        }
         double threadStatePct = (runnableCount * 100.0) / totalSamples;
 
         Map<String, Object> utilization = new LinkedHashMap<>();
@@ -1125,9 +1113,20 @@ public final class JfrAnalyses {
             "Thread state != CPU utilization. Enable jdk.CPULoad events for accurate data.");
         cpu.put("utilization", utilization);
 
+        double blockedPct = (saturatedCount * 100.0) / totalSamples;
         Map<String, Object> saturation = new LinkedHashMap<>();
-        saturation.put("value", saturatedCount);
-        saturation.put("detail", saturatedCount + " samples in blocking states");
+        saturation.put("source", JfrFindings.SATURATION_THREAD_STATES);
+        saturation.put("value", Math.round(blockedPct * 10) / 10.0);
+        saturation.put("unit", "%");
+        saturation.put("blockedSamples", saturatedCount);
+        saturation.put(
+            "detail",
+            String.format(
+                Locale.ROOT,
+                "%d of %d samples (%.1f%%) in blocking states",
+                saturatedCount,
+                totalSamples,
+                blockedPct));
         cpu.put("saturation", saturation);
 
         Map<String, Object> errors = new LinkedHashMap<>();
@@ -1564,15 +1563,23 @@ public final class JfrAnalyses {
     if (cpu != null && !cpu.containsKey("error")) {
       @SuppressWarnings("unchecked")
       Map<String, Object> cpuSat = (Map<String, Object>) cpu.get("saturation");
-      if (cpuSat != null && cpuSat.get("value") instanceof Number) {
-        double satPct = ((Number) cpuSat.get("value")).doubleValue();
+      if (cpuSat != null
+          && "%".equals(cpuSat.get("unit"))
+          && cpuSat.get("value") instanceof Number value) {
+        double satPct = value.doubleValue();
         if (satPct > 30) {
           bottlenecks.add("cpu_saturation");
           recommendations.add(
-              String.format(
-                  Locale.ROOT,
-                  "Investigate thread blocking: %.1f%% of CPU time spent waiting/blocked",
-                  satPct));
+              JfrFindings.SATURATION_CONTAINER_THROTTLING.equals(cpuSat.get("source"))
+                  ? String.format(
+                      Locale.ROOT,
+                      "Raise the container's CPU limit or reduce CPU demand: throttled in %.1f%%"
+                          + " of CPU periods",
+                      satPct)
+                  : String.format(
+                      Locale.ROOT,
+                      "Investigate thread blocking: %.1f%% of samples in blocking states",
+                      satPct));
         }
       }
     }
@@ -1637,7 +1644,11 @@ public final class JfrAnalyses {
     }
 
     if (recommendations.isEmpty()) {
-      recommendations.add("No significant bottlenecks detected - system appears healthy");
+      // With no share to judge by, nothing was found healthy either (#297)
+      recommendations.add(
+          anySaturationShare(resourceMetrics)
+              ? "No significant bottlenecks detected - system appears healthy"
+              : "No resource reported a saturation share - no verdict");
     }
 
     insights.put("recommendations", recommendations);
@@ -1662,7 +1673,10 @@ public final class JfrAnalyses {
       // Check saturation
       @SuppressWarnings("unchecked")
       Map<String, Object> saturation = (Map<String, Object>) resource.get("saturation");
-      if (saturation != null && saturation.get("value") instanceof Number) {
+      // Only a share is comparable across resources; counts and N/A are not (#263)
+      if (saturation != null
+          && "%".equals(saturation.get("unit"))
+          && saturation.get("value") instanceof Number) {
         double value = ((Number) saturation.get("value")).doubleValue();
         if (value > worstValue) {
           worstValue = value;
@@ -1672,15 +1686,57 @@ public final class JfrAnalyses {
       }
     }
 
+    // The bottlenecks the insights report count too: a verdict beside a listed bottleneck that
+    // ignores it is not one (#297)
+    List<?> bottlenecks =
+        generateUseInsights(resourceMetrics).get("bottlenecks") instanceof List<?> l
+            ? l
+            : List.of();
     if (worstResource != null) {
       summary.put("worstResource", worstResource);
       summary.put("worstMetric", worstMetric);
-      summary.put("overallAssessment", worstValue > 50 ? "NEEDS_ATTENTION" : "ACCEPTABLE");
-    } else {
+    }
+    if (!bottlenecks.isEmpty()) {
+      summary.put("bottlenecks", bottlenecks);
+    }
+    if ((worstResource != null && worstValue > 50) || !bottlenecks.isEmpty()) {
+      summary.put("overallAssessment", "NEEDS_ATTENTION");
+    } else if (worstResource != null) {
+      summary.put("overallAssessment", "ACCEPTABLE");
+    } else if (anySaturationShare(resourceMetrics)) {
+      // Every share measured is 0
       summary.put("overallAssessment", "HEALTHY");
+    } else {
+      // Nothing measured is not a clean bill of health (#297)
+      summary.put("overallAssessment", "UNKNOWN");
+      summary.put(
+          "note",
+          "No resource reported a saturation share; see each resource's utilization and"
+              + " assessment");
     }
 
     return summary;
+  }
+
+  /** Whether any resource without an error reports its saturation as a share ({@code %}). */
+  private static boolean anySaturationShare(Map<String, Object> resourceMetrics) {
+    for (String resource : resourceMetrics.keySet()) {
+      if (saturationShare(resourceMetrics, resource) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The resource's saturation share in percent, or null if it reports none. */
+  private static Number saturationShare(Map<String, Object> resourceMetrics, String resource) {
+    if (!(resourceMetrics.get(resource) instanceof Map<?, ?> metrics)
+        || metrics.containsKey("error")
+        || !(metrics.get("saturation") instanceof Map<?, ?> saturation)
+        || !"%".equals(saturation.get("unit"))) {
+      return null;
+    }
+    return saturation.get("value") instanceof Number value ? value : null;
   }
 
   public Map<String, Object> tsa(AnalysisTarget target, Map<String, Object> args, Progress progress)
@@ -1762,6 +1818,11 @@ public final class JfrAnalyses {
       result.put("totalSamples", totalSamples);
       result.put("totalThreads", threadMetrics.size());
 
+      boolean statesInformative = !onlyRunnable(globalStateCount);
+      if (!statesInformative) {
+        result.put("stateNote", statesUninformative(eventType, totalSamples));
+      }
+
       // Global state distribution
       Map<String, Object> stateDistribution = new LinkedHashMap<>();
       for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
@@ -1779,7 +1840,8 @@ public final class JfrAnalyses {
 
       // Thread profiles
       List<Map<String, Object>> threadProfiles =
-          buildThreadProfiles(threadMetrics, totalSamples, correlations, queueCorrelations);
+          buildThreadProfiles(
+              threadMetrics, totalSamples, correlations, queueCorrelations, statesInformative);
       result.put("threadProfiles", threadProfiles);
 
       // Correlations
@@ -1799,7 +1861,12 @@ public final class JfrAnalyses {
         result.put(
             "insights",
             generateTsaInsights(
-                threadMetrics, globalStateCount, totalSamples, correlations, queueCorrelations));
+                threadMetrics,
+                globalStateCount,
+                totalSamples,
+                correlations,
+                queueCorrelations,
+                statesInformative));
         result.put(
             "findings", Findings.toMaps(Findings.merge(JfrFindings.fromTsa(result, "jfr_tsa"))));
       }
@@ -1928,7 +1995,8 @@ public final class JfrAnalyses {
       Map<String, ThreadStateMetrics> threadMetrics,
       long totalSamples,
       Map<String, MonitorCorrelation> correlations,
-      Map<String, QueueCorrelation> queueCorrelations) {
+      Map<String, QueueCorrelation> queueCorrelations,
+      boolean statesInformative) {
     return threadMetrics.values().stream()
         .sorted((a, b) -> Long.compare(b.totalSamples.sum(), a.totalSamples.sum()))
         .limit(20) // Top 20 threads by sample count
@@ -1954,7 +2022,11 @@ public final class JfrAnalyses {
               profile.put("stateBreakdown", stateBreakdown);
 
               // Assessment
-              profile.put("assessment", assessThreadBehavior(m.stateCount, m.totalSamples.sum()));
+              profile.put(
+                  "assessment",
+                  statesInformative
+                      ? assessThreadBehavior(m.stateCount, m.totalSamples.sum())
+                      : "NOT_APPLICABLE");
 
               // Add queue correlation info if available
               if (queueCorrelations != null && !queueCorrelations.isEmpty()) {
@@ -2038,14 +2110,24 @@ public final class JfrAnalyses {
       Map<String, Long> globalStateCount,
       long totalSamples,
       Map<String, MonitorCorrelation> correlations,
-      Map<String, QueueCorrelation> queueCorrelations) {
+      Map<String, QueueCorrelation> queueCorrelations,
+      boolean statesInformative) {
     Map<String, Object> insights = new LinkedHashMap<>();
     List<String> patterns = new ArrayList<>();
     List<Map<String, Object>> problematicThreads = new ArrayList<>();
     List<String> recommendations = new ArrayList<>();
+    if (!statesInformative) {
+      // No state patterns or thread assessments: the blocking-event correlations below still are
+      recommendations.add(
+          "Thread states cannot show blocking in these samples; jdk.JavaMonitorEnter events"
+              + " (correlateBlocking) show monitor contention");
+    }
 
     // Analyze global state distribution
-    for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
+    for (Map.Entry<String, Long> entry :
+        statesInformative
+            ? globalStateCount.entrySet()
+            : java.util.Set.<Map.Entry<String, Long>>of()) {
       double pct = (entry.getValue() * 100.0) / totalSamples;
       String state = entry.getKey();
 
@@ -2081,7 +2163,8 @@ public final class JfrAnalyses {
     }
 
     // Find problematic threads
-    for (ThreadStateMetrics m : threadMetrics.values()) {
+    for (ThreadStateMetrics m :
+        statesInformative ? threadMetrics.values() : List.<ThreadStateMetrics>of()) {
       String assessment = assessThreadBehavior(m.stateCount, m.totalSamples.sum());
       if ("LOCK_CONTENTION".equals(assessment)) {
         Map<String, Object> problem = new LinkedHashMap<>();
@@ -2206,12 +2289,254 @@ public final class JfrAnalyses {
         : List.of();
   }
 
+  /**
+   * {@code cpu.saturation} from {@code jdk.ContainerCPUThrottling} readings: the share of the
+   * container's CFS periods that were throttled.
+   *
+   * <p>Each reading carries the cgroup's {@code cpu.stat} counters ({@code nr_periods}, {@code
+   * nr_throttled}, throttled time), which count from the cgroup's start, so the throttling between
+   * two readings is their difference, not either reading or a sum (#263). The window is measured
+   * from the last reading at or before its start to the first at or after its end, so what is
+   * measured can be longer than the window: readings are sparse (a minute apart in test-dd.jfr).
+   * {@code measuredFromEpochNanos}..{@code measuredToEpochNanos} run from the first to the last
+   * interval counted, and the detail gives the counted intervals' total length. An interval whose
+   * counters are inconsistent (one decreased: the cgroup was recreated, or the recording joins
+   * several containers; more periods were throttled than elapsed; or periods elapsed between two
+   * readings at the same instant) is skipped and counted in {@code intervalsSkipped}. The value is
+   * {@code "N/A"} for a window that ends before it starts, with fewer than two readable readings,
+   * when no interval covers the window, when every interval is skipped, or when no period elapsed.
+   * The JDK writes -1 (not available) or -2 (not supported) for a counter it could not read; such
+   * readings are ignored.
+   *
+   * @param events the recording's {@code jdk.ContainerCPUThrottling} events, in any order
+   * @param fromEpochNanos the window's start, or {@code null} for the recording's
+   * @param toEpochNanos the window's end, or {@code null} for the recording's
+   */
+  static Map<String, Object> containerThrottlingSaturation(
+      List<Map<String, Object>> events, Long fromEpochNanos, Long toEpochNanos) {
+    Map<String, Object> saturation = new LinkedHashMap<>();
+    if (fromEpochNanos != null && toEpochNanos != null && fromEpochNanos > toEpochNanos) {
+      saturation.put("value", "N/A");
+      saturation.put("detail", "The window ends before it starts");
+      return saturation;
+    }
+    if (events.isEmpty()) {
+      saturation.put("value", 0);
+      saturation.put("detail", "Container throttling events not available");
+      return saturation;
+    }
+    saturation.put("source", JfrFindings.SATURATION_CONTAINER_THROTTLING);
+    List<long[]> readings = new ArrayList<>(); // {startTime, elapsed, throttled, timeNs}
+    for (Map<String, Object> event : events) {
+      long startTime = counter(Values.get(event, "startTime"));
+      long elapsed = counter(Values.get(event, "cpuElapsedSlices"));
+      long throttled = counter(Values.get(event, "cpuThrottledSlices"));
+      if (startTime >= 0 && elapsed >= 0 && throttled >= 0) {
+        readings.add(
+            new long[] {
+              startTime, elapsed, throttled, counter(Values.get(event, "cpuThrottledTime"))
+            });
+      }
+    }
+    if (readings.size() < 2) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail",
+          "Fewer than two readable container throttling readings; their counters count from the"
+              + " container's start, so they give no share");
+      return saturation;
+    }
+    // Ties broken on the counters, so equal timestamps give the same result in any input order
+    readings.sort(
+        java.util.Comparator.<long[]>comparingLong(r -> r[0])
+            .thenComparingLong(r -> r[1])
+            .thenComparingLong(r -> r[2])
+            .thenComparingLong(r -> r[3]));
+    int lo = 0;
+    int hi = readings.size() - 1;
+    if (fromEpochNanos != null) {
+      while (lo + 1 < readings.size() && readings.get(lo + 1)[0] <= fromEpochNanos) {
+        lo++;
+      }
+    }
+    if (toEpochNanos != null) {
+      while (hi - 1 >= 0 && readings.get(hi - 1)[0] >= toEpochNanos) {
+        hi--;
+      }
+    }
+    if (lo >= hi) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail", "No interval between two container throttling readings covers the window");
+      return saturation;
+    }
+    long elapsedSlices = 0;
+    long throttledSlices = 0;
+    long throttledTimeNs = 0;
+    long measuredNs = 0; // the counted intervals' total length
+    long measuredFrom = -1;
+    long measuredTo = -1;
+    boolean timeKnown = true;
+    int intervals = 0;
+    int skipped = 0;
+    try {
+      for (int i = lo; i < hi; i++) {
+        long[] a = readings.get(i);
+        long[] b = readings.get(i + 1);
+        long dElapsed = b[1] - a[1];
+        long dThrottled = b[2] - a[2];
+        // Periods that elapsed in no time: two containers reporting at the same instant
+        boolean noTime = b[0] == a[0] && dElapsed > 0;
+        if (dElapsed < 0 || dThrottled < 0 || dThrottled > dElapsed || noTime) {
+          skipped++;
+          continue;
+        }
+        intervals++;
+        elapsedSlices = Math.addExact(elapsedSlices, dElapsed);
+        throttledSlices = Math.addExact(throttledSlices, dThrottled);
+        measuredNs = Math.addExact(measuredNs, b[0] - a[0]);
+        measuredFrom = measuredFrom < 0 ? a[0] : measuredFrom;
+        measuredTo = b[0];
+        if (timeKnown && a[3] >= 0 && b[3] >= a[3]) {
+          try {
+            throttledTimeNs = Math.addExact(throttledTimeNs, b[3] - a[3]);
+          } catch (ArithmeticException timeOverflow) {
+            timeKnown = false; // the share does not depend on the time
+          }
+        } else {
+          timeKnown = false;
+        }
+      }
+    } catch (ArithmeticException overflow) {
+      saturation.put("value", "N/A");
+      saturation.put("detail", "Container throttling counters too large to add up");
+      return saturation;
+    }
+    if (skipped > 0) {
+      saturation.put("intervalsSkipped", skipped);
+    }
+    if (intervals == 0) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail",
+          "Every interval between the container throttling readings has inconsistent counters"
+              + " (a counter decreased, more periods throttled than elapsed, or periods counted between two"
+              + " readings at the same instant)");
+      return saturation;
+    }
+    // The counted intervals only; skipped ones (in between, too) are not part of the share
+    saturation.put("measuredFromEpochNanos", measuredFrom);
+    saturation.put("measuredToEpochNanos", measuredTo);
+    String skippedNote =
+        skipped > 0
+            ? "; "
+                + skipped
+                + " interval(s) with inconsistent counters skipped (a counter decreased, more"
+                + " periods throttled than elapsed, or periods counted between two readings at"
+                + " the same instant)"
+            : "";
+    if (elapsedSlices == 0) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail",
+          "No CPU periods elapsed between the container throttling readings" + skippedNote);
+      return saturation;
+    }
+    saturation.put("throttledSlices", throttledSlices);
+    saturation.put("elapsedSlices", elapsedSlices);
+    if (timeKnown) {
+      saturation.put("throttledTimeNs", throttledTimeNs);
+    }
+    double throttledPct = throttledSlices * 100.0 / elapsedSlices;
+    saturation.put("value", Math.round(throttledPct * 10) / 10.0);
+    saturation.put("unit", "%");
+    saturation.put(
+        "detail",
+        String.format(
+            Locale.ROOT,
+            "Container throttled in %d of %d CPU periods (%.1f%%), over %.1f s between the"
+                + " throttling readings nearest the window%s",
+            throttledSlices,
+            elapsedSlices,
+            throttledPct,
+            measuredNs / 1e9,
+            skippedNote));
+    return saturation;
+  }
+
+  /** A field as a long, or -1 when absent or not a number (the JDK's -1/-2 stay negative). */
+  private static long counter(Object value) {
+    return value instanceof Number n ? n.longValue() : -1;
+  }
+
+  /**
+   * A sample's thread state, named as {@link #normalizeState} names it; {@code UNKNOWN} if none.
+   */
   String extractState(Map<String, Object> event) {
     Object state = Values.get(event, "state", "name");
     if (state == null) {
       state = Values.get(event, "state");
     }
-    return state != null ? String.valueOf(unwrapValue(state)) : "UNKNOWN";
+    return state != null ? normalizeState(String.valueOf(unwrapValue(state))) : "UNKNOWN";
+  }
+
+  /**
+   * HotSpot's thread statuses, as JDK recordings name them ({@code jdk.types.ThreadState}), mapped
+   * to the {@link Thread.State} each one is: {@code Thread.sleep}, a timed {@code Object.wait} and
+   * {@code parkNanos} are {@code TIMED_WAITING}, {@code Object.wait} and {@code park} are {@code
+   * WAITING}, waiting to enter a monitor is {@code BLOCKED} (see {@link Thread.State}).
+   */
+  private static final Map<String, String> JDK_THREAD_STATES =
+      Map.of(
+          "STATE_NEW", "NEW",
+          "STATE_RUNNABLE", "RUNNABLE",
+          "STATE_SLEEPING", "TIMED_WAITING",
+          "STATE_IN_OBJECT_WAIT", "WAITING",
+          "STATE_IN_OBJECT_WAIT_TIMED", "TIMED_WAITING",
+          "STATE_PARKED", "WAITING",
+          "STATE_PARKED_TIMED", "TIMED_WAITING",
+          "STATE_BLOCKED_ON_MONITOR_ENTER", "BLOCKED",
+          "STATE_TERMINATED", "TERMINATED");
+
+  /**
+   * A thread state as the analyses compare it (#276). JDK recordings name HotSpot's statuses
+   * ({@code STATE_RUNNABLE}, {@code STATE_BLOCKED_ON_MONITOR_ENTER}, ...), which become their
+   * {@link Thread.State}; another {@code STATE_} name loses the prefix. Other recordings' names
+   * ({@code RUNNABLE} in Datadog's, {@code PARKED}) stay as they are.
+   */
+  static String normalizeState(String state) {
+    String mapped = JDK_THREAD_STATES.get(state);
+    if (mapped == null) {
+      mapped = DATADOG_THREAD_STATES.get(state);
+    }
+    if (mapped != null) {
+      return mapped;
+    }
+    return state.startsWith("STATE_") ? state.substring("STATE_".length()) : state;
+  }
+
+  /**
+   * The Datadog profiler's names ({@code datadog.ExecutionSample}'s state pool) that are not a
+   * {@link Thread.State}: contending for a monitor is {@code BLOCKED}, a park {@code WAITING}, a
+   * sleep {@code TIMED_WAITING}. Its other names ({@code RUNNABLE}, {@code NEW}, {@code SYSCALL},
+   * {@code BREAKPOINT}, ...) stay.
+   */
+  private static final Map<String, String> DATADOG_THREAD_STATES =
+      Map.of("CONTENDED", "BLOCKED", "PARKED", "WAITING", "SLEEPING", "TIMED_WAITING");
+
+  /** Whether every sample was RUNNABLE, so the states say nothing about blocking or waiting. */
+  static boolean onlyRunnable(Map<String, Long> stateCount) {
+    return stateCount.size() == 1 && stateCount.containsKey("RUNNABLE");
+  }
+
+  /** Why thread states give no utilization, saturation or assessment for these samples (#276). */
+  static String statesUninformative(String eventType, long samples) {
+    return "All "
+        + samples
+        + " "
+        + eventType
+        + " samples are RUNNABLE, as a CPU sampler records them: the thread states show neither"
+        + " utilization nor blocking";
   }
 
   /** See {@link EventThreads}: {@code sampledThread} for samples, else {@code eventThread}. */

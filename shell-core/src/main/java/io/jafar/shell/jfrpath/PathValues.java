@@ -25,7 +25,7 @@ final class PathValues {
       String base = baseName(last);
       List<String> head = new java.util.ArrayList<>(proj);
       head.set(head.size() - 1, base);
-      Object arrVal = Values.get(root, buildPathTokens(head).toArray());
+      Object arrVal = Values.get(root, tokensOf(head).toArray());
       Object arr = unwrapArrayLike(arrVal);
       if (arr == null) return;
       int len = java.lang.reflect.Array.getLength(arr);
@@ -37,7 +37,7 @@ final class PathValues {
       return;
     }
     // Try new recursive array iteration approach
-    extractWithArrayIteration(root, buildPathTokens(proj), out);
+    extractWithArrayIteration(root, tokensOf(proj), out);
   }
 
   /**
@@ -149,7 +149,35 @@ final class PathValues {
    * select() and expression field references keep one value per row.
    */
   static Object resolveSingle(Map<String, Object> root, List<String> segments) {
-    return resolveSingleValue(root, buildPathTokens(segments));
+    return resolveSingleValue(root, tokensOf(segments));
+  }
+
+  /**
+   * Parsed paths, by path. A filter resolves its field path for every event it tests, and a sort
+   * for every comparison, always with the same few paths of one query; parsing them each time was
+   * about a tenth of a filtered query's time. Bounded: cleared when it reaches {@link
+   * #MAX_CACHED_PATHS}, which a session reaches only with that many distinct paths.
+   */
+  private static final java.util.concurrent.ConcurrentHashMap<List<String>, List<Object>> TOKENS =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  static final int MAX_CACHED_PATHS = 4096;
+
+  /**
+   * {@link #buildPathTokens} of {@code segments}, parsed once per distinct path. The result is
+   * unmodifiable and shared; the key is an unmodifiable copy, so a caller that later changes its
+   * list does not change the entry.
+   */
+  static List<Object> tokensOf(List<String> segments) {
+    List<Object> tokens = TOKENS.get(segments);
+    if (tokens == null) {
+      tokens = java.util.Collections.unmodifiableList(buildPathTokens(segments));
+      if (TOKENS.size() >= MAX_CACHED_PATHS) {
+        TOKENS.clear();
+      }
+      TOKENS.put(List.copyOf(segments), tokens);
+    }
+    return tokens;
   }
 
   private static Object resolveSingleValue(Map<String, Object> root, List<Object> tokens) {
