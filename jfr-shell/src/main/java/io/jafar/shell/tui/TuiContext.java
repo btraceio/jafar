@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
@@ -69,7 +70,7 @@ public final class TuiContext {
   }
 
   static Platform detectPlatform() {
-    String os = System.getProperty("os.name", "").toLowerCase();
+    String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
     if (os.contains("mac") || os.contains("darwin")) return Platform.MACOS;
     if (os.contains("win")) return Platform.WINDOWS;
     return Platform.LINUX;

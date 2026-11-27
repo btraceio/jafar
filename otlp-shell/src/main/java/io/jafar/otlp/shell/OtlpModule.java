@@ -107,6 +107,11 @@ public final class OtlpModule implements ShellModule {
   }
 
   @Override
+  public io.jafar.shell.core.compare.ProfileReader profileReader() {
+    return new OtlpProfileReader();
+  }
+
+  @Override
   public int getPriority() {
     return 0;
   }

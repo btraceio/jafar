@@ -7,6 +7,7 @@ import io.jafar.shell.cli.completion.FunctionRegistry;
 import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -26,7 +27,7 @@ public final class PipelineOperatorCompleter implements ContextCompleter {
   @Override
   public void complete(
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
-    String partial = ctx.partialInput().toLowerCase();
+    String partial = ctx.partialInput().toLowerCase(Locale.ROOT);
     String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
     String eventType = ctx.eventType();
 
@@ -44,7 +45,8 @@ public final class PipelineOperatorCompleter implements ContextCompleter {
       String description = spec.description();
 
       // Filter by prefix match
-      if (!name.toLowerCase().startsWith(partial) && !template.toLowerCase().startsWith(partial)) {
+      if (!name.toLowerCase(Locale.ROOT).startsWith(partial)
+          && !template.toLowerCase(Locale.ROOT).startsWith(partial)) {
         continue;
       }
 

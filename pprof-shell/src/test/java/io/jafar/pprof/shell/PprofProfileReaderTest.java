@@ -44,8 +44,9 @@ class PprofProfileReaderTest {
     assertSame(SamplerKind.ALLOC_BYTES, alloc.samplerKind());
     assertEquals(4096L, alloc.totalWeight());
     assertEquals(
-        "requested; observation counts unknown: no sample-count column for alloc_space/bytes, and"
-            + " no period to divide by",
+        "requested; observation counts unknown: alloc_space/bytes is an allocation measure, which"
+            + " producers scale up from the sampled events (so its period does not give counts"
+            + " either), and no column counts the samples",
         alloc.sampleTypeReason());
   }
 

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -674,7 +675,63 @@ public final class JfrPathEvaluator {
     return result;
   }
 
+  /**
+   * {@code v} without its wrappers: a ComplexType's value, and a one-entry map's single value,
+   * repeatedly. The untyped parser gives string constants as one-entry maps ({@code {string=...}},
+   * a ThreadState's {@code {name=...}}); spread as fields they made a {@code string} column, and
+   * {@code filter(value = ...)} matched nothing.
+   */
+  private static Object collapsed(Object v) {
+    Object value = v;
+    while (true) {
+      if (value instanceof io.jafar.parser.api.ComplexType ct) {
+        value = ct.getValue();
+      } else if (value instanceof Map<?, ?> m && m.size() == 1) {
+        value = m.values().iterator().next();
+      } else {
+        return value;
+      }
+    }
+  }
+
+  /**
+   * The rows a row operator (head, tail, filter, distinct) starts from. With a projection ({@code
+   * events/T/heapUsed}) each projected value is a row: a scalar as {@code {value: v}}, the column a
+   * plain projection and the transforms show; an object (a map) as its own fields. A string
+   * constant ({@code {string=...}}, {@code {name=...}}) is a scalar. Whole events came back, so
+   * {@code /heapUsed | head(2)} showed whole events and a later {@code stats()} read the events'
+   * first column (#305).
+   */
   List<Map<String, Object>> collectAllRows(JFRSession session, Query query) throws Exception {
+    if (query.root == Root.EVENTS && query.segments.size() >= 2) {
+      validateEventTypes(session, query.eventTypes);
+      List<String> proj = query.segments.subList(1, query.segments.size());
+      List<Map<String, Object>> out = new ArrayList<>();
+      forEachMatching(
+          session.getRecordingPath(),
+          query.eventTypes,
+          query.predicates,
+          map -> {
+            // Called from several chunk-parsing threads: extract first, then append as one
+            List<Object> vals = new ArrayList<>();
+            PathValues.extractWithIndexing(map, proj, vals);
+            List<Map<String, Object>> rows = new ArrayList<>(vals.size());
+            for (Object v : vals) {
+              Object value = collapsed(v);
+              Map<String, Object> row = new java.util.LinkedHashMap<>();
+              if (value instanceof Map<?, ?> fields) {
+                fields.forEach((k, fv) -> row.put(String.valueOf(k), fv));
+              } else {
+                row.put("value", value);
+              }
+              rows.add(row);
+            }
+            synchronized (out) {
+              out.addAll(rows);
+            }
+          });
+      return out;
+    }
     return evaluate(session, new Query(query.root, query.segments, query.predicates));
   }
 
@@ -889,6 +946,8 @@ public final class JfrPathEvaluator {
       case JfrPath.CountOp _ -> RowOps.applyCount(rows);
       case JfrPath.SumOp sum -> RowOps.applySum(rows, sum.valuePath);
       case JfrPath.StatsOp stats -> RowOps.applyStats(rows, stats.valuePath);
+      // Was ignored here: head(n) | sketch() printed the rows (#305)
+      case JfrPath.SketchOp sk -> RowOps.applySketch(rows, sk.valuePath);
       case JfrPath.SelectOp sel -> RowOps.applySelect(rows, sel);
       case JfrPath.GroupByOp gb ->
           RowOps.applyGroupBy(
@@ -904,9 +963,9 @@ public final class JfrPathEvaluator {
       case JfrPath.QuantilesOp q -> RowOps.applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> RowOps.applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up ->
-          RowOps.applyStringTransform(rows, up.valuePath, String::toUpperCase);
+          RowOps.applyStringTransform(rows, up.valuePath, s -> s.toUpperCase(Locale.ROOT));
       case JfrPath.LowercaseOp lo ->
-          RowOps.applyStringTransform(rows, lo.valuePath, String::toLowerCase);
+          RowOps.applyStringTransform(rows, lo.valuePath, s -> s.toLowerCase(Locale.ROOT));
       case JfrPath.TrimOp tr -> RowOps.applyStringTransform(rows, tr.valuePath, String::trim);
       case JfrPath.AbsOp ab -> RowOps.applyNumberTransform(rows, ab.valuePath, Math::abs);
       case JfrPath.RoundOp ro -> RowOps.applyNumberTransform(rows, ro.valuePath, Math::round);
@@ -930,7 +989,12 @@ public final class JfrPathEvaluator {
       // Not a row transform: it re-reads the whole recording, so on rows it would silently
       // ignore what came before it.
       case JfrPath.CrossrefOp _ -> throw new IllegalArgumentException(Aggregations.CROSSREF_USAGE);
-      default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
+      // They read the recording for their partner events: on rows they were silently skipped
+      case JfrPath.DecorateByTimeOp _, JfrPath.DecorateByKeyOp _ ->
+          throw new IllegalArgumentException(
+              "decorateByTime()/decorateByKey() read the recording: they must be the first"
+                  + " operator of an events/ query, not follow another operator or run on rows"
+                  + " (a variable's)");
     };
   }
 
