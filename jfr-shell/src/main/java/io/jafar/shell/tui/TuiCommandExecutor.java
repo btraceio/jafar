@@ -151,7 +151,7 @@ public final class TuiCommandExecutor {
     }
 
     // pin [name]
-    if (command.equalsIgnoreCase("pin") || command.toLowerCase().startsWith("pin ")) {
+    if (command.equalsIgnoreCase("pin") || command.toLowerCase(Locale.ROOT).startsWith("pin ")) {
       ResultTab tab = ctx.activeTab();
       if (!tab.pinned) {
         String name = command.length() > 4 ? command.substring(4).trim() : "";
@@ -165,7 +165,8 @@ public final class TuiCommandExecutor {
     }
 
     // closetab [name]
-    if (command.equalsIgnoreCase("closetab") || command.toLowerCase().startsWith("closetab ")) {
+    if (command.equalsIgnoreCase("closetab")
+        || command.toLowerCase(Locale.ROOT).startsWith("closetab ")) {
       String name = command.length() > 9 ? command.substring(9).trim() : "";
       int targetIndex = -1;
       if (name.isEmpty()) {
@@ -331,7 +332,7 @@ public final class TuiCommandExecutor {
     }
 
     // If the adapter exclusively owns this command, route directly to it
-    String cmdWord = command.trim().split("\\s+")[0].toLowerCase();
+    String cmdWord = command.trim().split("\\s+")[0].toLowerCase(Locale.ROOT);
     CommandDescriptor desc = tuiAdapter != null ? tuiAdapter.describeCommand(cmdWord) : null;
     if (desc != null) {
       submitAdapterCommand(command, desc);
@@ -833,9 +834,9 @@ public final class TuiCommandExecutor {
 
   int findHistoryMatch(String query, int fromIndex) {
     if (query.isEmpty() || ctx.commandHistory.isEmpty()) return -1;
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     for (int i = Math.min(fromIndex, ctx.commandHistory.size() - 1); i >= 0; i--) {
-      if (ctx.commandHistory.get(i).toLowerCase().contains(lower)) {
+      if (ctx.commandHistory.get(i).toLowerCase(Locale.ROOT).contains(lower)) {
         return i;
       }
     }
@@ -844,10 +845,10 @@ public final class TuiCommandExecutor {
 
   int findDistinctHistoryMatch(String query, int fromIndex, String skipValue) {
     if (query.isEmpty() || ctx.commandHistory.isEmpty()) return -1;
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     for (int i = Math.min(fromIndex, ctx.commandHistory.size() - 1); i >= 0; i--) {
       String entry = ctx.commandHistory.get(i);
-      if (entry.toLowerCase().contains(lower) && !entry.equals(skipValue)) {
+      if (entry.toLowerCase(Locale.ROOT).contains(lower) && !entry.equals(skipValue)) {
         return i;
       }
     }
@@ -922,12 +923,12 @@ public final class TuiCommandExecutor {
       tab.scrollOffset = 0;
       return;
     }
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     List<Integer> indices = new ArrayList<>();
     int maxWidth = 0;
     for (int i = 0; i < tab.lines.size(); i++) {
       String line = tab.lines.get(i);
-      if (line.toLowerCase().contains(lower)) {
+      if (line.toLowerCase(Locale.ROOT).contains(lower)) {
         indices.add(i);
         maxWidth = Math.max(maxWidth, line.length());
       }
@@ -1013,11 +1014,11 @@ public final class TuiCommandExecutor {
       normalizeSidebarSelection();
       return;
     }
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     List<Integer> indices = new ArrayList<>();
     for (int i = 0; i < ctx.sidebarTypes.size(); i++) {
       String name = String.valueOf(ctx.sidebarTypes.get(i).getOrDefault("name", ""));
-      if (name.toLowerCase().contains(lower)) {
+      if (name.toLowerCase(Locale.ROOT).contains(lower)) {
         indices.add(i);
       }
     }
@@ -1177,10 +1178,10 @@ public final class TuiCommandExecutor {
       closeCompletionPopup(false);
       return;
     }
-    String lower = currentWord.toLowerCase();
+    String lower = currentWord.toLowerCase(Locale.ROOT);
     List<Candidate> filtered = new ArrayList<>();
     for (Candidate c : ctx.completionAllCandidates) {
-      if (c.value().toLowerCase().startsWith(lower)) {
+      if (c.value().toLowerCase(Locale.ROOT).startsWith(lower)) {
         filtered.add(c);
       }
     }

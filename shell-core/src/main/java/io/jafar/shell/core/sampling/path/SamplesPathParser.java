@@ -2,6 +2,7 @@ package io.jafar.shell.core.sampling.path;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Recursive descent parser for the samples query language shared by pprof and OTLP profiling
@@ -196,7 +197,7 @@ public final class SamplesPathParser {
   }
 
   private SamplesPath.PipelineOp parsePipelineOp() {
-    String name = parseIdentifier().toLowerCase();
+    String name = parseIdentifier().toLowerCase(Locale.ROOT);
     skipWs();
     return switch (name) {
       case "count" -> {
@@ -232,7 +233,7 @@ public final class SamplesPathParser {
       if (!isAtEnd() && peek() == ',') {
         advance();
         skipWs();
-        String dir = parseIdentifier().toLowerCase();
+        String dir = parseIdentifier().toLowerCase(Locale.ROOT);
         ascending = dir.equals("asc");
       }
     }
@@ -251,7 +252,7 @@ public final class SamplesPathParser {
     if (!isAtEnd() && peek() == ',') {
       advance(); // consume ','
       skipWs();
-      String agg = parseIdentifier().toLowerCase();
+      String agg = parseIdentifier().toLowerCase(Locale.ROOT);
       skipWs();
       if (!isAtEnd() && peek() == '(') {
         advance(); // consume '('
@@ -335,7 +336,7 @@ public final class SamplesPathParser {
     if (!isAtEnd() && peek() == ',') {
       advance();
       skipWs();
-      String dir = parseIdentifier().toLowerCase();
+      String dir = parseIdentifier().toLowerCase(Locale.ROOT);
       ascending = dir.equals("asc");
     }
     skipWs();

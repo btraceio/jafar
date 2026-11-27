@@ -527,7 +527,7 @@ public final class ShellCompleter implements Completer {
               new Candidate(
                   "{", "{", null, "map literal - {\"key\": value, ...}", null, null, false));
         }
-        if (currentWord.isEmpty() || "merge".startsWith(currentWord.toLowerCase())) {
+        if (currentWord.isEmpty() || "merge".startsWith(currentWord.toLowerCase(Locale.ROOT))) {
           candidates.add(
               new Candidate(
                   "merge(",

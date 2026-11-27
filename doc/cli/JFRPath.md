@@ -133,6 +133,12 @@ Simple field comparisons:
 - `<=` : Less than or equal
 - `~` : Regex match
 
+Against `null`, `=` and `!=` are presence checks: `[field = null]` matches events where the field
+is missing or null (a missing step on a nested path included), `[field != null]` events where it is
+present. A path that crosses an array needs an index (`frames/0/lineNumber`); without one it does
+not resolve, and reads as missing. The `any:`/`all:`/`none:` forms keep their own rules: there a
+missing list or element matches nothing.
+
 **Examples**:
 ```
 events/jdk.FileRead[bytesRead>1000]
@@ -439,10 +445,10 @@ events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(startsWith
 events/jdk.ExecutionSample | filter(len(stackTrace/frames) > 50) | count()
 ```
 
-The predicate functions (`contains`, `between`, `len(...) > n`, ...) work as in path filters. Two
-differences remain: in `filter(...)`, `field == null` is a presence check (it matches rows without
-the field), and a plain comparison reads a nested path by map keys only, not array indexes
-(`frames/0`).
+The predicate functions (`contains`, `between`, `len(...) > n`, ...) work as in path filters, and
+so do nested paths with array indexes (`stackTrace/frames/0/lineNumber`). In both, `field == null`
+is a presence check: it matches rows where the field is missing or null, and `field != null` rows
+where it is present.
 
 ### Distinct
 ```

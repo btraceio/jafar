@@ -218,6 +218,9 @@ final class MatchEngine {
                 + (current != null ? current.getClass().getName() : "null")
                 + ")");
       }
+      // The any:/all:/none: forms keep their rule: a missing or null value matches nothing, not
+      // even = null (#309 widened only the expression form)
+      if (current == null) return false;
       return compare(current, op, lit);
     }
     String seg = path.get(idx);
@@ -369,6 +372,15 @@ final class MatchEngine {
   }
 
   static boolean compare(Object actual, Op op, Object lit) {
+    if (lit == null) {
+      // A presence check, as in filter(...) (matchOp): [x == null] matches a missing or null x,
+      // [x != null] a present one; it matched nothing for a missing x (#309)
+      return switch (op) {
+        case EQ -> actual == null;
+        case NE -> actual != null;
+        default -> false;
+      };
+    }
     if (actual == null) return false;
 
     if (System.getProperty("jfr.shell.query.debug") != null) {
@@ -417,7 +429,7 @@ final class MatchEngine {
   static boolean matchesPredicate(Map<String, Object> row, JfrPath.Predicate predicate) {
     if (predicate instanceof JfrPath.FieldPredicate fp) {
       // For pipeline filter, field path is typically a single column name
-      Object val = Values.get(row, fp.fieldPath.toArray());
+      Object val = rowValue(row, fp.fieldPath);
       return matchOp(val, fp.op, fp.literal);
     } else if (predicate instanceof JfrPath.ExprPredicate ep) {
       return matchBoolExpr(row, ep.expr);
@@ -425,11 +437,21 @@ final class MatchEngine {
     return false;
   }
 
+  /**
+   * A pipeline row's value at {@code path}: as a column or nested map, or else through array
+   * indexes ({@code frames/0/lineNumber}), as {@code [...]} predicates read it. Read by map keys
+   * only, frames/0 found nothing (#309).
+   */
+  private static Object rowValue(Map<String, Object> row, List<String> path) {
+    Object v = Values.get(row, path.toArray());
+    return v != null ? v : PathValues.resolveSingle(row, path);
+  }
+
   static boolean matchBoolExpr(Map<String, Object> row, JfrPath.BoolExpr expr) {
     if (expr instanceof JfrPath.CompExpr ce) {
       Object val;
       if (ce.lhs instanceof JfrPath.PathRef pr) {
-        val = Values.get(row, pr.path.toArray());
+        val = rowValue(row, pr.path);
       } else if (ce.lhs instanceof JfrPath.FuncValueExpr fve) {
         // The function's value, as a [...] predicate computes it: this compared the raw first
         // argument, so filter(len(name) > 3) compared the name itself (#303)

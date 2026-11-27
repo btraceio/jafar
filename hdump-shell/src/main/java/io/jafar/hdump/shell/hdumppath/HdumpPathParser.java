@@ -8,6 +8,7 @@ import io.jafar.shell.core.expr.ValueExpr;
 import io.jafar.shell.core.expr.ValueExpr.ArithOp;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Function;
 
 /**
@@ -340,7 +341,7 @@ public final class HdumpPathParser {
         skipWs();
       }
       expect(')');
-      return new FuncExpr(ident.toLowerCase(), args);
+      return new FuncExpr(ident.toLowerCase(Locale.ROOT), args);
     }
 
     // Not a function — backtrack and parse as comparison: fieldPath op literal
@@ -595,7 +596,7 @@ public final class HdumpPathParser {
   }
 
   private PipelineOp parsePipelineOp() {
-    String opName = parseIdentifier().toLowerCase();
+    String opName = parseIdentifier().toLowerCase(Locale.ROOT);
     skipWs();
 
     return switch (opName) {
@@ -709,7 +710,7 @@ public final class HdumpPathParser {
         skipWs();
         expect('=');
         skipWs();
-        String ascValue = parseIdentifier().toLowerCase();
+        String ascValue = parseIdentifier().toLowerCase(Locale.ROOT);
         descending = !("true".equals(ascValue) || "yes".equals(ascValue));
       } else if (matchKeyword("asc")) {
         descending = false;
@@ -742,7 +743,7 @@ public final class HdumpPathParser {
         skipWs();
         expect('=');
         skipWs();
-        String aggName = parseIdentifier().toLowerCase();
+        String aggName = parseIdentifier().toLowerCase(Locale.ROOT);
         aggOp =
             switch (aggName) {
               case "count" -> AggOp.COUNT;
@@ -770,7 +771,7 @@ public final class HdumpPathParser {
         skipWs();
         expect('=');
         skipWs();
-        String sortValue = parseIdentifier().toLowerCase();
+        String sortValue = parseIdentifier().toLowerCase(Locale.ROOT);
         if ("key".equals(sortValue) || "value".equals(sortValue)) {
           sortBy = sortValue;
         } else {
@@ -782,7 +783,7 @@ public final class HdumpPathParser {
         skipWs();
         expect('=');
         skipWs();
-        String ascValue = parseIdentifier().toLowerCase();
+        String ascValue = parseIdentifier().toLowerCase(Locale.ROOT);
         ascending = "true".equals(ascValue) || "yes".equals(ascValue) || "1".equals(ascValue);
       } else {
         // Check for aggregate function call syntax: sum(expr), avg(expr), etc.
@@ -790,7 +791,7 @@ public final class HdumpPathParser {
         skipWs();
         if (peek() == '(') {
           // This might be an aggregate function call
-          AggOp funcAgg = tryParseAggOp(ident.toLowerCase());
+          AggOp funcAgg = tryParseAggOp(ident.toLowerCase(Locale.ROOT));
           if (funcAgg != null) {
             advance(); // consume '('
             skipWs();
@@ -933,7 +934,7 @@ public final class HdumpPathParser {
         skipWs();
         expect('=');
         skipWs();
-        String ascValue = parseIdentifier().toLowerCase();
+        String ascValue = parseIdentifier().toLowerCase(Locale.ROOT);
         SortField last = fields.remove(fields.size() - 1);
         fields.add(
             new SortField(last.field(), !("true".equals(ascValue) || "yes".equals(ascValue))));
@@ -1075,7 +1076,10 @@ public final class HdumpPathParser {
 
   private boolean matchKeyword(String keyword) {
     int savedPos = pos;
-    if (input.substring(pos).toLowerCase().startsWith(keyword.toLowerCase())) {
+    if (input
+        .substring(pos)
+        .toLowerCase(Locale.ROOT)
+        .startsWith(keyword.toLowerCase(Locale.ROOT))) {
       int endPos = pos + keyword.length();
       // Ensure it's not part of a longer identifier
       if (endPos >= input.length()
@@ -1089,7 +1093,10 @@ public final class HdumpPathParser {
   }
 
   private boolean lookahead(String expected) {
-    return input.substring(pos).toLowerCase().startsWith(expected.toLowerCase());
+    return input
+        .substring(pos)
+        .toLowerCase(Locale.ROOT)
+        .startsWith(expected.toLowerCase(Locale.ROOT));
   }
 
   private void expect(char c) {

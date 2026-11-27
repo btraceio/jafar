@@ -31,6 +31,19 @@ class StdioSseBridgeTest {
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final long WAIT_MS = 10_000;
 
+  /**
+   * How long the bridge waits for the daemon during a (re)connect: for the stream to announce its
+   * message endpoint, and for the replayed initialize to be answered. A request sent while the
+   * bridge must (re)connect is delivered only if one of three attempts gets both within it; when
+   * all three time out the bridge fails the request and the daemon never sees it (#257: 1.5 s, on a
+   * loaded CI runner). Three timed-out waits fit in {@link #WAIT_MS}, so a failed reconnect usually
+   * still shows the bridge's error. Production waits 10 seconds.
+   */
+  private static final Duration HANDSHAKE_TIMEOUT = Duration.ofSeconds(3);
+
+  /** For a test of a replay the daemon never answers: its three attempts must fit in WAIT_MS. */
+  private static final Duration SHORT_HANDSHAKE_TIMEOUT = Duration.ofMillis(1500);
+
   private FakeSseDaemon daemon;
   private PipedOutputStream toBridge;
   private final BlockingQueue<String> stdoutLines = new LinkedBlockingQueue<>();
@@ -50,6 +63,15 @@ class StdioSseBridgeTest {
 
   private void start(boolean requireAuth, String tokenToSend, StdioSseBridge.Hooks hooks)
       throws Exception {
+    start(requireAuth, tokenToSend, hooks, HANDSHAKE_TIMEOUT);
+  }
+
+  private void start(
+      boolean requireAuth,
+      String tokenToSend,
+      StdioSseBridge.Hooks hooks,
+      Duration handshakeTimeout)
+      throws Exception {
     daemon = new FakeSseDaemon().start(requireAuth);
     toBridge = new PipedOutputStream();
     PipedInputStream bridgeIn = new PipedInputStream(toBridge, 1 << 16);
@@ -61,7 +83,7 @@ class StdioSseBridgeTest {
             bridgeIn,
             bridgeOut,
             new PrintStream(diag, true, StandardCharsets.UTF_8),
-            Duration.ofMillis(1500),
+            handshakeTimeout,
             hooks != null ? hooks : new StdioSseBridge.Hooks() {});
     bridgeThread = new Thread(() -> exitCode.set(bridge.run()), "bridge-under-test");
     bridgeThread.setDaemon(true);
@@ -145,7 +167,39 @@ class StdioSseBridgeTest {
       }
       Thread.sleep(20);
     }
-    throw new AssertionError("daemon never received " + count + " x " + method);
+    throw new AssertionError(
+        "daemon never received "
+            + count
+            + " x "
+            + method
+            + " within "
+            + WAIT_MS
+            + "ms; it received "
+            + daemon.received().stream().map(FakeSseDaemon.Received::method).toList()
+            + "; bridge diagnostics: "
+            + diag.toString(StandardCharsets.UTF_8)
+            + "; bridge threads:\n"
+            + bridgeThreads());
+  }
+
+  /** The stacks of the bridge's and the fake daemon's threads, for a timeout's message. */
+  private static String bridgeThreads() {
+    StringBuilder out = new StringBuilder();
+    Thread.getAllStackTraces()
+        .forEach(
+            (thread, stack) -> {
+              String name = thread.getName();
+              // The bridge's threads, and the fake daemon's (Jetty's pool)
+              if (name.startsWith("jfr-mcp-bridge")
+                  || name.equals("bridge-under-test")
+                  || name.startsWith("qtp")) {
+                out.append(name).append(" (").append(thread.getState()).append(")\n");
+                for (StackTraceElement frame : stack) {
+                  out.append("    at ").append(frame).append('\n');
+                }
+              }
+            });
+    return out.toString();
   }
 
   @Test
@@ -406,6 +460,88 @@ class StdioSseBridgeTest {
     assertEquals("s2", delivered.get("result").get("session").asString());
   }
 
+  /**
+   * #318: the bridge kept one swallow id and latch for all its connections, and cleared the id when
+   * a replay timed out. A re-initialize reply that then came late, on the stream of the attempt
+   * that had given up, was relayed to the client as a second response to its initialize (and one
+   * read while a later attempt waited would have released that attempt early).
+   */
+  @Test
+  void aLateReinitializeReplyOnAnAbandonedAttemptIsNotRelayed() throws Exception {
+    CountDownLatch lateReplyHandled = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicBoolean first =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
+    StdioSseBridge.Hooks hooks =
+        new StdioSseBridge.Hooks() {
+          @Override
+          public void replayTimedOut() {
+            if (first.getAndSet(false)) {
+              // The reply arrives after the wait gave up, before the connection is closed
+              daemon.answerInitialize(true); // the next attempt's replay is answered
+              List<String> opened = daemon.sessionsOpened();
+              daemon.emitTo(opened.get(opened.size() - 1), INITIALIZE_REPLY);
+              try {
+                // Relayed (the bug) or dropped as a reply; swallowed, it never comes
+                lateReplyHandled.await(1, TimeUnit.SECONDS);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+            }
+          }
+
+          @Override
+          public void responseHandled(String idKey) {
+            if ("1".equals(idKey)) {
+              lateReplyHandled.countDown(); // relayed or dropped as a reply, not swallowed
+            }
+          }
+        };
+    start(true, FakeSseDaemon.TOKEN, hooks, HANDSHAKE_TIMEOUT);
+    handshake();
+    daemon.answerInitialize(false);
+    daemon.dropAllSessions();
+
+    send("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+
+    JsonNode delivered = next();
+    assertEquals(2, delivered.get("id").asInt(), "a second initialize response: " + delivered);
+    // s2's replay timed out as forced, s3's was answered: a slow runner reads as such, not as #318
+    assertEquals(List.of("s1", "s2", "s3"), daemon.sessionsOpened(), "sessions");
+    assertEquals("s3", delivered.get("result").get("session").asString());
+    assertTrue(stdoutLines.isEmpty(), "unexpected frames: " + stdoutLines);
+  }
+
+  /**
+   * #321: a stream that ended while its replayed initialize waited for an answer left the wait to
+   * run out (10 s in production) before the request was retried on a new session.
+   */
+  @Test
+  void aStreamThatEndsDuringTheReplayIsRetriedAtOnce() throws Exception {
+    Duration timeout = Duration.ofSeconds(8); // next() waits 10 s: without the fix it still answers
+    start(true, FakeSseDaemon.TOKEN, null, timeout);
+    handshake();
+    daemon.answerInitialize(false);
+    daemon.dropAllSessions();
+
+    send("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+    awaitReceived("initialize", 2); // s1's, and the replay on s2, now waiting
+    daemon.answerInitialize(true);
+    long dropped = System.nanoTime();
+    daemon.dropAllSessions(); // s2's stream ends during its replay
+
+    JsonNode delivered = next();
+    long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - dropped);
+    assertEquals(2, delivered.get("id").asInt(), "unexpected frame: " + delivered);
+    assertEquals("s3", delivered.get("result").get("session").asString());
+    assertTrue(
+        millis < 4_000,
+        "retried " + millis + " ms after the stream ended; the wait is " + timeout.toMillis());
+  }
+
+  /** What the fake daemon answers to {@code initialize}. */
+  private static final String INITIALIZE_REPLY =
+      "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"fake\",\"version\":\"0\"}}}";
+
   /** Blocks the calling bridge thread until {@code latch} opens; counts {@code done} if it did. */
   private static void awaitQuietly(CountDownLatch latch, CountDownLatch done) {
     try {
@@ -433,7 +569,7 @@ class StdioSseBridgeTest {
 
   @Test
   void aHandshakeReplayTheDaemonNeverAnswersFailsTheRequestInsteadOfHanging() throws Exception {
-    start(true, FakeSseDaemon.TOKEN);
+    start(true, FakeSseDaemon.TOKEN, null, SHORT_HANDSHAKE_TIMEOUT);
     handshake();
     daemon.answerInitialize(false);
     daemon.dropAllSessions();
