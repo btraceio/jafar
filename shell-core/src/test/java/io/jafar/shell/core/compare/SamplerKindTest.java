@@ -36,6 +36,17 @@ class SamplerKindTest {
   }
 
   @Test
+  void asyncProfilerColumnNamesHaveTheirKinds() {
+    // jfrconv 4.1's names for --alloc/--live, --lock and --nativemem, without and with --total.
+    assertSame(SamplerKind.ALLOC_COUNT, kind("allocations", "count"));
+    assertSame(SamplerKind.ALLOC_BYTES, kind("allocations", "bytes"));
+    assertSame(SamplerKind.LOCK, kind("locks", "count"));
+    assertSame(SamplerKind.LOCK, kind("locks", "nanoseconds"));
+    assertSame(SamplerKind.ALLOC_COUNT, kind("malloc", "count"));
+    assertSame(SamplerKind.ALLOC_BYTES, kind("malloc", "bytes"));
+  }
+
+  @Test
   void samplesTakesTheKindOfItsPartner() {
     assertSame(
         SamplerKind.CPU,
