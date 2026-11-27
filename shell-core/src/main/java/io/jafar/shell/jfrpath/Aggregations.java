@@ -201,7 +201,7 @@ final class Aggregations {
     }
 
     // Track min/max epoch-nanos values (including duration when given)
-    TimeRangeAgg range = new TimeRangeAgg();
+    PerThread<TimeRangeAgg> ranges = new PerThread<>(TimeRangeAgg::new);
 
     List<String> valuePath = op.valuePath;
     List<String> durationPath = op.durationPath;
@@ -220,7 +220,7 @@ final class Aggregations {
             typeSet,
             query.predicates,
             map -> {
-              range.offer(map, valuePath, durationPath);
+              ranges.get().offer(map, valuePath, durationPath);
             });
       } else {
         String eventType = query.eventTypes.get(0);
@@ -229,7 +229,7 @@ final class Aggregations {
             List.of(eventType),
             query.predicates,
             map -> {
-              range.offer(map, valuePath, durationPath);
+              ranges.get().offer(map, valuePath, durationPath);
             });
       }
     } else {
@@ -237,13 +237,15 @@ final class Aggregations {
       List<Map<String, Object>> rows =
           eval.evaluate(session, new Query(query.root, query.segments, query.predicates));
       for (Map<String, Object> row : rows) {
-        range.offer(row, valuePath, durationPath);
+        ranges.get().offer(row, valuePath, durationPath);
       }
     }
 
     // Build result
     long[] minMax = new long[2];
     long[] count = new long[1];
+    TimeRangeAgg range = new TimeRangeAgg();
+    for (TimeRangeAgg part : ranges.all()) range.merge(part);
     range.snapshot(minMax, count);
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("count", count[0]);
@@ -392,7 +394,7 @@ final class Aggregations {
         throw new IllegalArgumentException("stats() requires projection or a value path");
       vpath = query.segments.subList(1, query.segments.size());
     }
-    StatsAgg agg = new StatsAgg();
+    PerThread<StatsAgg> aggs = new PerThread<>(StatsAgg::new);
     if (query.root == Root.EVENTS) {
       // Validate event types exist
       eval.validateEventTypes(session, query.eventTypes);
@@ -407,7 +409,7 @@ final class Aggregations {
             query.predicates,
             map -> {
               Object val = Values.get(map, path.toArray());
-              if (val instanceof Number n) agg.add(n.doubleValue());
+              if (val instanceof Number n) aggs.get().add(n.doubleValue());
             });
       } else {
         // Single-type query: use direct comparison (faster)
@@ -418,7 +420,7 @@ final class Aggregations {
             query.predicates,
             map -> {
               Object val = Values.get(map, path.toArray());
-              if (val instanceof Number n) agg.add(n.doubleValue());
+              if (val instanceof Number n) aggs.get().add(n.doubleValue());
             });
       }
     } else {
@@ -426,12 +428,12 @@ final class Aggregations {
       if (query.segments.size() >= 1) {
         List<Object> vals =
             eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
-        for (Object v : vals) if (v instanceof Number n) agg.add(n.doubleValue());
+        for (Object v : vals) if (v instanceof Number n) aggs.get().add(n.doubleValue());
       } else {
         throw new IllegalArgumentException("stats() not applicable");
       }
     }
-    return List.of(agg.toRow());
+    return List.of(StatsAgg.merged(aggs.all()).toRow());
   }
 
   List<Map<String, Object>> aggregateQuantiles(
@@ -447,6 +449,7 @@ final class Aggregations {
     if (query.root == Root.EVENTS) {
       String eventType = query.segments.get(0);
       List<String> path = vpath;
+      PerThread<List<Double>> parts = new PerThread<>(ArrayList::new);
       eval.forEachMatching(
           session.getRecordingPath(),
           List.of(eventType),
@@ -454,11 +457,10 @@ final class Aggregations {
           map -> {
             Object val = Values.get(map, path.toArray());
             if (val instanceof Number n) {
-              synchronized (values) {
-                values.add(n.doubleValue());
-              }
+              parts.get().add(n.doubleValue());
             }
           });
+      for (List<Double> part : parts.all()) values.addAll(part); // sorted below
     } else {
       List<Object> vals =
           eval.evaluateValues(session, new Query(query.root, query.segments, query.predicates));
@@ -571,7 +573,8 @@ final class Aggregations {
       String sortBy,
       boolean ascending)
       throws Exception {
-    Map<Object, GroupAccumulator> groups = new LinkedHashMap<>();
+    // One map per thread that adds to it, merged after the parse (see PerThread).
+    PerThread<Map<Object, GroupAccumulator>> local = new PerThread<>(LinkedHashMap::new);
     // How many events the key was offered. Only used to tell "nothing matched the filter" apart
     // from "the key path matched nothing in events that were there" — see reportUnmatchedKey.
     LongAdder offered = new LongAdder();
@@ -602,7 +605,7 @@ final class Aggregations {
             map -> {
               offered.increment();
               addToGroups(
-                  groups,
+                  local.get(),
                   map,
                   keyTokens,
                   keyExpr,
@@ -622,7 +625,7 @@ final class Aggregations {
             map -> {
               offered.increment();
               addToGroups(
-                  groups,
+                  local.get(),
                   map,
                   keyTokens,
                   keyExpr,
@@ -639,7 +642,7 @@ final class Aggregations {
           eval.evaluate(session, new Query(query.root, query.segments, query.predicates));
       for (Map<String, Object> row : rows) {
         addToGroups(
-            groups,
+            local.get(),
             row,
             keyTokens,
             keyExpr,
@@ -650,6 +653,8 @@ final class Aggregations {
             valueTokens);
       }
     }
+
+    Map<Object, GroupAccumulator> groups = mergeGroups(local.all(), keyDisplay);
 
     if (groups.isEmpty() && offered.sum() > 0) {
       reportUnmatchedKey(session, query, keyDisplay, offered.sum());
@@ -674,9 +679,8 @@ final class Aggregations {
   /**
    * Adds one event (or row) to the groups it belongs to.
    *
-   * <p>Called from several chunk-parsing threads at once. Keys and values are worked out from the
-   * event first, without a lock; only the update of {@code groups} and its accumulators is
-   * serialized, on {@code groups}.
+   * <p>Called from several chunk-parsing threads at once, each with its own {@code groups} (see
+   * {@link #mergeGroups}), so nothing here is locked.
    */
   private static void addToGroups(
       Map<Object, GroupAccumulator> groups,
@@ -703,19 +707,58 @@ final class Aggregations {
       vals = valueTokens == null ? List.of() : PathValues.extractAllValues(map, valueTokens);
     }
 
-    synchronized (groups) {
-      for (Object key : keys) {
-        GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
-        if (counting) {
-          acc.add(1);
-        } else {
-          for (Object val : vals) {
-            if (val instanceof Number n) {
-              acc.add(n.doubleValue());
-            }
+    for (Object key : keys) {
+      GroupAccumulator acc = groupFor(groups, key, aggFunc, keyDisplay);
+      if (counting) {
+        acc.add(1);
+      } else {
+        for (Object val : vals) {
+          if (val instanceof Number n) {
+            acc.add(n.doubleValue());
           }
         }
       }
+    }
+  }
+
+  /**
+   * Merges the per-thread groups of one groupBy into one map, keeping the distinct-group cap: each
+   * thread's map is capped as it grows (see {@link #groupFor}), and the merged map is capped here.
+   * Groups appear in the order the threads first met them, thread by thread; with chunks parsed in
+   * parallel that order was never deterministic, and a single-threaded caller keeps its own.
+   */
+  static Map<Object, GroupAccumulator> mergeGroups(
+      java.util.Collection<Map<Object, GroupAccumulator>> partials, String keyDisplay) {
+    java.util.Iterator<Map<Object, GroupAccumulator>> it = partials.iterator();
+    if (!it.hasNext()) {
+      return new LinkedHashMap<>();
+    }
+    Map<Object, GroupAccumulator> merged = it.next();
+    while (it.hasNext()) {
+      for (Map.Entry<Object, GroupAccumulator> e : it.next().entrySet()) {
+        GroupAccumulator acc = merged.get(e.getKey());
+        if (acc == null) {
+          checkGroupCap(merged.size(), keyDisplay, e.getKey());
+          merged.put(e.getKey(), e.getValue());
+        } else {
+          acc.merge(e.getValue());
+        }
+      }
+    }
+    return merged;
+  }
+
+  private static void checkGroupCap(int size, String keyDisplay, Object key) {
+    int cap = maxGroups();
+    if (size >= cap) {
+      throw new IllegalArgumentException(
+          "groupBy: distinct-group cap of "
+              + cap
+              + " reached on key '"
+              + keyDisplay
+              + "' (offending key: "
+              + key
+              + "); narrow the key or raise the cap with -Djafar.groupby.maxGroups=<n>");
     }
   }
 
@@ -751,17 +794,7 @@ final class Aggregations {
     return groups.computeIfAbsent(
         key,
         k -> {
-          int cap = maxGroups();
-          if (groups.size() >= cap) {
-            throw new IllegalArgumentException(
-                "groupBy: distinct-group cap of "
-                    + cap
-                    + " reached on key '"
-                    + keyDisplay
-                    + "' (offending key: "
-                    + k
-                    + "); narrow the key or raise the cap with -Djafar.groupby.maxGroups=<n>");
-          }
+          checkGroupCap(groups.size(), keyDisplay, k);
           return new GroupAccumulator(aggFunc);
         });
   }
@@ -880,6 +913,14 @@ final class Aggregations {
       sum += value;
       min = Math.min(min, value);
       max = Math.max(max, value);
+    }
+
+    /** Adds {@code other}'s values to this one's, as if they had been added here. */
+    void merge(GroupAccumulator other) {
+      count += other.count;
+      sum += other.sum;
+      min = Math.min(min, other.min);
+      max = Math.max(max, other.max);
     }
 
     Object getResult() {
@@ -1329,10 +1370,10 @@ final class Aggregations {
    */
   /**
    * Running first/last instant and count for {@code timerange()}. The streaming path offers events
-   * from several chunk-parsing threads at once: the values are read from the event without a lock
-   * and only the update is serialized.
+   * from several chunk-parsing threads at once, each to its own (see {@link PerThread}), so nothing
+   * is locked; the parts are merged after the parse.
    */
-  private static final class TimeRangeAgg {
+  static final class TimeRangeAgg {
     private long min = Long.MAX_VALUE;
     private long max = Long.MIN_VALUE;
     private long count;
@@ -1349,17 +1390,55 @@ final class Aggregations {
           endEpochNanos = epochNanos + dn.longValue();
         }
       }
-      synchronized (this) {
-        if (epochNanos < min) min = epochNanos;
-        if (endEpochNanos > max) max = endEpochNanos;
-        count++;
-      }
+      if (epochNanos < min) min = epochNanos;
+      if (endEpochNanos > max) max = endEpochNanos;
+      count++;
     }
 
-    synchronized void snapshot(long[] minMax, long[] count) {
+    void merge(TimeRangeAgg other) {
+      min = Math.min(min, other.min);
+      max = Math.max(max, other.max);
+      count += other.count;
+    }
+
+    void snapshot(long[] minMax, long[] count) {
       minMax[0] = min;
       minMax[1] = max;
       count[0] = this.count;
+    }
+  }
+
+  /**
+   * One accumulator per thread that adds to it, for an operator whose consumer runs on several
+   * chunk-parsing threads at once. Each thread updates its own without a lock; {@link #all} hands
+   * them to the merge once the parse is over (chunk tasks are joined with {@code Future.get}, so
+   * their writes are visible). One shared accumulator behind a lock made these operators slower,
+   * not faster, with more threads.
+   */
+  static final class PerThread<T> {
+    private final java.util.concurrent.ConcurrentLinkedQueue<T> all =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final ThreadLocal<T> local;
+
+    PerThread(java.util.function.Supplier<T> factory) {
+      this.local =
+          ThreadLocal.withInitial(
+              () -> {
+                T t = factory.get();
+                all.add(t);
+                return t;
+              });
+    }
+
+    /** This thread's accumulator. */
+    T get() {
+      return local.get();
+    }
+
+    /** Every thread's accumulator, in the order the threads first asked for one. */
+    java.util.Collection<T> all() {
+      local.remove();
+      return all;
     }
   }
 
@@ -1370,7 +1449,8 @@ final class Aggregations {
     double mean = 0.0;
     double m2 = 0.0; // for variance via Welford
 
-    synchronized void add(double x) {
+    /** Not synchronized: each thread adds to its own (see {@link PerThread}) and they merge. */
+    void add(double x) {
       count++;
       if (x < min) min = x;
       if (x > max) max = x;
@@ -1380,7 +1460,37 @@ final class Aggregations {
       m2 += delta * delta2;
     }
 
-    synchronized Map<String, Object> toRow() {
+    /**
+     * Adds {@code other}'s values to this one's: the pairwise update of Chan, Golub and LeVeque for
+     * Welford's mean and sum of squared deviations.
+     */
+    void merge(StatsAgg other) {
+      if (other.count == 0) return;
+      if (count == 0) {
+        count = other.count;
+        min = other.min;
+        max = other.max;
+        mean = other.mean;
+        m2 = other.m2;
+        return;
+      }
+      long n = count + other.count;
+      double delta = other.mean - mean;
+      mean += delta * other.count / n;
+      m2 += other.m2 + delta * delta * ((double) count * other.count / n);
+      count = n;
+      min = Math.min(min, other.min);
+      max = Math.max(max, other.max);
+    }
+
+    /** The merge of {@code parts}, in order. */
+    static StatsAgg merged(java.util.Collection<StatsAgg> parts) {
+      StatsAgg out = new StatsAgg();
+      for (StatsAgg part : parts) out.merge(part);
+      return out;
+    }
+
+    Map<String, Object> toRow() {
       Map<String, Object> row = new HashMap<>();
       row.put("count", count);
       row.put("min", count > 0 ? min : null);

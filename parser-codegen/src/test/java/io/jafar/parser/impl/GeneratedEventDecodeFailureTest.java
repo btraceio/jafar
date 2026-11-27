@@ -62,9 +62,8 @@ class GeneratedEventDecodeFailureTest {
   /**
    * Matrix wiring (kb/design-concurrency item 1): this class carries pool-size-dependent tests
    * ({@link #decodeErrorHandlerIsCalledOncePerBadEventAcrossConcurrentChunks} mirrors the parser's
-   * {@code max(processors - 2, 1)} pool), so it asserts that the {@code
-   * -Pjafar.activeProcessorCount=N} flag reached its forked JVM (R9) instead of passing green on an
-   * unpinned one.
+   * one-thread-per-processor pool), so it asserts that the {@code -Pjafar.activeProcessorCount=N}
+   * flag reached its forked JVM (R9) instead of passing green on an unpinned one.
    */
   @BeforeAll
   static void assertProcessorCountMatrixReachedThisJvm() {
@@ -307,8 +306,7 @@ class GeneratedEventDecodeFailureTest {
     Path oneChunk = corrupted(shape);
     long[] bad = EventDecodeFailureTest.eventExtents(cleanOf(shape)).get(BAD);
     Path jfr = multiChunk(oneChunk, chunks);
-    // Mirrors StreamingChunkParser's pool size.
-    int threads = Math.max(Runtime.getRuntime().availableProcessors() - 2, 1);
+    int threads = io.jafar.parser.internal_api.StreamingChunkParser.defaultParallelism();
     CountDownLatch bothInside = new CountDownLatch(Math.min(threads, 2));
     AtomicInteger inside = new AtomicInteger();
     AtomicInteger peakInside = new AtomicInteger();

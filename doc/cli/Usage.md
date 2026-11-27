@@ -257,14 +257,20 @@ module that recognises it. The comparison is the same, with these differences:
   unit is `count` and it counts samples; the column a producer pairs with it (`samples/count`
   beside `cpu/nanoseconds`, when there is exactly one; `cpu-samples` beside `cpu-time`); or the
   column's values summed per frame and divided by the period once, when the period has the column's
-  unit. Allocation object counts (`alloc_objects`, `inuse_objects`) are estimates scaled from the
-  sampled allocations, not trials, so a Go heap profile has no counts. A profile without counts
-  still gets its shares, but no change is called significant, and a note says why.
+  unit. Allocation and lock columns never give counts: allocation object counts (`alloc_objects`,
+  `inuse_objects`) are estimates scaled from the sampled allocations, not trials, so a Go heap
+  profile has no counts; Go's mutex and block profiles scale each sampled contention by the
+  sampling rate and write period 1 whatever the rate, so `contentions` divided by the period is
+  not a count either. A profile without counts still gets its shares, but no change is called
+  significant, and a note says why.
 - **Samplers must measure the same thing.** A sample type named `cpu`, `cpu-time`, `cpu_time` or
   any other `cpu*` is CPU; `wall*` is wall clock. With a pprof side, CPU against wall clock is
   refused unless `--allow-mixed-samplers`, which compares with nothing judged; an allocation profile
-  against a CPU or wall one is always refused. A sample type whose kind is not recognised is
-  compared with a note. Two recordings are never refused: they get the event-type note, as with
+  against a CPU or wall one is always refused. Allocation types are `alloc_*`, `inuse_*`,
+  async-profiler's `allocations` and `malloc`; lock types `contentions`, `delay`, `lock` and
+  async-profiler's `locks`. A sample type whose kind is not recognised is compared with a note. The
+  kind comes from the name alone: async-profiler's `jfrconv --wall` names its column `cpu`, so a
+  wall-clock profile it converted reads as CPU. Two recordings are never refused: they get the event-type note, as with
   `jfr_compare`.
 - **Frame names follow the profile.** A slashed Java name (`java/lang/String.indexOf`) is dotted
   only when the profile looks JVM-originated: some function is `<init>`, `<clinit>` or a

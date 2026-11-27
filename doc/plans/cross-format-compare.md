@@ -2,7 +2,7 @@
 
 Status: design accepted, 2026-11-26; v1 (JFR and pprof, decision D7) built. Every decision in
 section 7 was taken as recommended; section 8 lists what was not verified, and section 9 what v1
-did differently from this plan.
+did differently from this plan, section 10 what real Go and async-profiler files showed.
 
 Origin: idea 2 of the 2026-11 brainstorm. PR #252 moved the comparison into
 `shell-core/src/main/java/io/jafar/shell/core/compare/`. `RecordingProfile` already looks
@@ -335,7 +335,8 @@ The tests:
 - **Inline frame order.** `PprofProfile.Location` documents its `lines` as "outermost first"
   (`PprofProfile.java:95`), but the evaluators treat the first line as the leaf side. I did not
   check this against `profile.proto` or against a real inlined Go profile. jfr2pprof writes one
-  line per location, so the round trip cannot tell the difference.
+  line per location, so the round trip cannot tell the difference. *Checked in section 10: the
+  evaluators are right and the Javadoc was wrong.*
 - **OTLP index base.** `OtlpPathEvaluator` subtracts 1 from stack, location, function and
   attribute indices (`:92,114,118,122`), and `MinimalOtlpBuilder` writes those tables without a
   sentinel at index 0. The two agree with each other. I did not check either against a
@@ -344,8 +345,9 @@ The tests:
   per timestamp?) or with several values. The shell's `values.get(0)` behaviour may undercount.
 - **Other tools' pprof output.** I did not check what async-profiler or Go write for Java/Go
   function names, sample types or period. The sampler-kind table in section 4 is a proposal, not a
-  survey.
-- **The Go `pprof` default (D8)** comes from memory, not from a check.
+  survey. *Checked in section 10.*
+- **The Go `pprof` default (D8)** comes from memory, not from a check. *Checked in section 10: it
+  is the last type.*
 - **The mcp surface's subpackages.** I did not check whether japicmp's
   `packageIncludes io.jafar.mcp` (`gradle/api-compat.gradle:151-162`) covers subpackages such as
   `io.jafar.mcp.jfr`.
@@ -389,3 +391,70 @@ The tests:
 - **The standalone jfr-shell jar** has no pprof module, so it reads every non-JFR file as a
   recording and fails with "cannot read JFR recording"; `jafar-shell compare` reads pprof.
 
+
+## 10. Checked against real producers (2026-11-27)
+
+Section 8's "inline frame order", "other tools' pprof output" and "the Go `pprof` default" are now
+checked against files Go 1.24.7's `runtime/pprof` and async-profiler 4.1's `jfrconv` wrote. The
+files, the program they profile and the exact commands are in
+`pprof-shell/src/test/resources/real/README.md`; `RealPprofProfilesTest` (pprof-shell) and
+`RealProfilesCompareTest` (jafar-shell) read them.
+
+Confirmed:
+
+- **Inline order.** Go writes an inlined call as one location whose lines are innermost first
+  (`[(*Hasher).Sum, Burn.func1, Burn]`), as `profile.proto` says. The reader takes the first line as
+  the leaf, which is right; `PprofProfile.Location`'s "outermost first" was wrong and is corrected.
+- **Go CPU counts.** `samples/count` with `cpu/nanoseconds` and period `cpu/nanoseconds` 10 ms; the
+  default picks `samples/count` (CPU through the period type), and `cpu/nanoseconds` counts through
+  its `samples` partner. Two runs of one program judge nothing at about 200 samples each.
+- **Go names** stay slashed: no Go function looks JVM (`looksJvm` is false), so
+  `encoding/json.Marshal` is kept. Closures (`func1`), pointer receivers and generic
+  instantiations (`Map[go.shape.int,go.shape.*uint8]`) pass `stableName` unchanged.
+- **Go heap** has no counts for any of its four columns (scaled estimates; a byte period), and no
+  duration.
+- **async-profiler** names are slashed, its profiles carry `<init>` and `$$Lambda` (so they are
+  dotted), and hidden-class addresses are `.0x...` segments, which `stableName` removes. Its JFR and
+  its pprof conversion give identical keys and counts for every Java frame.
+- **D8.** Neither producer writes `default_sample_type`, so parsing field 14 (D8 (c)) would change
+  nothing for them. `go tool pprof` defaults to the last type (`cpu`, `inuse_space`, `delay`),
+  which D8 (b) assumed from memory.
+
+Wrong, and fixed:
+
+- **Go mutex and block counts.** Go writes period 1 whatever the rate and scales each contention by
+  the rate, so `contentions / period` was taken as a count. Lock columns now never give counts.
+- **async-profiler's column names** `allocations`, `locks` and `malloc` were `UNKNOWN`, so its
+  allocation profile was compared against a CPU one. They now have allocation and lock kinds.
+
+Decided 2026-11-27 with the maintainer, and done:
+
+- **async-profiler JFR native frames** had the library as the class (`libjvm.so`, `libc.so.6`), so
+  their key was `libjvm.so.Compile::Compile` where the pprof conversion writes `Compile::Compile`,
+  and every native frame of a recording and its conversion mismatched. Option (b): `JfrCompare`
+  keys a frame whose JFR frame type is `Native`, `C++` or `Kernel` by its method alone. This
+  changes `jfr_compare`'s method values for such frames. `ap-cpu.jfr` and its conversion now have
+  identical leaf and inclusive frame counts (`RealProfilesCompareTest`).
+
+Open (not changed; each needs a decision):
+
+- **async-profiler's wall profile is named `cpu/count`** by `jfrconv --wall`. The reader cannot tell
+  it from a CPU profile, so CPU against wall is not refused. Options: (a) document it (done in
+  `Usage.md`); (b) guess wall from the stacks. Recommended: (a), and an upstream report.
+- **async-profiler's `allocations/count` counts samples** (bytes over count is about 512 KiB, the
+  sampling interval), unlike Go's `alloc_objects`, but every allocation count is treated as an
+  estimate, so an async-profiler allocation pair is not judged. Options: (a) keep it; (b) trust
+  `allocations/count` by name. Recommended: (b) once a second async-profiler version confirms it.
+- **The default sample type** is the first CPU type, else the first; Go's tool uses the last. For
+  Go heap that is `alloc_objects` against `inuse_space`, for mutex `contentions` against `delay`.
+  Options: (a) keep; (b) the last type when no CPU type. Recommended: (b), matching what Go users
+  see.
+- **async-profiler's JFR wall events** (`profiler.WallClockSample`) are not a JFR sample type, so
+  `ap-wall.jfr` lists none; each event carries a `samples` count (300 events, 945 samples in the
+  pprof conversion), so counting one per event would be wrong. Needs the weighting decision (D6).
+- **An allocation profile's leaf is the allocated class** in async-profiler's pprof (`byte[]`,
+  `java.lang.String`); a JFR allocation event's leaf is the allocating method. Self-time rows of a
+  JFR-against-pprof allocation compare do not line up.
+- **`JfrAnalyses.isNativeFrame`** calls any name with `<` native, so a constructor
+  (`MethodHandle.<init>`) gets `type: native` in compare rows. Shared with other analyses, so not
+  changed here.

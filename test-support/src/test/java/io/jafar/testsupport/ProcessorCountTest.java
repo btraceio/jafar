@@ -140,10 +140,9 @@ class ProcessorCountTest {
   @Test
   void poolSizeMatchesTheChunkPoolExpression() {
     assertEquals(1, ProcessorCount.poolSize(1));
-    assertEquals(1, ProcessorCount.poolSize(2));
-    assertEquals(1, ProcessorCount.poolSize(3));
-    assertEquals(2, ProcessorCount.poolSize(4));
-    assertEquals(14, ProcessorCount.poolSize(16));
+    assertEquals(2, ProcessorCount.poolSize(2));
+    assertEquals(4, ProcessorCount.poolSize(4));
+    assertEquals(16, ProcessorCount.poolSize(16));
   }
 
   /**
