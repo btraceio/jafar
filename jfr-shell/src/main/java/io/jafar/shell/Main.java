@@ -426,7 +426,13 @@ public final class Main implements Callable<Integer> {
                     errors.append(s).append("\n");
                   }
                 },
-                current -> {});
+                current -> {},
+                null,
+                null,
+                // Not verbose: stdout is the command's result only, so '--format json' pipes into
+                // a JSON parser without an "Opened session" line before it (#266).
+                // -Djfr.shell.verbose / JFR_SHELL_VERBOSE still turn the notes on.
+                false);
 
         // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233)
         dispatcher.open(path, null);

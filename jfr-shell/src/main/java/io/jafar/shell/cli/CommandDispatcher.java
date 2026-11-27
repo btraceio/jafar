@@ -5,6 +5,7 @@ import io.jafar.shell.backend.BackendCapability;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.core.FlameNode;
+import io.jafar.shell.core.JsonText;
 import io.jafar.shell.core.LazyQueryValue;
 import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.QueryEvaluator;
@@ -48,7 +49,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -2452,77 +2452,11 @@ public class CommandDispatcher {
 
   // Very small JSON pretty-printer for Maps/Lists/values
   private static void printJson(Object obj, IO io) {
-    String json = toJson(obj, 0);
+    String json = JsonText.pretty(obj);
     PagedPrinter pager = PagedPrinter.forIO(io);
     for (String line : json.split("\n", -1)) {
       pager.println(line);
     }
-  }
-
-  private static String toJson(Object obj, int indent) {
-    String ind = "  ".repeat(indent);
-    if (obj == null) return "null";
-    if (obj instanceof String s) return '"' + escapeJson(s) + '"';
-    if (obj instanceof Number || obj instanceof Boolean) return String.valueOf(obj);
-    if (obj instanceof Map<?, ?> m) {
-      StringBuilder sb = new StringBuilder();
-      sb.append("{\n");
-      boolean first = true;
-      for (var e : m.entrySet()) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind)
-            .append("  ")
-            .append('"')
-            .append(escapeJson(String.valueOf(e.getKey())))
-            .append('"')
-            .append(": ");
-        sb.append(toJson(e.getValue(), indent + 1));
-      }
-      sb.append("\n").append(ind).append("}");
-      return sb.toString();
-    }
-    if (obj instanceof Collection<?> coll) {
-      StringBuilder sb = new StringBuilder();
-      sb.append("[\n");
-      boolean first = true;
-      for (Object v : coll) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind).append("  ").append(toJson(v, indent + 1));
-      }
-      sb.append("\n").append(ind).append("]");
-      return sb.toString();
-    }
-    return '"' + escapeJson(String.valueOf(obj)) + '"';
-  }
-
-  private static String escapeJson(String s) {
-    StringBuilder sb = new StringBuilder();
-    for (int i = 0; i < s.length(); i++) {
-      char c = s.charAt(i);
-      switch (c) {
-        case '"':
-          sb.append("\\\"");
-          break;
-        case '\\':
-          sb.append("\\\\");
-          break;
-        case '\n':
-          sb.append("\\n");
-          break;
-        case '\r':
-          sb.append("\\r");
-          break;
-        case '\t':
-          sb.append("\\t");
-          break;
-        default:
-          if (c < 0x20) sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
-          else sb.append(c);
-      }
-    }
-    return sb.toString();
   }
 
   private void cmdTypes(List<String> args) {
