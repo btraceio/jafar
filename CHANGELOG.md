@@ -182,6 +182,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and merge after the parse. On a 4.16 GB recording at the new default of 4 threads:
   `groupBy(sampledThread/javaName)` 12.6-16.7 s -> 7.1-8.6 s, `timerange()` 15.3-18.9 s -> 8.6-9.4 s,
   `quantiles()` 15.7-18.5 s -> 11.5-12.6 s, `stats()` 7.9-10.1 s -> 5.7-6.1 s; same results
+- **Compare judged Go mutex and block profiles on scaled contention counts** - Go writes period 1
+  for both whatever the sampling rate, and each sampled contention is already multiplied by the
+  rate, so `contentions` divided by the period read as a count of samples (1,430 "samples" for 286
+  sampled events at `SetMutexProfileFraction(5)`) and moves were called significant. Lock columns,
+  like allocation ones, now never give counts: shares are reported, nothing is judged. Found on real
+  Go 1.24 profiles, now fixtures in `pprof-shell/src/test/resources/real/`
+- **async-profiler's allocation, lock and native-memory pprof columns had no sampler kind** -
+  `jfrconv` (4.1) names them `allocations`, `locks` and `malloc`; read as `UNKNOWN`, an
+  async-profiler allocation profile was compared against a CPU profile with a note instead of being
+  refused. They are now allocation and lock kinds. The "observation counts unknown" reason and note
+  no longer claim a count column or period is missing when the profile has one that does not count
+  samples
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
