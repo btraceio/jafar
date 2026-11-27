@@ -84,6 +84,36 @@ class McpEndToEndTest {
     }
   }
 
+  @Test
+  @Timeout(120)
+  void profileCompareReadsARecordingAndItsOtlpConversion() throws Exception {
+    // async-profiler 4.6: one run as JFR and as jfrconv's OTLP (otlp-shell's real fixtures).
+    Path real =
+        Path.of("..", "otlp-shell", "src", "test", "resources", "real")
+            .toAbsolutePath()
+            .normalize();
+    try (McpStdioProcessHarness mcp = new McpStdioProcessHarness("profile-compare-otlp")) {
+      mcp.call("jfr_open", Map.of("path", real.resolve("ap-cpu.jfr").toString(), "alias", "rec"));
+      mcp.call("otlp_open", Map.of("path", real.resolve("conv-cpu.otlp").toString(), "alias", "o"));
+      JsonNode result =
+          mcp.contentJson(
+              mcp.call(
+                  "profile_compare",
+                  Map.of(
+                      "baseline", Map.of("format", "jfr", "sessionId", "rec"),
+                      "candidate", Map.of("format", "otlp", "sessionId", "o"))));
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "otlp", result.at("/candidate/format").asString(), result::toString);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          216, result.at("/candidate/samples").asInt(), result::toString);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          216, result.at("/baseline/samples").asInt(), result::toString);
+      // The same run on both sides: no frame moved, so no regression finding.
+      org.junit.jupiter.api.Assertions.assertFalse(
+          result.at("/findings").toString().contains("regression:frame"), result::toString);
+    }
+  }
+
   static Path findTestJfr() {
     String override = System.getProperty("mcp.e2e.jfr");
     if (override != null) {

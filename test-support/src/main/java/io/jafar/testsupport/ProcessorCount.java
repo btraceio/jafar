@@ -7,17 +7,16 @@ import static org.junit.jupiter.api.Assertions.fail;
  * harness step 5).
  *
  * <p>Why the matrix exists (kb/design-concurrency item 1): the one proven, documented jafar hazard
- * is that chunk callbacks run concurrently on {@code StreamingChunkParser}'s pool of {@code
- * max(processors - 2, 1)} threads, so single-threaded-looking listener state corrupts silently —
- * and a 1-2 core CI runner <em>cannot</em> reproduce a race that needs more cores. The matrix runs
- * the existing determinism tests at {@code ActiveProcessorCount=1} and {@code =16}; every test
- * class covered by it calls {@link #assertExpected()} so a run proves the flag actually reached its
- * forked JVM.
+ * is that chunk callbacks run concurrently on {@code StreamingChunkParser}'s pool of one thread per
+ * processor, so single-threaded-looking listener state corrupts silently — and a 1-2 core CI runner
+ * <em>cannot</em> reproduce a race that needs more cores. The matrix runs the existing determinism
+ * tests at {@code ActiveProcessorCount=1} and {@code =16}; every test class covered by it calls
+ * {@link #assertExpected()} so a run proves the flag actually reached its forked JVM.
  *
  * <p>Gradle wiring (root {@code build.gradle}): when the property is given, every {@code Test} task
  * forks with {@code -XX:ActiveProcessorCount=$N} plus {@code jafar.expectedProcessors=$N} — except
- * {@code allocationTest*} tasks, which stay pinned to 4 because their budgets assume a pool of
- * exactly 2 threads (D9).
+ * {@code allocationTest*} tasks, which stay pinned to 2 processors because their budgets assume a
+ * pool of exactly 2 threads (D9).
  */
 public final class ProcessorCount {
 
@@ -56,17 +55,17 @@ public final class ProcessorCount {
               + parsed
               + ". The root build.gradle wiring adds -XX:ActiveProcessorCount=N and"
               + " jafar.expectedProcessors=N to every Test task except allocationTest* (pinned"
-              + " to 4, D9); when running a test outside Gradle, pass both flags yourself.");
+              + " to 2, D9); when running a test outside Gradle, pass both flags yourself.");
     }
   }
 
   /**
-   * The pool size {@code StreamingChunkParser} derives from a processor count: {@code
-   * max(processors - 2, 1)}. Exposed for the audit line and the arithmetic's own test; kept next to
-   * {@code max(n-2,1)} in {@code StreamingChunkParser} by hand.
+   * The pool size {@code StreamingChunkParser} derives from a processor count: one thread per
+   * processor. Exposed for the audit line and the arithmetic's own test; kept next to {@code
+   * StreamingChunkParser.defaultParallelism()} by hand.
    */
   static int poolSize(int processors) {
-    return Math.max(processors - 2, 1);
+    return processors;
   }
 
   /**
