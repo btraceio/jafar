@@ -170,6 +170,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **JfrPath negative numbers did not parse (#304).** `[gcId > -1]` failed with "Expected literal",
+  and in a function `[between(gcId, -1, 5)]` the bound was read as a field named `-1` and failed
+  with 'For input string: "null"'. Negative integers and decimals (`-1`, `-0.5`, `-.5`) are now
+  literals, in `[...]`, `filter(...)` and function arguments. Counts still may not be negative:
+  `head(-1)`, `tail`, `top` and `stackprofile(buckets=)` take a whole count of 0 to 2147483647 and
+  fail to parse naming the operator otherwise (`head(3000000000)` wrapped to a negative count, and
+  failed in `subList`), and `minPct=` is 0 or more. `quantiles()` now rejects values outside 0..1:
+  `quantiles(50, 90)` printed `p5000`/`p9000` columns holding the maximum; write
+  `quantiles(0.5, 0.9)`.
 - **JfrPath function conditions in `| filter(...)` matched nothing; `len()` comparisons did not
   parse (#303).** The pipeline filter had no case for a function condition, so `filter(between(...))`,
   `filter(contains(...))` and the other functions matched no row while the same `[...]` predicate
