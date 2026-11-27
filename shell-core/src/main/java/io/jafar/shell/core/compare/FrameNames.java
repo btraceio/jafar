@@ -35,15 +35,23 @@ public final class FrameNames {
   private static final Pattern JAVAC_INDEX =
       Pattern.compile("(?<=\\.)(access|lambda\\$[\\w$]*?)\\$\\d+$");
 
+  /** A line number jfr2pprof appends with {@code includeLineNumbers}: {@code :42}. */
+  private static final Pattern LINE_SUFFIX = Pattern.compile(":\\d+$");
+
+  /**
+   * The frame-type mark async-profiler's agent appends in its collapsed and OTLP output: {@code
+   * _[j]} JIT-compiled, {@code _[i]} inlined, {@code _[k]} kernel, {@code _[0]} interpreted, {@code
+   * _[1]} C1; on an allocation profile's leaf, {@code _[i]} or {@code _[k]} for inside or outside a
+   * TLAB ({@code byte[]_[i]}). Its JFR and its {@code jfrconv} output carry none.
+   */
+  private static final Pattern FRAME_TYPE_SUFFIX = Pattern.compile("_\\[[jik012]\\]$");
+
   /**
    * A whole name that is a Java class in internal (slashed) form plus a method: {@code
    * java/lang/String.indexOf}. A native path has no method part and does not match; a Go function
    * may ({@code encoding/json.Marshal}), which is why {@link #symbolKey} only applies it to a
    * profile that looks JVM-originated.
    */
-  /** A line number jfr2pprof appends with {@code includeLineNumbers}: {@code :42}. */
-  private static final Pattern LINE_SUFFIX = Pattern.compile(":\\d+$");
-
   private static final Pattern JAVA_INTERNAL_NAME =
       Pattern.compile("[\\w$]+(/[\\w$]+)+\\.[\\w$<>]+");
 
@@ -89,14 +97,15 @@ public final class FrameNames {
   }
 
   /**
-   * The key of a frame from a format that stores one name per frame (pprof). A trailing {@code
-   * :<line>} goes first (jfr2pprof's {@code includeLineNumbers} writes {@code Class.method:42}, and
-   * the key never includes the line), then {@link #stableName}. Then, only in a profile that {@code
-   * jvmProfile} says came from a JVM, a name that is wholly a Java class in internal form plus a
-   * method ({@code java/lang/String.indexOf}) has its {@code /} turned into {@code .}. Whether to
-   * dot is decided per profile, not per name: {@code encoding/json.Marshal} is a Go function with
-   * the same shape as a Java internal name, so a Go profile keeps its names as stored. Native paths
-   * never match, having no method part.
+   * The key of a frame from a format that stores one name per frame (pprof, OTLP). A trailing
+   * {@code :<line>} goes first (jfr2pprof's {@code includeLineNumbers} writes {@code
+   * Class.method:42}, and the key never includes the line), and a trailing async-profiler
+   * frame-type mark ({@code _[k]}, {@code _[i]}), then {@link #stableName}. Then, only in a profile
+   * that {@code jvmProfile} says came from a JVM, a name that is wholly a Java class in internal
+   * form plus a method ({@code java/lang/String.indexOf}) has its {@code /} turned into {@code .}.
+   * Whether to dot is decided per profile, not per name: {@code encoding/json.Marshal} is a Go
+   * function with the same shape as a Java internal name, so a Go profile keeps its names as
+   * stored. Native paths never match, having no method part.
    *
    * @param jvmProfile whether the profile looks JVM-originated: {@link #isJvmSymbol} or {@link
    *     #isJvmSourceFile} holds for any of its functions
@@ -106,7 +115,8 @@ public final class FrameNames {
     if (name == null) {
       return null;
     }
-    String bare = LINE_SUFFIX.matcher(name).replaceFirst("");
+    String bare =
+        FRAME_TYPE_SUFFIX.matcher(LINE_SUFFIX.matcher(name).replaceFirst("")).replaceFirst("");
     if (bare.isEmpty()) {
       return null;
     }
