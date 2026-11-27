@@ -390,6 +390,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   show the JDK's version). Released backend jars up to 0.29.0 keep the old code, so a released
   `jafar` plugin next to a built `jdk` jar is still not flagged. The warning still compares versions
   only, so it cannot tell a stale SNAPSHOT jar from a fresh one
+- **HdumpPath's JFR cross-type join never matched a hidden class (#280).** A heap dump names a
+  hidden class `Alloc$$Lambda+0x0000000030045a10`; for the class itself (not an array of it) JFR
+  stores `Class.getName()`'s `Alloc$$Lambda/0x...`, which the allocation statistics dot into
+  `Alloc$$Lambda.0x...`. Within one run the address is the same class, but `classes |
+  join(session=N, root="jdk.ObjectAllocationSample")` compared the two spellings, so every lambda
+  had `allocCount = null`. Both sides are now keyed with `+` before the address, which is kept: two
+  lambdas of one class stay apart, and a recording and a dump from different runs still do not match
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

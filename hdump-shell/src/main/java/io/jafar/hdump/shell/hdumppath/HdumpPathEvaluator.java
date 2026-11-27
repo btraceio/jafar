@@ -1762,8 +1762,12 @@ public final class HdumpPathEvaluator {
           "Failed to query JFR session for " + joinOp.root() + ": " + e.getMessage(), e);
     }
 
-    // Aggregate JFR events by class
-    Map<String, Map<String, Object>> allocStats = AllocationAggregator.aggregate(jfrRows);
+    // Aggregate JFR events by class, keyed with the heap dump's hidden-class separator (#280)
+    Map<String, Map<String, Object>> allocStats = new HashMap<>();
+    for (Map.Entry<String, Map<String, Object>> e :
+        AllocationAggregator.aggregate(jfrRows).entrySet()) {
+      allocStats.putIfAbsent(hiddenClassKey(e.getKey()), e.getValue());
+    }
 
     // Left-join: enrich each heap row with allocation statistics
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
@@ -1772,7 +1776,8 @@ public final class HdumpPathEvaluator {
       Object keyObj = getField(row, joinKey);
       String className = keyObj != null ? String.valueOf(keyObj) : null;
 
-      Map<String, Object> stats = className != null ? allocStats.get(className) : null;
+      Map<String, Object> stats =
+          className != null ? allocStats.get(hiddenClassKey(className)) : null;
 
       if (stats != null) {
         out.put("allocCount", stats.get("allocCount"));
@@ -1802,6 +1807,25 @@ public final class HdumpPathEvaluator {
     }
 
     return joined;
+  }
+
+  /**
+   * A hidden class's address written as {@code +0x<hex>}. A heap dump names a hidden class {@code
+   * Main$$Lambda+0x0000000019040210}; JFR stores {@code Class.getName()}'s {@code
+   * Main$$Lambda/0x0000000019040210} for the class itself (it writes {@code +} for an array of it),
+   * which reads as {@code .0x...} once dotted. Within one run the address is the same, so it is
+   * kept: only the separator differs (#280). It ends the name or comes before an array's {@code
+   * []}. Both sides are dotted before keying, so the {@code /} arm is reached only by a caller that
+   * passes an undotted name. Two keys meet only for a class whose simple name is {@code 0x<hex>},
+   * which javac does not emit; one of them is kept, which one is unspecified.
+   */
+  private static final Pattern HIDDEN_CLASS_SEPARATOR =
+      Pattern.compile("[./+](0x[0-9a-fA-F]+)(?=(\\[\\])*$)");
+
+  static String hiddenClassKey(String className) {
+    return className.contains("0x")
+        ? HIDDEN_CLASS_SEPARATOR.matcher(className).replaceFirst("+$1")
+        : className;
   }
 
   private static String inferJoinKey(Root root) {
