@@ -276,10 +276,10 @@ public final class JFRSession implements Session {
     if (declared != null && eventTypes.contains(declared.value())) {
       return declared.value();
     }
-    String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase();
+    String typeName = eventClass.getSimpleName().replace("JFR", "").toLowerCase(Locale.ROOT);
     for (String key : eventTypes) {
-      if (key.toLowerCase().contains(typeName)
-          || typeName.contains(key.toLowerCase().replaceAll(".*\\.", ""))) {
+      if (key.toLowerCase(Locale.ROOT).contains(typeName)
+          || typeName.contains(key.toLowerCase(Locale.ROOT).replaceAll(".*\\.", ""))) {
         return key;
       }
     }

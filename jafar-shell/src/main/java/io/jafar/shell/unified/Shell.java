@@ -1206,7 +1206,7 @@ public final class Shell implements AutoCloseable {
 
     java.util.regex.Matcher formatMatcher = FORMAT_FLAG.matcher(cleanQuery);
     if (formatMatcher.find()) {
-      format = formatMatcher.group(1).toLowerCase();
+      format = formatMatcher.group(1).toLowerCase(Locale.ROOT);
       cleanQuery = formatMatcher.replaceFirst("").trim();
     }
 

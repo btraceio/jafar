@@ -196,14 +196,14 @@ allprojects {
     }
 
     // Processor-count matrix (safety harness step 5, kb/design-concurrency item 1): chunk
-    // callbacks run on StreamingChunkParser's pool of max(processors - 2, 1) threads, so a
+    // callbacks run on StreamingChunkParser's pool of one thread per processor, so a
     // single-count CI runner cannot reproduce a race that needs more cores. With
     // -Pjafar.activeProcessorCount=N every Test JVM below forks with -XX:ActiveProcessorCount=N
     // and is told so via jafar.expectedProcessors, which the covered test classes assert in-JVM
     // through test-support's ProcessorCount.assertExpected() — a run proves the flag reached the
     // forked JVM instead of silently running unpinned (R9/R3).
     //
-    // allocationTest* tasks are deliberately skipped: they pin -XX:ActiveProcessorCount=4
+    // allocationTest* tasks are deliberately skipped: they pin -XX:ActiveProcessorCount=2
     // themselves (D9) because the allocation budgets assume a chunk pool of exactly 2 threads;
     // the matrix flag must not vary their pool size or thread-to-chunk mapping.
     def matrixProcessorCount = null
@@ -228,12 +228,12 @@ allprojects {
     // compares and never silently rewrites the committed goldens.
     tasks.withType(Test).configureEach { testTask ->
         if (matrixProcessorCount != null && testTask.name.startsWith('allocationTest')) {
-            // D9 pin: allocationTest/allocationTest8 keep their own -XX:ActiveProcessorCount=4;
+            // D9 pin: allocationTest/allocationTest8 keep their own -XX:ActiveProcessorCount=2;
             // say so at execution time so a matrix run's log shows why the flag did not apply
             // here (R3: report where a value came from).
             testTask.doFirst {
                 testTask.logger.lifecycle(
-                    "jafar: {} keeps its -XX:ActiveProcessorCount=4 pin; " +
+                    "jafar: {} keeps its -XX:ActiveProcessorCount=2 pin; " +
                     "-Pjafar.activeProcessorCount={} does not apply (D9)",
                     testTask.name, matrixProcessorCount)
             }

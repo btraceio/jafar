@@ -720,7 +720,7 @@ public final class CompletionContextAnalyzer {
   // Filter function names from FunctionRegistry (single source of truth)
   private static final java.util.Set<String> FILTER_FUNCTIONS_SET =
       FunctionRegistry.getFilterFunctions().stream()
-          .map(f -> f.name().toLowerCase())
+          .map(f -> f.name().toLowerCase(Locale.ROOT))
           .collect(java.util.stream.Collectors.toSet());
 
   /** Analyze filter context from tokens. */

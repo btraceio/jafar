@@ -5,6 +5,7 @@ import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.CompletionContextType;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /** Completer for top-level shell commands. */
@@ -22,7 +23,7 @@ public final class OtlpCommandCompleter implements ContextCompleter<OtlpMetadata
   @Override
   public void complete(
       CompletionContext ctx, OtlpMetadataService metadata, List<Candidate> candidates) {
-    String partial = ctx.partialInput().toLowerCase();
+    String partial = ctx.partialInput().toLowerCase(Locale.ROOT);
 
     for (String cmd : COMMANDS) {
       if (cmd.startsWith(partial)) {
