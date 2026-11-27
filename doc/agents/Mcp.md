@@ -7,7 +7,7 @@ The `jfr-mcp` module exposes analysis capabilities as an MCP (Model Context Prot
 
 JFR tools: `jfr_open`, `jfr_close`, `jfr_list_types`, `jfr_query`, `jfr_help`, `jfr_summary`, `jfr_diagnose`, `jfr_compare`, `jfr_flamegraph`, `jfr_callgraph`, `jfr_hotmethods`, `jfr_exceptions`, `jfr_use`, `jfr_tsa`, `jfr_stackprofile`.
 
-Cross-format tools: `profile_compare` (a JFR recording or a pprof profile against either).
+Cross-format tools: `profile_compare` (a JFR recording, a pprof or an OTLP profile against any of them).
 
 Heap dump tools: `hdump_open`, `hdump_close`, `hdump_query`, `hdump_summary`, `hdump_report`, `hdump_help`.
 
@@ -37,7 +37,8 @@ findings in this shape rather than inventing another one.
 minimums, the z threshold), the sampler policy and the notes, and builds the rows and findings for
 any two `RecordingProfile`s. `JfrCompare` reads a JFR recording into one (every sample weighs 1;
 the Datadog `weight` field is not read) and delegates; `PprofProfileReader` (`pprof-shell`) reads a
-pprof profile, and `ShellModule.profileReader()` is how `jfr-shell compare` finds it.
+pprof profile and `OtlpProfileReader` (`otlp-shell`) an OTLP file, and `ShellModule.profileReader()`
+is how `jfr-shell compare` finds them.
 `JfrCompareTools` resolves session ids and adds `sessionId`/`alias` to each side;
 `ProfileCompareTools` takes a `{format, sessionId}` object per side, because each format's
 registry numbers its sessions from 1. `jfr-shell compare` prints the same result headless. The
@@ -71,7 +72,13 @@ Things a cross-format change must keep (design: [cross-format-compare.md](../pla
   `looksJvm` (a `<init>`, `<clinit>`, `$$Lambda` symbol or a JVM source file). A trailing `:<line>`
   is always dropped.
 - **pprof records no truncation.** Its profiles say `truncationKnown = false`; inclusive moves are
-  still judged, with a note, and the description omits `truncatedStacks`.
+  still judged, with a note, and the description omits `truncatedStacks`. OTLP neither.
+- **OTLP indices are absolute.** Every dictionary table holds its zero value at index 0
+  (opentelemetry-proto v1.10.0; async-profiler 4.6 writes it), so index `n` is entry `n` of the
+  parsed list. A sample's value is the sum of its `values`, or its timestamp count when it has
+  none (`OtlpPathEvaluator.value`); never `values.get(0)`. Check OTLP changes against the real
+  files in `otlp-shell/src/test/resources/real/`: `MinimalOtlpBuilder` once omitted the zero values
+  and the shell subtracted 1, and the two agreed with each other while both were wrong.
 - **A JFR side's description keeps exactly `jfr_compare`'s keys.** Other formats add `format`,
   `sampleUnit`, `samplerKind`, `totalWeight`, `sampleCountKnown` and `sampleTypeChosen`.
 - **The round trip is the net.** `CrossFormatCompareTest` (`jafar-shell`) converts `tck-test.jfr`

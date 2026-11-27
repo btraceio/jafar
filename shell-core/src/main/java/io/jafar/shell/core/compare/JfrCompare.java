@@ -199,13 +199,41 @@ public final class JfrCompare implements ProfileReader {
         totalEvents);
   }
 
+  /**
+   * JFR frame types whose "class" is not a Java class. async-profiler gives a C++ frame its library
+   * as the class ({@code libjvm.so.Compile::Compile}); in its pprof output, and in a pprof profile
+   * from any other tool, the same frame is {@code Compile::Compile}.
+   */
+  private static final java.util.Set<String> NATIVE_FRAME_TYPES =
+      java.util.Set.of("Native", "C++", "Kernel");
+
   /** The sample's frames, leaf first, each keyed by {@link FrameNames#jfrKey}. */
   private List<String> frameKeys(Map<String, Object> event, Integer maxDepth) {
     return analyses.extractFrames(
         event,
         "bottom-up",
         maxDepth,
-        frame -> analyses.extractFrameName(frame, FrameNames::jfrKey));
+        frame ->
+            analyses.extractFrameName(
+                frame,
+                isNativeFrameType(frame)
+                    ? (cls, method) -> FrameNames.jfrKey("", method)
+                    : FrameNames::jfrKey));
+  }
+
+  /** Whether {@code frame}'s JFR frame type is one of {@link #NATIVE_FRAME_TYPES}. */
+  private boolean isNativeFrameType(Object frame) {
+    if (!(frame instanceof Map<?, ?> frameMap)) {
+      return false;
+    }
+    Object type = analyses.unwrapValue(frameMap.get("type"));
+    if (type instanceof Map<?, ?> typeMap) {
+      type = analyses.unwrapValue(typeMap.get("description"));
+      if (type instanceof Map<?, ?> str) {
+        type = str.get("string");
+      }
+    }
+    return type != null && NATIVE_FRAME_TYPES.contains(type.toString());
   }
 
   /**

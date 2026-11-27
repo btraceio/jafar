@@ -4,6 +4,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,7 +86,7 @@ public final class ClassDefiners {
   }
 
   public static ClassDefiner byName(String name) {
-    String n = name.toLowerCase();
+    String n = name.toLowerCase(Locale.ROOT);
     switch (n) {
       case "hidden":
         return new HiddenDefiner();

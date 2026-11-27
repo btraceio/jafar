@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.eclipse.aether.artifact.Artifact;
@@ -208,7 +209,7 @@ final class PluginInstaller {
               Instant.now());
 
       Map<String, PluginMetadata> installed = storageManager.loadInstalled();
-      installed.put(pluginId.toLowerCase(), installedMetadata);
+      installed.put(pluginId.toLowerCase(Locale.ROOT), installedMetadata);
       storageManager.saveInstalled(installed);
 
       // 6. Verify ServiceLoader discovery (optional validation step)
@@ -274,7 +275,7 @@ final class PluginInstaller {
 
       // Remove from installed.json
       Map<String, PluginMetadata> installed = storageManager.loadInstalled();
-      installed.remove(pluginId.toLowerCase());
+      installed.remove(pluginId.toLowerCase(Locale.ROOT));
       storageManager.saveInstalled(installed);
 
     } catch (IOException ignored) {
