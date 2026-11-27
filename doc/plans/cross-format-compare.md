@@ -427,13 +427,17 @@ Wrong, and fixed:
 - **async-profiler's column names** `allocations`, `locks` and `malloc` were `UNKNOWN`, so its
   allocation profile was compared against a CPU one. They now have allocation and lock kinds.
 
+Decided 2026-11-27 with the maintainer, and done:
+
+- **async-profiler JFR native frames** had the library as the class (`libjvm.so`, `libc.so.6`), so
+  their key was `libjvm.so.Compile::Compile` where the pprof conversion writes `Compile::Compile`,
+  and every native frame of a recording and its conversion mismatched. Option (b): `JfrCompare`
+  keys a frame whose JFR frame type is `Native`, `C++` or `Kernel` by its method alone. This
+  changes `jfr_compare`'s method values for such frames. `ap-cpu.jfr` and its conversion now have
+  identical leaf and inclusive frame counts (`RealProfilesCompareTest`).
+
 Open (not changed; each needs a decision):
 
-- **async-profiler JFR native frames** have the library as the class (`libjvm.so`, `libc.so.6`), so
-  their key is `libjvm.so.Compile::Compile`; the pprof conversion writes `Compile::Compile`. Every
-  native frame of a recording and its conversion mismatches. Options: (a) leave it; (b) drop the
-  class of a frame whose JFR frame type is `Native`, `C++` or `Kernel` in `jfrKey`, which also
-  changes `jfr_compare`'s method values for async-profiler recordings. Recommended: (b).
 - **async-profiler's wall profile is named `cpu/count`** by `jfrconv --wall`. The reader cannot tell
   it from a CPU profile, so CPU against wall is not refused. Options: (a) document it (done in
   `Usage.md`); (b) guess wall from the stacks. Recommended: (a), and an upstream report.

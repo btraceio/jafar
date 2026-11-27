@@ -16,11 +16,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -108,41 +105,25 @@ class RealProfilesCompareTest {
   }
 
   @Test
-  void anAsyncProfilerRecordingAndItsPprofConversionShareTheirJavaFrames() throws Exception {
+  void anAsyncProfilerRecordingAndItsPprofConversionHaveTheSameFrames() throws Exception {
     RecordingProfile jfr =
         new JfrCompare()
             .read(REAL.resolve("ap-cpu.jfr"), new ProfileSelection("jdk.ExecutionSample", true));
     RecordingProfile converted = pprof("ap-cpu.pb.gz", null);
     assertEquals(215, jfr.sampleCount());
     assertEquals(jfr.sampleCount(), converted.sampleCount());
-
-    // Java frames (dotted, lambda addresses dropped) carry the same key and count on both sides.
-    Map<String, Long> jfrOnly = new HashMap<>(jfr.inclusiveFrameCounts());
-    Map<String, Long> pprofOnly = new HashMap<>(converted.inclusiveFrameCounts());
-    int shared = 0;
-    for (Map.Entry<String, Long> e : converted.inclusiveFrameCounts().entrySet()) {
-      if (e.getValue().equals(jfr.inclusiveFrameCounts().get(e.getKey()))) {
-        jfrOnly.remove(e.getKey());
-        pprofOnly.remove(e.getKey());
-        shared++;
-      }
-    }
-    assertTrue(shared > 50, "shared frames: " + shared);
     assertTrue(jfr.inclusiveFrameCounts().containsKey("RealProf$Hasher.sum"));
     assertTrue(jfr.inclusiveFrameCounts().containsKey("java.lang.String.repeat"));
-    assertFalse(jfrOnly.containsKey("RealProf$Hasher.sum"));
 
-    // What does not line up is the native frames: async-profiler's JFR gives a native frame its
-    // library as the class (libjvm.so, libc.so.6), its pprof conversion writes the bare symbol.
-    // An open decision (whether JFR keys drop the library), pinned so a change is seen here.
-    assertFalse(jfrOnly.isEmpty());
-    Pattern library = Pattern.compile("(lib[\\w+-]*\\.so(?:\\.\\d+)*)\\.(.+)");
-    for (Map.Entry<String, Long> e : jfrOnly.entrySet()) {
-      Matcher m = library.matcher(e.getKey());
-      assertTrue(m.matches(), () -> "not a library-qualified native frame: " + e.getKey());
-      assertEquals(e.getValue(), pprofOnly.remove(m.group(2)), e.getKey());
-    }
-    assertEquals(Map.of(), pprofOnly, "pprof frames with no JFR counterpart");
+    // Every frame carries the same key and count on both sides: Java frames dotted, with lambda
+    // addresses dropped, and native, C++ and kernel frames by their symbol alone. async-profiler's
+    // JFR gives a C++ frame its library as the class (libjvm.so); JfrCompare drops it for those
+    // frame types, as the pprof conversion (and any other pprof producer) does.
+    assertEquals(converted.inclusiveFrameCounts(), jfr.inclusiveFrameCounts());
+    assertEquals(converted.leafFrameCounts(), jfr.leafFrameCounts());
+    assertFalse(
+        jfr.inclusiveFrameCounts().keySet().stream().anyMatch(k -> k.startsWith("libjvm.so.")),
+        "a C++ frame keyed with its library");
   }
 
   @Test

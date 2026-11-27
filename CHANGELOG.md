@@ -164,6 +164,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Changed
+- **Compare keys native, C++ and kernel JFR frames by their symbol alone** - async-profiler's JFR
+  gives a C++ frame its library as the class, so `jfr_compare` and `jfr-shell compare` named it
+  `libjvm.so.Compile::Compile`, where its pprof conversion (and every other pprof producer) has
+  `Compile::Compile`, and a recording compared with its own conversion mismatched on every such
+  frame. Frames whose JFR frame type is `Native`, `C++` or `Kernel` now drop the class. This changes
+  `jfr_compare`'s `method` values for those frames
 - **The parser uses one thread per processor by default** - `StreamingChunkParser.defaultParallelism()`
   was `max(availableProcessors - 2, 1)`, 2 threads on 4 processors; it is now
   `availableProcessors`. On a 4-processor machine and a 4.16 GB recording, 4 threads walked the

@@ -90,5 +90,6 @@ Name shapes:
   class, dotted (`java.lang.String`, `byte[]`). No filenames and no `start_line`; a Java frame's
   `Line.line` is its line number (`RealProf.allocate` at 46), with or without `--lines`, and the
   name never carries it. One line per location (no location has two), one
-  mapping named `async-profiler`, and the comment `Produced by async-profiler`. The JFR, by contrast, gives a native frame its library
-  as the class (`libjvm.so`, `libc.so.6`), so its frame keys are `libjvm.so.Compile::Compile`.
+  mapping named `async-profiler`, and the comment `Produced by async-profiler`. The JFR, by contrast, gives a C++ frame its library
+  as the class (`libjvm.so`, `libc.so.6`); compare keys `Native`, `C++` and `Kernel` frames by the
+  symbol alone, so both files key that frame `Compile::Compile`.
