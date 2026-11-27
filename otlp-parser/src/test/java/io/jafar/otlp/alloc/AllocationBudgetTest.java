@@ -100,12 +100,13 @@ class AllocationBudgetTest {
     assertEquals(1, profile.samples().get(0).values().size(), when);
     assertEquals(1_234_567L, profile.samples().get(0).values().get(0), when);
     OtlpProfile.Dictionary dict = data.dictionary();
-    assertEquals(1, dict.stackTable().size(), when);
-    assertEquals(1, dict.functionTable().size(), when);
-    assertEquals("com.example.Foo.bar", dict.functionTable().get(0).name(), when);
-    assertEquals(1, dict.locationTable().size(), when);
-    assertEquals(1, dict.attributeTable().size(), when);
-    assertEquals("thread", dict.attributeTable().get(0).key(), when);
-    assertEquals("main", dict.attributeTable().get(0).value(), when);
+    // One entry each after the zero value every table starts with.
+    assertEquals(2, dict.stackTable().size(), when);
+    assertEquals(2, dict.functionTable().size(), when);
+    assertEquals("com.example.Foo.bar", dict.functionTable().get(1).name(), when);
+    assertEquals(2, dict.locationTable().size(), when);
+    assertEquals(2, dict.attributeTable().size(), when);
+    assertEquals("thread", dict.attributeTable().get(1).key(), when);
+    assertEquals("main", dict.attributeTable().get(1).value(), when);
   }
 }

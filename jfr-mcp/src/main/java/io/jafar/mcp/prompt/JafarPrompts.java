@@ -107,8 +107,8 @@ public final class JafarPrompts {
 
               1. jfr_open both, giving each a clear alias.
               2. Call jfr_compare with baselineSessionId and candidateSessionId. If either side \
-              is a pprof profile, open it with pprof_open instead and call profile_compare with \
-              {format, sessionId} for each side.
+              is a pprof or OTLP profile, open it with pprof_open or otlp_open instead and call \
+              profile_compare with {format, sessionId} for each side.
               3. Read the `comparability` block before anything else. If it reports different \
               execution-sample event types, very different durations, or low sample counts, say \
               so in your answer and temper every conclusion accordingly.
@@ -159,9 +159,9 @@ public final class JafarPrompts {
               1. hdump_open, then hdump_summary to orient.
               2. hdump_report focus=leaks. Work the findings from highest severity with the \
               largest retainedSize.
-              3. Rank by retained size, not shallow size: hdump_query "classes | \
-              sortBy(retained desc) | top(20)". A large char[] or byte[] population is normal; \
-              its dominator is the finding.
+              3. Rank by retained size, not shallow size: hdump_query "objects | \
+              groupBy(className, agg=sum, value=retainedSize) | top(20, by=retainedSize)". A \
+              large char[] or byte[] population is normal; its dominator is the finding.
               4. Try the named detectors for known patterns (threadlocal-leak, classloader-leak, \
               growing-collections, listener-leak, duplicate-strings, finalizer-queue), then \
               `clusters` for patterns nobody wrote a detector for.
@@ -177,9 +177,10 @@ public final class JafarPrompts {
                     """
 
                 6. Open %s with jfr_open and correlate retention with allocation:
-                   hdump_query "classes | join(session=<jfr alias>, \
-                root=\\"jdk.ObjectAllocationSample\\", by=class) | filter(retained > 10MB) | \
-                select(name, retained, allocCount, topAllocSite)"
+                   hdump_query "objects | groupBy(className, agg=sum, value=retainedSize) | \
+                join(session=<jfr alias>, root=\\"jdk.ObjectAllocationSample\\", by=className) | \
+                filter(allocCount > 0) | top(20, by=retainedSize) | \
+                select(className, retainedSize, allocCount, topAllocSite)"
                    topAllocSite names the code that created the retained objects. High \
                 allocCount with low retained is churn, not a leak.
                 """,

@@ -77,7 +77,7 @@ public interface ParsingContext {
 
   /**
    * Returns a context that shares this context's cached resources but whose parsers read chunks on
-   * {@code parallelism} threads instead of the default {@code max(availableProcessors - 2, 1)}.
+   * {@code parallelism} threads instead of the default {@code availableProcessors}.
    *
    * <p>With {@code withParallelism(1)} a parser delivers events strictly one at a time, in the
    * order they appear in the file, chunk after chunk, and every handler call is complete before
@@ -109,7 +109,7 @@ public interface ParsingContext {
    * this to size its own chunk pool.
    *
    * @return the requested number of chunk parsing threads, or {@code 0} when none was requested and
-   *     the default, {@code max(availableProcessors - 2, 1)}, applies
+   *     the default, {@code availableProcessors}, applies
    */
   default int parallelism() {
     return 0;
