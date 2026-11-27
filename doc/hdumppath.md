@@ -462,7 +462,8 @@ Output:
 With no numeric value (an empty input, or a field that is null on every row) `count` is `0` and
 `min`/`max` are `null`. `stats`, `sum`, `top` and `sortBy` fail with
 `field '<name>' is not present in its input rows (available: ...)` when no input row carries the
-field, instead of returning an empty or unsorted result.
+field, instead of returning an empty or unsorted result; so does a `filter` that matched nothing
+for that reason (see `filter(predicate)`).
 
 ### `sortBy(field [asc|desc], ...)`
 Sort results by one or more fields. Aliases: `sort`, `orderBy`, `order`.
@@ -497,6 +498,20 @@ Filter results mid-pipeline.
 objects | groupBy(class, agg=count) | filter(count > 100)
 classes | filter(instanceCount > 1000 and name ~ "java.util.*")
 ```
+
+A filter that matches no row because it compares a field that is no column of its rows fails
+with `filter: field '<name>' is not present in its input rows (available: ...)`, as `top` and
+`sortBy` do; `classes | filter(retained > 10MB)` gets their hint to aggregate `objects` instead.
+The columns are those the root's rows can have, whether or not these rows carry them:
+`objects/java.util.HashMap[arrayLength > 0]` (no arrays) and `gcroots/JNI_GLOBAL[frameNumber > 0]`
+(no frames) still return no rows. Below a column a path is not checked: `fields.<name>` depends on
+the object's class. After a stage that builds new rows (`groupBy`,
+`select`, `count`, ...) the columns are the keys its rows carry. The same holds for `[...]`
+predicates and for the field a function reads; `exists(...)` and `empty(...)` ask about absence and
+are not checked. A filter that matched some rows, or whose input is empty, is not checked either,
+and when the input is an operator's error row (`retainedBreakdown` without dominators) the filter
+reports that error. A query on `objects`, `ages` or `gcroots` that reads a retained size computes
+them first.
 
 ### `distinct(field)`
 Get distinct values of a field.
