@@ -1634,7 +1634,11 @@ public final class JfrAnalyses {
     }
 
     if (recommendations.isEmpty()) {
-      recommendations.add("No significant bottlenecks detected - system appears healthy");
+      // With no share to judge by, nothing was found healthy either (#297)
+      recommendations.add(
+          anySaturationShare(resourceMetrics)
+              ? "No significant bottlenecks detected - system appears healthy"
+              : "No resource reported a saturation share - no verdict");
     }
 
     insights.put("recommendations", recommendations);
@@ -1672,15 +1676,57 @@ public final class JfrAnalyses {
       }
     }
 
+    // The bottlenecks the insights report count too: a verdict beside a listed bottleneck that
+    // ignores it is not one (#297)
+    List<?> bottlenecks =
+        generateUseInsights(resourceMetrics).get("bottlenecks") instanceof List<?> l
+            ? l
+            : List.of();
     if (worstResource != null) {
       summary.put("worstResource", worstResource);
       summary.put("worstMetric", worstMetric);
-      summary.put("overallAssessment", worstValue > 50 ? "NEEDS_ATTENTION" : "ACCEPTABLE");
-    } else {
+    }
+    if (!bottlenecks.isEmpty()) {
+      summary.put("bottlenecks", bottlenecks);
+    }
+    if ((worstResource != null && worstValue > 50) || !bottlenecks.isEmpty()) {
+      summary.put("overallAssessment", "NEEDS_ATTENTION");
+    } else if (worstResource != null) {
+      summary.put("overallAssessment", "ACCEPTABLE");
+    } else if (anySaturationShare(resourceMetrics)) {
+      // Every share measured is 0
       summary.put("overallAssessment", "HEALTHY");
+    } else {
+      // Nothing measured is not a clean bill of health (#297)
+      summary.put("overallAssessment", "UNKNOWN");
+      summary.put(
+          "note",
+          "No resource reported a saturation share; see each resource's utilization and"
+              + " assessment");
     }
 
     return summary;
+  }
+
+  /** Whether any resource without an error reports its saturation as a share ({@code %}). */
+  private static boolean anySaturationShare(Map<String, Object> resourceMetrics) {
+    for (String resource : resourceMetrics.keySet()) {
+      if (saturationShare(resourceMetrics, resource) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The resource's saturation share in percent, or null if it reports none. */
+  private static Number saturationShare(Map<String, Object> resourceMetrics, String resource) {
+    if (!(resourceMetrics.get(resource) instanceof Map<?, ?> metrics)
+        || metrics.containsKey("error")
+        || !(metrics.get("saturation") instanceof Map<?, ?> saturation)
+        || !"%".equals(saturation.get("unit"))) {
+      return null;
+    }
+    return saturation.get("value") instanceof Number value ? value : null;
   }
 
   public Map<String, Object> tsa(AnalysisTarget target, Map<String, Object> args, Progress progress)
