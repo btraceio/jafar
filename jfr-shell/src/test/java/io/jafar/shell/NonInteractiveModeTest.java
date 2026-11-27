@@ -119,11 +119,14 @@ class NonInteractiveModeTest {
         execute(
             "show",
             testJfr().toString(),
-            "events/jdk.ExecutionSample[state=\"RUNNABLE\"] | count()");
+            "events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\"] | count()");
 
     assertEquals(0, exitCode, "Should exit successfully");
     String output = getOutput();
     assertTrue(output.contains("count"), "Should show count result");
+    // test-ap.jfr (async-profiler) names states as HotSpot does: 6467 of its 8000 samples are
+    // STATE_RUNNABLE, and [state="RUNNABLE"] matches none (#288)
+    assertTrue(output.contains("6467"), output);
   }
 
   @Test

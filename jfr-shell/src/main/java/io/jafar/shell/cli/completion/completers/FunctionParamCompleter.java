@@ -8,6 +8,7 @@ import io.jafar.shell.cli.completion.FunctionSpec;
 import io.jafar.shell.cli.completion.MetadataService;
 import io.jafar.shell.cli.completion.ParamSpec;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -66,9 +67,9 @@ public final class FunctionParamCompleter implements ContextCompleter {
 
   /** Returns true if partial begins with a known keyword name followed by '='. */
   private boolean looksLikeKeyword(FunctionSpec spec, String partial) {
-    String lowerPartial = partial.toLowerCase();
+    String lowerPartial = partial.toLowerCase(Locale.ROOT);
     return spec.keywordParams().stream()
-        .anyMatch(kw -> lowerPartial.startsWith(kw.name().toLowerCase() + "="));
+        .anyMatch(kw -> lowerPartial.startsWith(kw.name().toLowerCase(Locale.ROOT) + "="));
   }
 
   /**
@@ -78,18 +79,18 @@ public final class FunctionParamCompleter implements ContextCompleter {
   private KeywordResult completeKeywordsFromSpec(
       CompletionContext ctx, FunctionSpec spec, String partial, List<Candidate> candidates) {
 
-    String lowerPartial = partial.toLowerCase();
+    String lowerPartial = partial.toLowerCase(Locale.ROOT);
     String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
 
     // Check if partial starts with a known keyword prefix (e.g. "direction=")
     for (ParamSpec kw : spec.keywordParams()) {
       String kwPrefix = kw.name() + "=";
-      if (lowerPartial.startsWith(kwPrefix.toLowerCase())) {
+      if (lowerPartial.startsWith(kwPrefix.toLowerCase(Locale.ROOT))) {
         String afterEq = partial.substring(kwPrefix.length());
         switch (kw.type()) {
           case ENUM -> {
             for (String val : kw.enumValues()) {
-              if (val.startsWith(afterEq.toLowerCase())) {
+              if (val.startsWith(afterEq.toLowerCase(Locale.ROOT))) {
                 candidates.add(noSpace(prefix + kwPrefix + val));
               }
             }
@@ -97,7 +98,7 @@ public final class FunctionParamCompleter implements ContextCompleter {
           }
           case BOOLEAN -> {
             for (String val : BOOLEAN_VALUES) {
-              if (val.startsWith(afterEq.toLowerCase())) {
+              if (val.startsWith(afterEq.toLowerCase(Locale.ROOT))) {
                 candidates.add(noSpace(prefix + kwPrefix + val));
               }
             }
@@ -117,7 +118,7 @@ public final class FunctionParamCompleter implements ContextCompleter {
     // Partial doesn't match any keyword= prefix → suggest matching keyword names
     for (ParamSpec kw : spec.keywordParams()) {
       String kwName = kw.name() + "=";
-      if (kwName.toLowerCase().startsWith(lowerPartial)) {
+      if (kwName.toLowerCase(Locale.ROOT).startsWith(lowerPartial)) {
         candidates.add(noSpace(prefix + kwName));
       }
     }
@@ -136,7 +137,7 @@ public final class FunctionParamCompleter implements ContextCompleter {
     for (ParamSpec kw : spec.keywordParams()) {
       if (kw.type() == ParamSpec.ParamType.FIELD_PATH) {
         String kwPrefix = kw.name() + "=";
-        if (partial.toLowerCase().startsWith(kwPrefix.toLowerCase())) {
+        if (partial.toLowerCase(Locale.ROOT).startsWith(kwPrefix.toLowerCase(Locale.ROOT))) {
           return new FieldAfterKeyword(
               partial.substring(0, kwPrefix.length()), partial.substring(kwPrefix.length()));
         }
@@ -258,12 +259,12 @@ public final class FunctionParamCompleter implements ContextCompleter {
               + "'");
     }
 
-    String lowerLastSegment = lastSegment.toLowerCase();
+    String lowerLastSegment = lastSegment.toLowerCase(Locale.ROOT);
     int added = 0;
 
     if (ctx.type() == CompletionContextType.SELECT_EXPRESSION && pathSegments.isEmpty()) {
       for (var spec : FunctionRegistry.getSelectFunctions()) {
-        if (spec.name().toLowerCase().startsWith(lowerLastSegment)) {
+        if (spec.name().toLowerCase(Locale.ROOT).startsWith(lowerLastSegment)) {
           candidates.add(noSpace(jlineWordPrefix + keywordPrefix + spec.name() + "("));
           added++;
         }
@@ -271,7 +272,7 @@ public final class FunctionParamCompleter implements ContextCompleter {
     }
 
     for (String fieldName : fieldNames) {
-      if (fieldName.toLowerCase().startsWith(lowerLastSegment)) {
+      if (fieldName.toLowerCase(Locale.ROOT).startsWith(lowerLastSegment)) {
         String value = jlineWordPrefix + keywordPrefix + nestedPrefix + fieldName;
         candidates.add(noSpace(value));
         added++;

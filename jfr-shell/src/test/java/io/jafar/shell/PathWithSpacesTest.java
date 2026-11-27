@@ -75,8 +75,21 @@ class PathWithSpacesTest {
         expected.matches("(?s).*\"count\"\\s*:\\s*[1-9][0-9]*.*"),
         "a nonzero count from the plain path: " + expected);
 
-    String actual = show(spaced);
-    // the plain run prints the plain path in its "Opened session" line; compare the result only
+    // One-shot show prints the "Opened session" line only when verbose (#266); it names the path
+    // that was opened, which is what this test checks
+    String actual;
+    String verbose = System.getProperty("jfr.shell.verbose");
+    System.setProperty("jfr.shell.verbose", "true");
+    try {
+      actual = show(spaced);
+    } finally {
+      if (verbose == null) {
+        System.clearProperty("jfr.shell.verbose");
+      } else {
+        System.setProperty("jfr.shell.verbose", verbose);
+      }
+    }
+    // the spaced run prints its path in its "Opened session" line; compare the result only
     assertEquals(
         expected.substring(expected.indexOf('[')),
         actual.substring(actual.indexOf('[')),

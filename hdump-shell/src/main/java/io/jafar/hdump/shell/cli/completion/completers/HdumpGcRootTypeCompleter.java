@@ -5,6 +5,7 @@ import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.CompletionContextType;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -34,7 +35,7 @@ public final class HdumpGcRootTypeCompleter implements ContextCompleter<HdumpMet
   @Override
   public void complete(
       CompletionContext ctx, HdumpMetadataService metadata, List<Candidate> candidates) {
-    String partial = ctx.partialInput().toUpperCase();
+    String partial = ctx.partialInput().toUpperCase(Locale.ROOT);
 
     for (String type : GC_ROOT_TYPES) {
       if (type.startsWith(partial)) {

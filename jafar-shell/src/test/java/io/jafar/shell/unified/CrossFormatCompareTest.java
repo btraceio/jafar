@@ -248,6 +248,36 @@ class CrossFormatCompareTest {
   }
 
   @Test
+  void aBackendGivenToAPprofOnlyCompareIsStillChecked(@TempDir Path dir) throws Exception {
+    // #268: with no recording on either side the backend used to be ignored, typo or conflict
+    org.junit.jupiter.api.Assumptions.assumeTrue(System.getenv("JFRSHELL_BACKEND") == null);
+    Path a = shifted(dir, "cpu", 0);
+    Path b = shifted(dir, "cpu", 10);
+    String previous = System.getProperty("jfr.shell.backend");
+    try {
+      List<String> conflict =
+          List.of("-b", "jdk", "compare", "-b", "jafar", a.toString(), b.toString());
+      assertEquals(
+          2,
+          new CommandLine(new io.jafar.shell.Main()).execute(conflict.toArray(String[]::new)),
+          this::streams);
+      assertTrue(
+          err.toString(StandardCharsets.UTF_8).contains("before 'compare' and 'jafar' after it"),
+          streams());
+      err.reset();
+      assertNotEquals(0, compare("-b", "nosuch", a.toString(), b.toString()), this::streams);
+      assertTrue(err.toString(StandardCharsets.UTF_8).contains("nosuch"), streams());
+    } finally {
+      if (previous == null) {
+        System.clearProperty("jfr.shell.backend");
+      } else {
+        System.setProperty("jfr.shell.backend", previous);
+      }
+      io.jafar.shell.backend.BackendRegistry.getInstance().rediscover();
+    }
+  }
+
+  @Test
   void theUnifiedShellRoutesCompareToJfrShell() {
     assertTrue(Main.isJfrCommandLine(new String[] {"compare", "a.jfr", "b.pb.gz"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"-q", "compare", "a.jfr", "b.jfr", "--json"}));

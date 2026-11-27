@@ -55,7 +55,7 @@ public final class HdumpTuiAdapter implements TuiAdapter {
   @Override
   public void dispatch(String command, CommandIO io) throws Exception {
     String trimmed = command.trim();
-    String cmdWord = trimmed.split("\\s+")[0].toLowerCase();
+    String cmdWord = trimmed.split("\\s+")[0].toLowerCase(Locale.ROOT);
     if (cmdWord.equals("report")) {
       cmdReport(trimmed, io);
       return;
@@ -77,7 +77,8 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     HdumpQueryEvaluator evaluator = new HdumpQueryEvaluator();
     Object query = evaluator.parse(command);
     Object result = evaluator.evaluate(session, query);
-    CommandDescriptor descriptor = COMMANDS.get(command.trim().split("\\s+")[0].toLowerCase());
+    CommandDescriptor descriptor =
+        COMMANDS.get(command.trim().split("\\s+")[0].toLowerCase(Locale.ROOT));
     if (result instanceof List<?> rows && !rows.isEmpty() && rows.get(0) instanceof Map<?, ?>) {
       @SuppressWarnings("unchecked")
       List<Map<String, Object>> tableRows = (List<Map<String, Object>>) rows;
@@ -141,11 +142,11 @@ public final class HdumpTuiAdapter implements TuiAdapter {
 
     String[] parts = command.trim().split("\\s+");
     if (parts.length == 0) return null;
-    String first = parts[0].toLowerCase();
+    String first = parts[0].toLowerCase(Locale.ROOT);
     // Bare "classes" or "objects" triggers browser (list all classes)
     if ("classes".equals(first) || "objects".equals(first)) return "classes";
     if ("show".equals(first) && parts.length >= 2) {
-      String second = parts[1].toLowerCase();
+      String second = parts[1].toLowerCase(Locale.ROOT);
       // Only bare "show classes" / "show objects" triggers browser, not "show classes/..." etc.
       if (parts.length == 2 && ("classes".equals(second) || "objects".equals(second))) {
         return "classes";
@@ -243,7 +244,7 @@ public final class HdumpTuiAdapter implements TuiAdapter {
     long objectCount = heap.getHeapDump().getObjectCount();
     if (objectCount < EXPENSIVE_OBJECT_THRESHOLD) return null;
 
-    String lower = command.toLowerCase().trim();
+    String lower = command.toLowerCase(Locale.ROOT).trim();
     // Strip leading "show " prefix
     if (lower.startsWith("show ")) lower = lower.substring(5).trim();
 
@@ -280,7 +281,7 @@ public final class HdumpTuiAdapter implements TuiAdapter {
 
     // Strip "show " prefix if present — the parser expects the query part only
     String queryStr = cmd;
-    if (queryStr.toLowerCase().startsWith("show ")) {
+    if (queryStr.toLowerCase(Locale.ROOT).startsWith("show ")) {
       queryStr = queryStr.substring(5).trim();
     }
 

@@ -19,8 +19,8 @@ import picocli.CommandLine;
       "script <file|-> [args...] [--continue-on-error] [-b <backend>]: run a script in this",
       "  shell, so it can open recordings, heap dumps and profiles.",
       "JFR commands: show, metadata, chunks, constants (cp).",
-      "compare <baseline> <candidate> [options]: compare two JFR recordings or pprof",
-      "  profiles, in any pairing (see 'jafar-shell compare --help').",
+      "compare <baseline> <candidate> [options]: compare two JFR recordings, pprof or",
+      "  OTLP profiles, in any pairing (see 'jafar-shell compare --help').",
       "JFR options: --backend, --plugin-dir, --install-plugin."
     })
 public final class Main implements Callable<Integer> {
@@ -30,7 +30,7 @@ public final class Main implements Callable<Integer> {
   // -b/--backend picks the backend for recordings there. (The jfr-shell jbang alias launches
   // io.jafar.shell.Main directly and never comes through here.) 'compare' runs there too: it
   // picks each side's reader from the modules this jar's ServiceLoader finds, so through this jar
-  // it compares pprof profiles as well as recordings.
+  // it compares pprof and OTLP profiles as well as recordings.
   private static final Set<String> JFR_COMMANDS =
       Set.of("show", "metadata", "chunks", "constants", "cp", "compare");
   private static final Set<String> JFR_OPTIONS =
@@ -61,10 +61,18 @@ public final class Main implements Callable<Integer> {
     int first = firstWordIndex(args);
     boolean script = first >= 0 && isCommand(args[first], Set.of("script"));
     // A JFR option before the command sends it to jfr-shell. After 'script' the options are the
-    // script command's own ('script -b jdk f.jfrs' picks a backend in this shell).
+    // script command's own ('script -b jdk f.jfrs' picks a backend in this shell), and so is a
+    // -b/--backend before 'script' (#268), which main moves after it.
     int scan = first < 0 ? args.length : first;
     for (int i = 0; i < scan; i++) {
-      if (JFR_OPTIONS.contains(args[i].split("=", 2)[0])) {
+      if (script && isBackendOption(args[i])) {
+        // 'jafar-shell -b jdk script f' is 'jafar-shell script -b jdk f' (#268): main moves it
+        if (takesValue(args[i])) {
+          i++;
+        }
+        continue;
+      }
+      if (JFR_OPTIONS.contains(args[i].split("=", 2)[0]) || isBackendOption(args[i])) {
         return true;
       }
       if (takesValue(args[i])) {
@@ -72,6 +80,71 @@ public final class Main implements Callable<Integer> {
       }
     }
     return !script && first >= 0 && isCommand(args[first], JFR_COMMANDS);
+  }
+
+  /**
+   * {@code -b}/{@code --backend}, with its value or without: {@code -b}, {@code -bjdk}, {@code
+   * -b=jdk}, {@code --backend}, {@code --backend=jdk}. picocli reads {@code -bjdk} as {@code -b
+   * jdk}.
+   */
+  static boolean isBackendOption(String arg) {
+    return arg.equals("--backend")
+        || arg.startsWith("--backend=")
+        || SHORT_BACKEND.matcher(arg).matches();
+  }
+
+  /**
+   * {@code -b}, {@code -bjdk}, {@code -b=jdk}, after any {@code -q} in the same cluster ({@code
+   * -qbjdk}).
+   */
+  private static final java.util.regex.Pattern SHORT_BACKEND =
+      java.util.regex.Pattern.compile("-q*b(=?)(.*)");
+
+  /**
+   * The backend a {@code -b} option at {@code i} names, its value attached or the next word; {@code
+   * null} when it has none.
+   */
+  private static String backendValue(String[] args, int i) {
+    String arg = args[i];
+    if (arg.startsWith("--backend")) {
+      return arg.startsWith("--backend=")
+          ? arg.substring("--backend=".length())
+          : (i + 1 < args.length ? args[i + 1] : null);
+    }
+    java.util.regex.Matcher m = SHORT_BACKEND.matcher(arg);
+    if (!m.matches()) {
+      return null;
+    }
+    if (!m.group(1).isEmpty() || !m.group(2).isEmpty()) {
+      return m.group(2);
+    }
+    return i + 1 < args.length ? args[i + 1] : null;
+  }
+
+  /**
+   * The arguments of {@code script}: a {@code -b} given before the command first, then the words
+   * after it, so the unified {@link ScriptCommand} sees the backend wherever it was typed.
+   */
+  static String[] scriptArguments(String[] args) {
+    int command = scriptCommandIndex(args);
+    java.util.List<String> rest = new java.util.ArrayList<>();
+    for (int i = 0; i < command; i++) {
+      if (isBackendOption(args[i])) {
+        // Passed apart from the script's own -b, so the two can be compared as jfr-shell does
+        String value = backendValue(args, i);
+        if (value != null) {
+          // A second one before 'script' becomes the script's own, compared like one after it
+          boolean first =
+              rest.stream().noneMatch(a -> a.startsWith(ScriptCommand.BACKEND_BEFORE_SCRIPT));
+          rest.add((first ? ScriptCommand.BACKEND_BEFORE_SCRIPT : "--backend") + "=" + value);
+        }
+        if (takesValue(args[i])) {
+          i++;
+        }
+      }
+    }
+    rest.addAll(java.util.Arrays.asList(args).subList(command + 1, args.length));
+    return rest.toArray(new String[0]);
   }
 
   /** {@code jafar-shell script ...} that runs in the unified shell (see {@link ScriptCommand}). */
@@ -110,6 +183,9 @@ public final class Main implements Callable<Integer> {
     if (arg.indexOf('=') >= 0) {
       return false;
     }
+    if (SHORT_BACKEND.matcher(arg).matches()) {
+      return arg.endsWith("b"); // -b, -qb: the next word; -bjdk, -qbjdk, -b=jdk: attached
+    }
     if (arg.equals("--file") || JFR_OPTIONS.contains(arg)) {
       return true;
     }
@@ -136,8 +212,7 @@ public final class Main implements Callable<Integer> {
     }
 
     if (isScriptCommandLine(args)) {
-      int command = scriptCommandIndex(args);
-      String[] rest = java.util.Arrays.copyOfRange(args, command + 1, args.length);
+      String[] rest = scriptArguments(args);
       PluginManager.initialize();
       System.exit(new CommandLine(new ScriptCommand()).execute(rest));
       return;
@@ -200,10 +275,18 @@ public final class Main implements Callable<Integer> {
         description = "Run the remaining lines after a line fails")
     private boolean continueOnError;
 
+    /** The option {@link #scriptArguments} turns a {@code -b} before {@code script} into. */
+    static final String BACKEND_BEFORE_SCRIPT = "--backend-before-script";
+
     @CommandLine.Option(
         names = {"-b", "--backend"},
         description = "JFR backend to use for recordings, as in jfr-shell")
     private String backend;
+
+    @CommandLine.Option(names = BACKEND_BEFORE_SCRIPT, hidden = true)
+    private String backendBeforeScript;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
 
     @CommandLine.Option(
         names = {"-h", "--help"},
@@ -213,9 +296,27 @@ public final class Main implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+      if (backendBeforeScript != null) {
+        if (backend != null && !backend.equalsIgnoreCase(backendBeforeScript)) {
+          System.err.println(
+              "Error: --backend is '"
+                  + backendBeforeScript
+                  + "' before 'script' and '"
+                  + backend
+                  + "' after it; give one");
+          spec.commandLine().usage(System.err);
+          return io.jafar.shell.Main.USAGE_ERROR;
+        }
+        backend = backend != null ? backend : backendBeforeScript;
+      }
       if (backend != null) {
-        // Read when the backend registry first initialises, which opening a recording does
-        System.setProperty("jfr.shell.backend", backend);
+        // Checked as jfr-shell checks it: an unknown backend, or one JFRSHELL_BACKEND overrides, is
+        // an error rather than a silent fall back to the default (#268). It also sets the
+        // property the backend registry reads when a recording is first opened.
+        Integer rc = io.jafar.shell.Main.validateBackend(backend);
+        if (rc != 0) {
+          return rc;
+        }
       }
       // A shebang line ending 'script -': the kernel passes the script's own path after '-'
       var shebang = io.jafar.shell.core.scripting.ScriptRunner.shebangScript(scriptPath, arguments);

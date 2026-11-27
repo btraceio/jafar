@@ -22,7 +22,7 @@ documented gaps are in [Gates.md](Gates.md).
 - Language: Java 25 (shell/MCP modules), Java 8 bytecode (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
 - Packages: `io.jafar.*`. Classes `PascalCase`, methods/fields `camelCase`, constants `UPPER_SNAKE_CASE`.
 - Keep public API minimal; prefer package-private for internals. Use meaningful names and final where sensible.
-- Format numbers with an explicit locale: `String.format(Locale.ROOT, ...)`, `printf(Locale.ROOT, ...)`. The default locale makes output depend on the machine (`"47,8%"` on ru-RU); arch rule (j) fails the build on a call without one.
+- Format numbers with an explicit locale: `String.format(Locale.ROOT, ...)`, `printf(Locale.ROOT, ...)`. The default locale makes output depend on the machine (`"47,8%"` on ru-RU); arch rule (j) fails the build on a call without one. The same holds for case mapping: `toLowerCase(Locale.ROOT)`, `toUpperCase(Locale.ROOT)`; under tr-TR `"I".toLowerCase()` is a dotless `"ı"` (#264).
 
 ## Formatting
 - Spotless enforces formatting for Java, Groovy, and Gradle files.
