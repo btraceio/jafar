@@ -59,7 +59,7 @@ public final class TestRecordingGenerator {
       Path out = Paths.get(args[1]);
       int chunks = Integer.parseInt(args[2]);
       int samples = args.length > 3 ? Integer.parseInt(args[3]) : 200_000;
-      Shape shape = args.length > 4 ? Shape.valueOf(args[4].toUpperCase()) : Shape.AP;
+      Shape shape = args.length > 4 ? Shape.valueOf(args[4].toUpperCase(Locale.ROOT)) : Shape.AP;
       long t0 = System.nanoTime();
       write(out, shape, chunks, samples);
       System.out.printf(

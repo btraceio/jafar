@@ -230,8 +230,8 @@ tasks.register('test8', Test) {
 }
 
 // --- Allocation budget gate (D9) ---------------------------------------------------------
-// The -XX:ActiveProcessorCount=4 pin is load-bearing, not a tuning knob: StreamingChunkParser
-// sizes its chunk pool max(processors - 2, 1), so the pin fixes the pool at 2 threads, matching
+// The -XX:ActiveProcessorCount=2 pin is load-bearing, not a tuning knob: StreamingChunkParser
+// sizes its chunk pool one thread per processor, so the pin fixes the pool at 2 threads, matching
 // tck-test.jfr's 2 chunks. AllocationMeter sums the pool threads' ABSOLUTE allocated-bytes
 // counters, which is only valid for fresh threads of this parse; a pool that followed the host
 // CPU count would also vary the thread-to-chunk mapping and, with it, the measured figure.
@@ -263,7 +263,7 @@ tasks.register('allocationTest', Test) {
     include 'io/jafar/parser/alloc/**'
     javaLauncher.set(j21LauncherProvider)
     useJUnitPlatform()
-    jvmArgs '-XX:ActiveProcessorCount=4', '-Xmx2g', '-XX:TieredStopAtLevel=1'
+    jvmArgs '-XX:ActiveProcessorCount=2', '-Xmx2g', '-XX:TieredStopAtLevel=1'
     systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
     // A budget change re-runs the gate, and so does a fixture change: without the recording as
     // an input, an edited tck-test.jfr would leave the task UP-TO-DATE with a stale verdict.
@@ -292,7 +292,7 @@ tasks.register('allocationTest8', Test) {
     dependsOn tasks.named('compileTest8JavaCompat')
     useJUnitPlatform()
     // -Xms2g -Xmn1g: no collection during the test (see the comment above allocationBudgetsFile)
-    jvmArgs '-XX:ActiveProcessorCount=4', '-Xms2g', '-Xmx2g', '-Xmn1g', '-XX:TieredStopAtLevel=1'
+    jvmArgs '-XX:ActiveProcessorCount=2', '-Xms2g', '-Xmx2g', '-Xmn1g', '-XX:TieredStopAtLevel=1'
     systemProperty 'jafar.alloc.budgets', allocationBudgetsFile.absolutePath
     inputs.file(allocationBudgetsFile)
     inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
