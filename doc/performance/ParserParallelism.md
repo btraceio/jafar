@@ -20,8 +20,8 @@ itself, in the bulk commit `125c3da4`.
 - **Machine and data.** The same machine and the same 4.16 GB realistic recording (`r690`) as
   `MultiGbQueries.md`: 4 processors, 15 GB RAM, JDK 25. The page cache was warmed before each set
   of runs.
-- **Concurrent load.** Another process, a Gradle build and test agent, ran at the same time; the
-  load average was 1.2 to 5.0 across the runs. Every table interleaves its configurations, in a
+- **Concurrent load.** The machine was not idle: the 1-minute load average, logged before each
+  run, was 1.2 to 5.0. What else was running was not recorded. Every table interleaves its configurations, in a
   shuffled or alternating order per round, so that the load falls on all of them alike. Three runs
   per cell.
 - **The parser alone.** A small harness (not committed) opens the file with
@@ -127,8 +127,8 @@ The `groupBy` "before, 2 threads" row comes from two sessions (12.6-14.9 s and 1
 
 ## 5. Not verified
 
-- **Other machines.** Only one machine was measured, a 4-processor virtual machine, under
-  concurrent load from another process. Machines with many more processors, and machines with
+- **Other machines.** Only one machine was measured, a 4-processor virtual machine, under a
+  load average of 1.2 to 5.0 from processes that were not recorded. Machines with many more processors, and machines with
   slow disks, where more threads may mean more random reads of a file that is not cached, were
   not measured.
 - **Applications embedding the parser.** Whether one that consumes events on other threads loses
