@@ -47,6 +47,27 @@ class SamplerKindTest {
   }
 
   @Test
+  void asyncProfilerEngineNamesHaveTheirKinds() {
+    // The 4.6 agent's OTLP sample types: the engine name, in count, with the period type beside.
+    assertSame(SamplerKind.CPU, kind("itimer", "count"));
+    assertSame(SamplerKind.CPU, kind("ctimer", "count"));
+    assertSame(SamplerKind.WALL, kind("wall", "count"));
+    assertSame(SamplerKind.ALLOC_COUNT, kind("object_sampler", "count"));
+    assertSame(SamplerKind.ALLOC_COUNT, kind("malloc_tracer", "count"));
+    assertSame(SamplerKind.LOCK, kind("lock_tracer", "count"));
+    // perf_events is CPU only with its CPU-clock period type; a hardware counter is not.
+    assertSame(
+        SamplerKind.CPU,
+        SamplerKind.forSampleType(
+            "perf_events", "count", List.<String[]>of(new String[] {"perf_events", "ns"})));
+    assertSame(SamplerKind.UNKNOWN, kind("perf_events", "count"));
+    assertSame(
+        SamplerKind.UNKNOWN,
+        SamplerKind.forSampleType(
+            "perf_events", "count", List.<String[]>of(new String[] {"perf_events", "events"})));
+  }
+
+  @Test
   void samplesTakesTheKindOfItsPartner() {
     assertSame(
         SamplerKind.CPU,
