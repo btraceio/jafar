@@ -170,6 +170,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **`jfr-mcp --attach` could send the client a second response to its `initialize` (#318).** When
+  the bridge reconnects after losing its session (a restarted daemon, a dropped stream) it replays
+  the client's `initialize` and hides the daemon's reply. It kept one hidden id for all its
+  connections and cleared it when a replay timed out, so a reply that came late, on the stream of
+  the attempt that had given up, went to the client as a second response with the `initialize` id;
+  read while the next attempt waited, it would have released that attempt before its own session was
+  initialized. The hidden id and its wait now belong to each connection, and a timed-out attempt
+  keeps hiding its late reply.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

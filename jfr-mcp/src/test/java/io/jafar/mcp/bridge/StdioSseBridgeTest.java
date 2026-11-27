@@ -460,6 +460,61 @@ class StdioSseBridgeTest {
     assertEquals("s2", delivered.get("result").get("session").asString());
   }
 
+  /**
+   * #318: the bridge kept one swallow id and latch for all its connections, and cleared the id when
+   * a replay timed out. A re-initialize reply that then came late, on the stream of the attempt
+   * that had given up, was relayed to the client as a second response to its initialize (and one
+   * read while a later attempt waited would have released that attempt early).
+   */
+  @Test
+  void aLateReinitializeReplyOnAnAbandonedAttemptIsNotRelayed() throws Exception {
+    CountDownLatch lateReplyHandled = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicBoolean first =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
+    StdioSseBridge.Hooks hooks =
+        new StdioSseBridge.Hooks() {
+          @Override
+          public void replayTimedOut() {
+            if (first.getAndSet(false)) {
+              // The reply arrives after the wait gave up, before the connection is closed
+              daemon.answerInitialize(true); // the next attempt's replay is answered
+              List<String> opened = daemon.sessionsOpened();
+              daemon.emitTo(opened.get(opened.size() - 1), INITIALIZE_REPLY);
+              try {
+                // Relayed (the bug) or dropped as a reply; swallowed, it never comes
+                lateReplyHandled.await(1, TimeUnit.SECONDS);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+            }
+          }
+
+          @Override
+          public void responseHandled(String idKey) {
+            if ("1".equals(idKey)) {
+              lateReplyHandled.countDown(); // relayed or dropped as a reply, not swallowed
+            }
+          }
+        };
+    start(true, FakeSseDaemon.TOKEN, hooks, HANDSHAKE_TIMEOUT);
+    handshake();
+    daemon.answerInitialize(false);
+    daemon.dropAllSessions();
+
+    send("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+
+    JsonNode delivered = next();
+    assertEquals(2, delivered.get("id").asInt(), "a second initialize response: " + delivered);
+    // s2's replay timed out as forced, s3's was answered: a slow runner reads as such, not as #318
+    assertEquals(List.of("s1", "s2", "s3"), daemon.sessionsOpened(), "sessions");
+    assertEquals("s3", delivered.get("result").get("session").asString());
+    assertTrue(stdoutLines.isEmpty(), "unexpected frames: " + stdoutLines);
+  }
+
+  /** What the fake daemon answers to {@code initialize}. */
+  private static final String INITIALIZE_REPLY =
+      "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"fake\",\"version\":\"0\"}}}";
+
   /** Blocks the calling bridge thread until {@code latch} opens; counts {@code done} if it did. */
   private static void awaitQuietly(CountDownLatch latch, CountDownLatch done) {
     try {
