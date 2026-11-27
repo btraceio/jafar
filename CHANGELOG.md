@@ -306,6 +306,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`[gcId = 0.0]`): such `=` queries now match, and `!=` ones match fewer rows. Integral values
   compare exactly, a double or float by its decimal form (a float field `= 0.1` now matches), and a
   string only when it is an ASCII decimal number.
+- **JfrPath operators after `head(n)` lost the projection or were skipped (#305).** With a
+  projection first piped to `head`, `tail`, `filter` or `distinct` (`events/T/heapUsed | head(2)`),
+  whole events came back, and a later `stats()` read the events' first column, whatever it was;
+  `sketch()` after another operator was ignored and the rows printed. The projected values are now
+  the rows: a scalar or string constant (a method name, a thread state) as a `value` column, as a
+  plain projection shows it, an object (`/sampledThread`) as its fields. A query that used the
+  dropped projection's other fields (`/heapUsed | filter(gcId > 0)`) now finds no such field: filter
+  on `value`, or drop the projection. `sketch()` after another operator computes as it does first,
+  and with no values its quantiles are `null`, not NaN, as are `quantiles()`'s.
+  `decorateByTime()`/`decorateByKey()` anywhere but first (after another operator, or on a
+  variable's rows) fail instead of being skipped.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
