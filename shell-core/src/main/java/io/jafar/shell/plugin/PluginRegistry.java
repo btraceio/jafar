@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -120,9 +121,9 @@ final class PluginRegistry {
         localMavenPlugins.size(),
         remotePlugins.size());
 
-    PluginDefinition remote = remotePlugins.get(pluginId.toLowerCase());
-    PluginDefinition localMaven = localMavenPlugins.get(pluginId.toLowerCase());
-    PluginDefinition bundled = bundledPlugins.get(pluginId.toLowerCase());
+    PluginDefinition remote = remotePlugins.get(pluginId.toLowerCase(Locale.ROOT));
+    PluginDefinition localMaven = localMavenPlugins.get(pluginId.toLowerCase(Locale.ROOT));
+    PluginDefinition bundled = bundledPlugins.get(pluginId.toLowerCase(Locale.ROOT));
 
     // Prefer local Maven when it has a newer version than remote (e.g. local SNAPSHOT builds)
     if (localMaven != null && remote != null) {
@@ -165,7 +166,7 @@ final class PluginRegistry {
    * on a network fetch; the install itself refreshes the registry explicitly.
    */
   boolean isKnownOffline(String pluginId) {
-    String id = pluginId.toLowerCase();
+    String id = pluginId.toLowerCase(Locale.ROOT);
     return bundledPlugins.containsKey(id) || localMavenPlugins.containsKey(id);
   }
 
@@ -256,7 +257,7 @@ final class PluginRegistry {
                   if (latestVersion != null) {
                     log.debug("Discovered plugin: {} @ {}", pluginId, latestVersion);
                     plugins.put(
-                        pluginId.toLowerCase(),
+                        pluginId.toLowerCase(Locale.ROOT),
                         new PluginDefinition("io.btrace", artifactId, latestVersion, "local"));
                   }
                 });
@@ -367,7 +368,7 @@ final class PluginRegistry {
           String latestVersion = pluginData.get("latestVersion").getAsString();
           String repository = pluginData.get("repository").getAsString();
           result.put(
-              pluginId.toLowerCase(),
+              pluginId.toLowerCase(Locale.ROOT),
               new PluginDefinition(groupId, artifactId, latestVersion, repository));
         }
       }

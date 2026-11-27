@@ -14,7 +14,16 @@ import java.util.List;
  *
  * <p>Supports VARINT (wire type 0), I64 (wire type 1), LEN (wire type 2), and I32 (wire type 5)
  * fields. Field numbers are hardcoded from
- * opentelemetry/proto/profiles/v1development/profiles.proto; no proto descriptor is needed.
+ * opentelemetry/proto/profiles/v1development/profiles.proto as of opentelemetry-proto v1.10.0, the
+ * layout async-profiler 4.6 writes; no proto descriptor is needed.
+ *
+ * <p>The {@code v1development} layout changed between releases with the same package name and
+ * overlapping field numbers, so an older file parses without error into nonsense. Two of its fields
+ * give an older layout away, and the reader refuses the file then: {@code Profile} field 3 is
+ * {@code time_unix_nano} (fixed64) from v1.8.0, but {@code location_indices} (packed) in v1.7.0,
+ * which async-profiler 4.1 writes; {@code Sample} field 3 is {@code link_index} (an int32) in
+ * v1.10.0, but packed {@code value} in v1.7.0 and packed {@code attribute_indices} in v1.8.0 and
+ * v1.9.0. A v1.8.0 or v1.9.0 sample without attributes is not detected.
  *
  * <p>The file is expected to contain a binary-encoded {@code ProfilesData} message (no gzip
  * wrapper).
@@ -54,6 +63,7 @@ public final class OtlpReader {
   // Sample field numbers
   private static final int SAMPLE_STACK_INDEX = 1;
   private static final int SAMPLE_ATTRIBUTE_INDICES = 2;
+  private static final int SAMPLE_LINK_INDEX = 3; // int32; packed in older layouts
   private static final int SAMPLE_VALUES = 4;
   private static final int SAMPLE_TIMESTAMPS_UNIX_NANO = 5; // packed fixed64
 
@@ -257,6 +267,9 @@ public final class OtlpReader {
 
       switch (wireType) {
         case ProtoUtil.WIRE_LEN -> {
+          if (fieldNumber == PROFILE_TIME_UNIX_NANO) {
+            throw olderLayout("Profile field 3 is packed (v1.7.0 location_indices)");
+          }
           int len = ProtoUtil.readSafeLen(buf, pos);
           pos += ProtoUtil.varintLen(buf, pos);
           int msgEnd = pos + len;
@@ -269,6 +282,9 @@ public final class OtlpReader {
           pos = msgEnd;
         }
         case ProtoUtil.WIRE_VARINT -> {
+          if (fieldNumber == PROFILE_TIME_UNIX_NANO) {
+            throw olderLayout("Profile field 3 is a varint (v1.7.0 location_indices)");
+          }
           long value = ProtoUtil.readVarint(buf, pos);
           pos += ProtoUtil.varintLen(buf, pos);
           switch (fieldNumber) {
@@ -382,10 +398,29 @@ public final class OtlpReader {
             pos = ProtoUtil.skipField(buf, pos, wireType);
           }
         }
+        case SAMPLE_LINK_INDEX -> {
+          if (wireType == ProtoUtil.WIRE_LEN) {
+            throw olderLayout(
+                "Sample field 3 is packed (v1.7.0 value, or v1.8.0/v1.9.0 attribute_indices)");
+          }
+          pos = ProtoUtil.skipField(buf, pos, wireType);
+        }
         default -> pos = ProtoUtil.skipField(buf, pos, wireType);
       }
     }
     return sample;
+  }
+
+  /**
+   * The error for a file in an older {@code v1development} layout: its field numbers overlap with
+   * different meanings, so reading on would give wrong stacks and values without any error.
+   */
+  private static IOException olderLayout(String evidence) {
+    return new IOException(
+        "unsupported OTLP profiles layout: "
+            + evidence
+            + "; this reader reads the opentelemetry-proto v1.10.0 layout (async-profiler 4.6"
+            + " writes it; async-profiler 4.1 writes v1.7.0)");
   }
 
   private static void parseDictionary(byte[] buf, int start, int end, RawDictionary dict)

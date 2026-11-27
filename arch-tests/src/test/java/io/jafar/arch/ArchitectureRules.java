@@ -300,13 +300,17 @@ public final class ArchitectureRules {
    * names. Pass a {@code Locale}: {@code Locale.ROOT} for anything a program, an agent or a bug
    * report reads. Calls, method references and constructor references all count, and an owner
    * matches with its subtypes ({@code DecimalFormat.getInstance} is {@code
-   * NumberFormat.getInstance}). Not frozen: there is no grandfathered debt.
+   * NumberFormat.getInstance}). Case mapping too: {@code String.toLowerCase()}/{@code
+   * toUpperCase()} use the default locale, and under tr-TR {@code "I".toLowerCase()} is a dotless
+   * {@code "ı"}, so case-insensitive filters and {@code Enum.valueOf} lookups stopped matching
+   * (issue #264). Not frozen: there is no grandfathered debt.
    */
   public static ArchRule ruleJ() {
     return classes()
         .should(notFormatWithTheDefaultLocale())
         .as(
-            "j: no class formats with the JVM default locale (String.format/formatted,"
+            "j: no class formats or case-maps with the JVM default locale"
+                + " (String.format/formatted/toLowerCase/toUpperCase,"
                 + " PrintStream/PrintWriter/Console printf/format/readLine/readPassword,"
                 + " MessageFormat, NumberFormat, DecimalFormat(Symbols), DateFormat(Symbols),"
                 + " SimpleDateFormat, Formatter, DateTimeFormatter ofPattern/ofLocalized* and"
@@ -334,6 +338,8 @@ public final class ArchitectureRules {
   static final List<DefaultLocaleMember> DEFAULT_LOCALE_MEMBERS =
       List.of(
           member(String.class, "format", String.class, Object[].class),
+          member(String.class, "toLowerCase"),
+          member(String.class, "toUpperCase"),
           member(String.class, "formatted", Object[].class),
           member(java.io.PrintStream.class, "printf", String.class, Object[].class),
           member(java.io.PrintStream.class, "format", String.class, Object[].class),

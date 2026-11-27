@@ -92,7 +92,9 @@ public final class PprofProfile {
    * @param id unique location identifier
    * @param mappingId the mapping this location belongs to (0 if unknown)
    * @param address virtual memory address
-   * @param lines inline call chain at this address, outermost first
+   * @param lines inline call chain at this address, innermost first: as {@code profile.proto} says,
+   *     the last line is the caller the preceding ones were inlined into (Go's CPU profile writes a
+   *     function inlined into its caller as {@code [callee, caller]})
    * @param isFolded whether the location is folded (multiple frames collapsed)
    */
   public record Location(

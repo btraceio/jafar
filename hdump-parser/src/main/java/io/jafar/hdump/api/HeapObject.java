@@ -17,7 +17,9 @@ public interface HeapObject {
 
   /**
    * Returns the shallow size of this object in bytes. This is the memory directly consumed by this
-   * object, not including referenced objects.
+   * object, not including referenced objects. Capped at {@link Integer#MAX_VALUE} for an object
+   * larger than that (an array of more than about 2 GB); {@link HeapDump#getTotalHeapSize()} counts
+   * such an object's exact size, but retained sizes are built from the capped value.
    */
   int getShallowSize();
 
@@ -27,6 +29,9 @@ public interface HeapObject {
    * be expensive.
    *
    * <p>This method triggers retained size computation on first access if not yet available.
+   *
+   * <p>Built from {@link #getShallowSize()}, so an object larger than {@link Integer#MAX_VALUE}
+   * bytes counts as that many here, and so do the objects that retain it.
    *
    * @return retained size, or -1 if not yet computed
    */

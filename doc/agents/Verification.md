@@ -119,7 +119,7 @@ In this repository the recurring multiplicities are:
 | Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses when `parser-codegen` is not on the classpath, or with `-Djafar.untyped.generated=false`) and generated `EventStreamGenerated` (`parser-codegen`; what `UntypedJafarParser` uses otherwise, `UntypedJafarParserImpl.usesGeneratedReader`) — held equal by `GeneratedUntypedParityTest` |
 | Typed decode paths | build-time `HandlerFactory` (`jafar-processor`) and run-time generated handlers (`parser-codegen`). With both on the classpath a chunk the factory is not attached to is decoded by a run-time handler: right values, wrong path, no error. `:jafar-processor:test` runs without `parser-codegen`; `:jafar-processor:codegenTest` runs with it and asserts which implementation decoded each value |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
-| Chunks | one parsing task per chunk on a pool of `max(availableProcessors - 2, 1)` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
+| Chunks | one parsing task per chunk on a pool of `availableProcessors` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
 
 > **Case file — two query paths.** `CommandDispatcher` runs JfrPath two ways. The LLM host adapter
 > knew only the `JfrSelector` one; the interactive shell builds the dispatcher the other way. Fixed

@@ -227,16 +227,16 @@ class OtlpGoldenDumpTest {
   }
 
   /**
-   * Resolves a wire table index against an API list. Per the OTLP spec, index 0 in each table is a
-   * zero/null sentinel, and the sentinel is not transmitted — the API lists hold exactly the
-   * transmitted entries — so wire index {@code n} is API entry {@code n - 1}, and index 0 (and any
-   * out-of-range index) resolves to nothing.
+   * Resolves a wire table index against an API list. Per the OTLP spec (v1.10.0: "MUST be the zero
+   * value ... and present") index 0 in each table is the transmitted zero value, so indices are
+   * absolute: wire index {@code n} is API entry {@code n}. Index 0 (the zero value) and any
+   * out-of-range index resolve to nothing.
    */
   private static <T> T at(List<T> table, int wireIndex) {
-    if (wireIndex <= 0 || wireIndex > table.size()) {
+    if (wireIndex <= 0 || wireIndex >= table.size()) {
       return null;
     }
-    return table.get(wireIndex - 1);
+    return table.get(wireIndex);
   }
 
   /** The sample's stack, resolved through the stack table to its frame sequence. */

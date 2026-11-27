@@ -5,6 +5,7 @@ import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -28,7 +29,7 @@ public final class MetadataSubpropCompleter implements ContextCompleter {
     String prefix = "metadata/" + eventType + "/";
 
     for (String subprop : SUBPROPS) {
-      if (subprop.toLowerCase().startsWith(partial.toLowerCase())) {
+      if (subprop.toLowerCase(Locale.ROOT).startsWith(partial.toLowerCase(Locale.ROOT))) {
         candidates.add(new Candidate(prefix + subprop, subprop, null, null, null, null, true));
       }
     }

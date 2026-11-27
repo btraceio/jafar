@@ -14,7 +14,7 @@ import java.nio.file.Paths;
  * Registered {@link JFRHandler handlers} receive fully deserialized event instances.
  *
  * <p><b>Threading.</b> A recording's chunks are parsed in parallel, one task per chunk on a pool of
- * {@code max(availableProcessors - 2, 1)} threads, so handlers are called concurrently from several
+ * {@code availableProcessors} threads, so handlers are called concurrently from several
  * parser-owned threads and must be thread-safe. Events are delivered in file order within one
  * chunk; there is no order between chunks. {@link Control.ChunkInfo#chunkId()} is unique per parsed
  * chunk within the JVM, so it can key per-chunk state; it is not the chunk's position in the file.
