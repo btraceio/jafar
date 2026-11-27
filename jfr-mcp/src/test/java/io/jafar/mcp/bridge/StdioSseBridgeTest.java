@@ -511,6 +511,33 @@ class StdioSseBridgeTest {
     assertTrue(stdoutLines.isEmpty(), "unexpected frames: " + stdoutLines);
   }
 
+  /**
+   * #321: a stream that ended while its replayed initialize waited for an answer left the wait to
+   * run out (10 s in production) before the request was retried on a new session.
+   */
+  @Test
+  void aStreamThatEndsDuringTheReplayIsRetriedAtOnce() throws Exception {
+    Duration timeout = Duration.ofSeconds(8); // next() waits 10 s: without the fix it still answers
+    start(true, FakeSseDaemon.TOKEN, null, timeout);
+    handshake();
+    daemon.answerInitialize(false);
+    daemon.dropAllSessions();
+
+    send("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+    awaitReceived("initialize", 2); // s1's, and the replay on s2, now waiting
+    daemon.answerInitialize(true);
+    long dropped = System.nanoTime();
+    daemon.dropAllSessions(); // s2's stream ends during its replay
+
+    JsonNode delivered = next();
+    long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - dropped);
+    assertEquals(2, delivered.get("id").asInt(), "unexpected frame: " + delivered);
+    assertEquals("s3", delivered.get("result").get("session").asString());
+    assertTrue(
+        millis < 4_000,
+        "retried " + millis + " ms after the stream ended; the wait is " + timeout.toMillis());
+  }
+
   /** What the fake daemon answers to {@code initialize}. */
   private static final String INITIALIZE_REPLY =
       "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"fake\",\"version\":\"0\"}}}";

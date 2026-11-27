@@ -170,6 +170,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **`jfr-mcp --attach` waited out its handshake timeout when a reconnect's stream ended (#321).**
+  If the daemon's stream ended while the bridge waited for the answer to its replayed `initialize`,
+  nothing woke the wait: the client's request waited the whole timeout (10 seconds) before the bridge
+  tried a new session. The wait now ends with the stream, and the retry follows at once.
 - **`jfr-mcp --attach` could send the client a second response to its `initialize` (#318).** When
   the bridge reconnects after losing its session (a restarted daemon, a dropped stream) it replays
   the client's `initialize` and hides the daemon's reply. It kept one hidden id for all its
