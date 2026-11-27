@@ -375,7 +375,7 @@ public final class ProfileCompare {
                 + (side == baseline ? "baseline" : "candidate")
                 + " ("
                 + sampler(side)
-                + " has no count column, and no period in its unit to divide by): shares are"
+                + ": neither a column nor the period gives the number of samples): shares are"
                 + " reported, but no change is called significant.");
       }
     }

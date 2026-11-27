@@ -20,10 +20,16 @@ import java.util.regex.Pattern;
  * <p>Each OTLP sample is converted to a row map with the following fields:
  *
  * <ul>
- *   <li>One field named after the profile's {@code sampleType.type()} holding the first sample
- *       value (or 0 if {@code values} is empty).
+ *   <li>One field named after the profile's {@code sampleType.type()} holding the sample's value:
+ *       the sum of its {@code values}, or, when it has none, the number of its timestamps (each
+ *       counts 1, as opentelemetry-proto v1.10.0 says). A producer may write one value per
+ *       timestamp: async-profiler's {@code jfrconv -o otlp} does, and writes none at all for a
+ *       single-event recording.
+ *   <li>{@code sampleType}: that type name, to filter one profile of a file that holds several.
  *   <li>{@code stackTrace}: list of frame maps with {@code name}, {@code filename}, and {@code
- *       line} keys, ordered from leaf to root, resolved through the shared dictionary.
+ *       line} keys, ordered from leaf to root, resolved through the shared dictionary. Indices are
+ *       absolute: every table holds its zero value at index 0 (async-profiler 4.6 writes it), so
+ *       index 0 resolves to nothing and index {@code n} is entry {@code n}.
  *   <li>One field per sample attribute, keyed by the attribute's key string.
  * </ul>
  */
@@ -75,7 +81,7 @@ public final class OtlpPathEvaluator {
         Map<String, Object> row = new LinkedHashMap<>();
 
         // Value field + sampleType meta-field for explicit filtering
-        long value = sample.values().isEmpty() ? 0L : sample.values().get(0);
+        long value = value(sample);
         if (!valueTypeName.isEmpty()) {
           row.put(valueTypeName, value);
           row.put("sampleType", valueTypeName);
@@ -86,10 +92,10 @@ public final class OtlpPathEvaluator {
             buildStack(sample.stackIndex(), stackTable, locationTable, functionTable);
         row.put("stackTrace", stack);
 
-        // Attribute fields (attrIdx is 1-based; index 0 = null sentinel)
+        // Attribute fields (absolute indices; index 0 is the zero value)
         for (int attrIdx : sample.attributeIndices()) {
-          if (attrIdx > 0 && attrIdx <= attributeTable.size()) {
-            OtlpProfile.Attribute attr = attributeTable.get(attrIdx - 1);
+          if (attrIdx > 0 && attrIdx < attributeTable.size()) {
+            OtlpProfile.Attribute attr = attributeTable.get(attrIdx);
             if (attr.key() != null && !attr.key().isEmpty()) {
               row.put(attr.key(), attr.value() != null ? attr.value() : "");
             }
@@ -107,19 +113,19 @@ public final class OtlpPathEvaluator {
       List<OtlpProfile.Stack> stackTable,
       List<OtlpProfile.Location> locationTable,
       List<OtlpProfile.Function> functionTable) {
-    // All table indices are 1-based; index 0 = null sentinel
-    if (stackIndex <= 0 || stackIndex > stackTable.size()) {
+    // Absolute indices: index 0 of every table is its zero value, so it resolves to nothing
+    if (stackIndex <= 0 || stackIndex >= stackTable.size()) {
       return Collections.emptyList();
     }
-    OtlpProfile.Stack stack = stackTable.get(stackIndex - 1);
+    OtlpProfile.Stack stack = stackTable.get(stackIndex);
     List<Map<String, Object>> frames = new ArrayList<>();
     for (int locIdx : stack.locationIndices()) {
-      if (locIdx <= 0 || locIdx > locationTable.size()) continue;
-      OtlpProfile.Location loc = locationTable.get(locIdx - 1);
+      if (locIdx <= 0 || locIdx >= locationTable.size()) continue;
+      OtlpProfile.Location loc = locationTable.get(locIdx);
       for (OtlpProfile.Line line : loc.lines()) {
         int fnIdx = line.functionIndex();
-        if (fnIdx <= 0 || fnIdx > functionTable.size()) continue;
-        OtlpProfile.Function fn = functionTable.get(fnIdx - 1);
+        if (fnIdx <= 0 || fnIdx >= functionTable.size()) continue;
+        OtlpProfile.Function fn = functionTable.get(fnIdx);
         Map<String, Object> frame = new LinkedHashMap<>();
         frame.put("name", fn.name().isEmpty() ? fn.systemName() : fn.name());
         frame.put("filename", fn.filename());
@@ -128,6 +134,23 @@ public final class OtlpPathEvaluator {
       }
     }
     return frames;
+  }
+
+  /**
+   * A sample's value in its profile's sample type: the sum of its values, or the number of its
+   * timestamps when it has no values (v1.10.0: "consumers must assume the value is 1 for each
+   * point"). A producer may write one value per timestamp, so the first value alone undercounts.
+   */
+  public static long value(OtlpProfile.Sample sample) {
+    List<Long> values = sample.values();
+    if (values.isEmpty()) {
+      return sample.timestampsUnixNano().size();
+    }
+    long sum = 0;
+    for (long v : values) {
+      sum += v;
+    }
+    return sum;
   }
 
   // ---- Predicate evaluation ----

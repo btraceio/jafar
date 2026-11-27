@@ -5,6 +5,7 @@ import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.jline.reader.Candidate;
 
@@ -25,11 +26,11 @@ public final class MultiEventTypeCompleter implements ContextCompleter {
   public void complete(
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
     String partial = ctx.partialInput();
-    String lowerPartial = partial.toLowerCase();
+    String lowerPartial = partial.toLowerCase(Locale.ROOT);
 
     Set<String> eventTypes = metadata.getEventTypes();
     for (String type : eventTypes) {
-      if (type.toLowerCase().startsWith(lowerPartial)) {
+      if (type.toLowerCase(Locale.ROOT).startsWith(lowerPartial)) {
         // Don't add trailing space - user may want to add | for more types or ) to close
         candidates.add(noSpace(type));
       }

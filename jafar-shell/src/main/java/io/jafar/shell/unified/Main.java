@@ -19,8 +19,8 @@ import picocli.CommandLine;
       "script <file|-> [args...] [--continue-on-error] [-b <backend>]: run a script in this",
       "  shell, so it can open recordings, heap dumps and profiles.",
       "JFR commands: show, metadata, chunks, constants (cp).",
-      "compare <baseline> <candidate> [options]: compare two JFR recordings or pprof",
-      "  profiles, in any pairing (see 'jafar-shell compare --help').",
+      "compare <baseline> <candidate> [options]: compare two JFR recordings, pprof or",
+      "  OTLP profiles, in any pairing (see 'jafar-shell compare --help').",
       "JFR options: --backend, --plugin-dir, --install-plugin."
     })
 public final class Main implements Callable<Integer> {
@@ -30,7 +30,7 @@ public final class Main implements Callable<Integer> {
   // -b/--backend picks the backend for recordings there. (The jfr-shell jbang alias launches
   // io.jafar.shell.Main directly and never comes through here.) 'compare' runs there too: it
   // picks each side's reader from the modules this jar's ServiceLoader finds, so through this jar
-  // it compares pprof profiles as well as recordings.
+  // it compares pprof and OTLP profiles as well as recordings.
   private static final Set<String> JFR_COMMANDS =
       Set.of("show", "metadata", "chunks", "constants", "cp", "compare");
   private static final Set<String> JFR_OPTIONS =

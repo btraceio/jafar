@@ -11,9 +11,13 @@
 #   HEAD_SHA        the perf-ab run's head commit
 #   PULL_REQUESTS   the run's pull_requests array, as JSON (empty for a PR from a fork)
 #
-# Which PR: the one in PULL_REQUESTS, else the open PR whose head is HEAD_SHA. The artifact is
-# never asked: it is the PR's own output, and a PR that could name another PR's number could
-# write on it. Exactly one PR must match; none or several is an error, and nothing is posted.
+# Which PR: the one in PULL_REQUESTS, else the PR whose head is HEAD_SHA among those GitHub
+# associates with that commit (GET /repos/{repo}/commits/{sha}/pulls). That lookup covers a PR
+# from a fork, for which PULL_REQUESTS is empty, and a PR merged or closed while the run was still
+# going, which GitHub drops from PULL_REQUESTS: a 46-minute perf-ab run on #315 finished after its
+# PR had merged, and the open-PR listing used before found nothing. The artifact is never asked:
+# it is the PR's own output, and a PR that could name another PR's number could write on it.
+# Exactly one PR must match; none or several is an error, and nothing is posted.
 #
 # Which comment: the newest comment by github-actions[bot] that starts with the marker is
 # edited in place; without one, a comment is created. Other comments are never touched.
@@ -81,7 +85,9 @@ def find_pr(api, repo, head_sha, pull_requests):
             if isinstance(pr, dict) and isinstance(pr.get("number"), int):
                 numbers.append(pr["number"])
     if not numbers:
-        for pr in api.pages(f"/repos/{repo}/pulls?state=open"):
+        # Open, merged or closed; only a PR whose head is exactly the run's commit qualifies, not
+        # one that merely contains it.
+        for pr in api.pages(f"/repos/{repo}/commits/{head_sha}/pulls"):
             head = pr.get("head") if isinstance(pr, dict) else None
             if isinstance(head, dict) and head.get("sha") == head_sha and isinstance(pr.get("number"), int):
                 numbers.append(pr["number"])
