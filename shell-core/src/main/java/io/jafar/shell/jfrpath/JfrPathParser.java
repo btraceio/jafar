@@ -181,6 +181,9 @@ public final class JfrPathParser {
     try {
       io.jafar.shell.jfrpath.JfrPath.BoolExpr expr = parseBoolExpr();
       return new io.jafar.shell.jfrpath.JfrPath.ExprPredicate(expr);
+    } catch (NotAValueFunction ex) {
+      // The legacy form cannot read name(...) either: its error would hide this one
+      throw ex;
     } catch (IllegalArgumentException ex) {
       pos = start;
       return parseLegacyPredicate();
@@ -276,14 +279,26 @@ public final class JfrPathParser {
     }
     int save = pos;
     String name = readIdent();
+    io.jafar.shell.jfrpath.JfrPath.ValueExpr ve;
     if (!name.isEmpty() && peek() == '(') {
       pos++;
       var args = parseFuncArgs();
       expect(')');
-      return new io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr(name, args);
+      skipWs();
+      if (!startsComparison()) {
+        return new io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr(name, args);
+      }
+      // A value function compared, as documented: [len(path)>50]. Read as a boolean function,
+      // the comparison after it failed to parse (#303)
+      if (!VALUE_FUNCTIONS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+        throw new NotAValueFunction(
+            error(name + "() is not a value function and cannot be compared").getMessage());
+      }
+      ve = new io.jafar.shell.jfrpath.JfrPath.FuncValueExpr(name, args);
+    } else {
+      pos = save;
+      ve = parseValueExpr();
     }
-    pos = save;
-    var ve = parseValueExpr();
     skipWs();
     Op op;
     if (match("=~") || match("~")) op = Op.REGEX;
@@ -297,6 +312,22 @@ public final class JfrPathParser {
     skipWs();
     Object lit = parseLiteral();
     return new io.jafar.shell.jfrpath.JfrPath.CompExpr(ve, op, lit);
+  }
+
+  /** A boolean function compared ({@code contains(...) = true}): reported as is, no fallback. */
+  private static final class NotAValueFunction extends IllegalArgumentException {
+    NotAValueFunction(String message) {
+      super(message);
+    }
+  }
+
+  /** The functions with a value to compare (MatchEngine.evalValueExpr). */
+  private static final java.util.Set<String> VALUE_FUNCTIONS = java.util.Set.of("len");
+
+  /** Whether a comparison operator ({@code = == != < <= > >= ~ =~}) starts here. */
+  private boolean startsComparison() {
+    int c = peek();
+    return c == '=' || c == '!' || c == '<' || c == '>' || c == '~';
   }
 
   private io.jafar.shell.jfrpath.JfrPath.ValueExpr parseValueExpr() {
