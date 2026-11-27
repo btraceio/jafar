@@ -195,6 +195,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **`jfr_use`'s summary called recordings healthy without grounds (#297).** `overallAssessment`
+  weighed only the resources' saturation shares, which only the CPU section reports (thread-state
+  blocking or container throttling, in percent). With none (a JDK recording outside a container,
+  whose CPU saturation is not measured, or one without `jdk.CPULoad` whose samples are all RUNNABLE) it said `HEALTHY`,
+  and the insights "system appears healthy"; and it said `HEALTHY` or `ACCEPTABLE` beside the
+  bottlenecks the insights listed (memory pressure, contention, queue saturation). Any listed
+  bottleneck now makes it `NEEDS_ATTENTION`, named in `summary.bottlenecks`; with no share and no
+  bottleneck it is `UNKNOWN`, with a `note` pointing to each resource's utilization and assessment,
+  and the insight says there is no verdict. A measured share of 0% with no bottleneck is still
+  `HEALTHY`.
 - **The thread-state analyses never matched a JDK recording's states (#276).** JDK recordings name
   HotSpot's thread statuses (`STATE_RUNNABLE`, `STATE_BLOCKED_ON_MONITOR_ENTER`, `STATE_SLEEPING`,
   ...), and `jfr_tsa` (and the `tsa` analysis of jfr-shell's `ask`), its thread assessments and
