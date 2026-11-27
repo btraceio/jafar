@@ -14,6 +14,7 @@ import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 import org.jline.reader.Completer;
 import org.jline.reader.LineReader;
@@ -67,7 +68,7 @@ public final class PprofShellCompleter implements Completer {
       return;
     }
 
-    String cmd = line.words().get(0).toLowerCase();
+    String cmd = line.words().get(0).toLowerCase(Locale.ROOT);
 
     if ("open".equals(cmd)) {
       if (reader != null) {

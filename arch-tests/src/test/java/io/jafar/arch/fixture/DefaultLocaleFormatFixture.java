@@ -39,6 +39,8 @@ public final class DefaultLocaleFormatFixture {
   public static void all(PrintWriter w, Console c, DateTimeFormatterBuilder b, Object v) {
     String.format("%.1f", v);
     "%.1f".formatted(v);
+    "Id".toLowerCase();
+    "id".toUpperCase();
     System.out.printf("%.1f", v);
     System.out.format("%.1f", v);
     w.printf("%.1f", v);
