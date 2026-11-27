@@ -122,6 +122,73 @@ class CrossTypeJoinTest {
     assertTrue(allocStats.isEmpty());
   }
 
+  @Test
+  void aHiddenClassMatchesItsAllocationsAcrossTheTwoSeparators(
+      @org.junit.jupiter.api.io.TempDir Path dir) throws Exception {
+    // #280: one run's heap dump names the class Main$$Lambda+0x...; its recording, through
+    // Class.getName(), Main$$Lambda/0x... The address is the same; two lambdas keep apart.
+    Path dump =
+        new io.jafar.hdump.shell.MinimalHprofBuilder()
+            .addClass(1, "java/lang/Object")
+            .addClass(2, "com/example/Main$$Lambda+0x000000001a", 1)
+            .addClass(3, "com/example/Main$$Lambda+0x000000002b", 1)
+            // a dump that writes Class.getName()'s '/', read as '.0x' once dotted
+            .addClass(4, "com/example/Main$$Lambda/0x000000003c", 1)
+            .addInstance(100, 2)
+            .addInstance(101, 3)
+            .addInstance(102, 4)
+            .write(dir);
+    List<Map<String, Object>> jfrEvents =
+        List.of(
+            // the parser's nested objectClass shape (as AllocationAggregatorTest models it)
+            nestedAllocEvent("com/example/Main$$Lambda/0x000000001a", 16),
+            nestedAllocEvent("com/example/Main$$Lambda/0x000000001a", 16),
+            nestedAllocEvent("com/example/Main$$Lambda/0x000000001a", 16),
+            allocEvent("com/example/Main$$Lambda/0x000000002b", 16, null),
+            allocEvent("com/example/Main$$Lambda/0x000000003c", 16, null),
+            allocEvent("com/example/Main$$Lambda/0x000000003c", 16, null));
+    CrossSessionContext ctx =
+        mockContext(new MockSession("jfr", Path.of("recording.jfr")), new MockEvaluator(jfrEvents));
+
+    List<Map<String, Object>> rows;
+    try (io.jafar.hdump.shell.HeapSession heap = io.jafar.hdump.shell.HeapSession.open(dump)) {
+      rows =
+          HdumpPathEvaluator.evaluate(
+              heap,
+              HdumpPathParser.parse(
+                  "classes | join(session=1, root=\"jdk.ObjectAllocationSample\")"),
+              ctx);
+    }
+
+    Map<String, Object> first = rowNamed(rows, "com.example.Main$$Lambda+0x000000001a");
+    Map<String, Object> second = rowNamed(rows, "com.example.Main$$Lambda+0x000000002b");
+    assertEquals(3L, first.get("allocCount"), rows.toString());
+    assertEquals(1L, second.get("allocCount"), rows.toString());
+    Map<String, Object> third =
+        rows.stream()
+            .filter(r -> String.valueOf(r.get("name")).endsWith("0x000000003c"))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no 0x3c in " + rows));
+    assertEquals(2L, third.get("allocCount"), rows.toString());
+  }
+
+  @Test
+  void theHiddenClassKeyKeepsTheAddress() {
+    assertEquals("m.A$$Lambda+0x1a", HdumpPathEvaluator.hiddenClassKey("m.A$$Lambda.0x1a"));
+    assertEquals("m.A$$Lambda+0x1a", HdumpPathEvaluator.hiddenClassKey("m.A$$Lambda/0x1a"));
+    assertEquals("m.A$$Lambda+0x1a", HdumpPathEvaluator.hiddenClassKey("m.A$$Lambda+0x1a"));
+    assertEquals("m.A$$Lambda+0x1a[][]", HdumpPathEvaluator.hiddenClassKey("m.A$$Lambda.0x1a[][]"));
+    assertEquals("m.Hex0x10", HdumpPathEvaluator.hiddenClassKey("m.Hex0x10"));
+    assertEquals("m.A$$Lambda.0x1aZ", HdumpPathEvaluator.hiddenClassKey("m.A$$Lambda.0x1aZ"));
+  }
+
+  private static Map<String, Object> rowNamed(List<Map<String, Object>> rows, String name) {
+    return rows.stream()
+        .filter(r -> name.equals(r.get("name")))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("no " + name + " in " + rows));
+  }
+
   // === Helper methods ===
 
   private static Map<String, Object> classRow(String name, int instanceCount) {
@@ -129,6 +196,13 @@ class CrossTypeJoinTest {
     row.put("name", name);
     row.put("instanceCount", (long) instanceCount);
     row.put("instanceSize", 24L);
+    return row;
+  }
+
+  private static Map<String, Object> nestedAllocEvent(String className, long weight) {
+    Map<String, Object> row = new HashMap<>();
+    row.put("objectClass", Map.of("name", Map.of("value", Map.of("string", className))));
+    row.put("weight", weight);
     return row;
   }
 

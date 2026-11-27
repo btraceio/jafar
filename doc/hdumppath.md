@@ -837,6 +837,8 @@ gcroots | groupBy(type, agg=count) | join(session=1)
 
 When `root=` specifies a JFR event type (e.g. `jdk.ObjectAllocationSample`), the join
 queries the JFR session for those events and aggregates them by class name.
+A hidden class (a lambda) matches when the recording and the dump come from the same run: its
+name carries an address, which the two spell with `/` and `+` and which differs between runs.
 
 **Enrichment columns added:**
 
