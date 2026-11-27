@@ -412,6 +412,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   analyze ..." instead of no data. They now query only the types the recording declares, and with no
   heap figures the memory section's `assessment` is `UNKNOWN` instead of `HEALTHY`. The CPU
   section's `jdk.CPULoad` query gets the same guard in PR #292.
+- **HdumpPath `gcroots` rows of thread objects had no `threadSerial` (#302).** The parser keeps a
+  THREAD_OBJ root's serial, but behind `getThreadObjSerial()`; the row read `getThreadSerial()`,
+  which is -1 for THREAD_OBJ, so `gcroots/THREAD_OBJ[threadSerial > 0]` (doc/hdumppath.md) matched
+  nothing. THREAD_OBJ rows now carry it; HotSpot gives a thread's THREAD_OBJ and frame roots the
+  same serial, so `groupBy(threadSerial)` counts now include each thread's object, and threads with
+  no frame roots appear.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
