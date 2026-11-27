@@ -30,8 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as stored, and a trailing `:<line>` (jfr2pprof's `includeLineNumbers`) is not part of a frame's
   name. pprof records no truncation, so inclusive moves are judged with a note. The comparison is now `ProfileCompare` in
   `io.jafar.shell.core.compare`; `JfrCompare` reads recordings, `PprofProfileReader` (`pprof-shell`)
-  reads profiles, and a module offers its reader through `ShellModule.profileReader()`. OTLP is not
-  covered yet. See [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
+  reads profiles, and a module offers its reader through `ShellModule.profileReader()`. See
+  [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
+- **OTLP profiles in `compare` and `profile_compare`** - an OTLP profiles file (`.otlp`) can be
+  compared against a JFR recording, a pprof profile or another OTLP file: `compare` reads it from
+  the `jafar-shell` jar, and `profile_compare` takes `{format: otlp, sessionId}` for a session
+  `otlp_open` opened. `OtlpProfileReader` (`otlp-shell`) follows the pprof reader's rules. A file's
+  sample types are its profiles' distinct `type/unit` pairs (`--list-sample-types`,
+  `--sample-type`); the selected type reads every profile of that type. Counts come from a `count`
+  sample type (not an allocation or lock one), one per sample timestamp, or values over the period.
+  async-profiler's agent sample-type names (`perf_events` with a `perf_events/ns` period, `itimer`,
+  `ctimer`, `wall`, `object_sampler`, `malloc_tracer`, `lock_tracer`) have their kinds, and its
+  frame-type marks (`byte[]_[i]`, `_[k]`) are not part of a frame's name. Checked against real
+  async-profiler 4.6 files (`otlp-shell/src/test/resources/real/`): one run as JFR, OTLP and pprof
+  gives identical frames and counts
 - **Work budgets** (`gradle/work-budgets.properties`, the `workTest` tasks of `parser-core` and
   `parser-codegen`) - a ratchet gate on how much work a parse does, counted rather than timed:
   chunks started and read, events read and decoded, varints read, values skipped, constant-pool
@@ -164,6 +176,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Changed
+- **Compare keys native, C++ and kernel JFR frames by their symbol alone** - async-profiler's JFR
+  gives a C++ frame its library as the class, so `jfr_compare` and `jfr-shell compare` named it
+  `libjvm.so.Compile::Compile`, where its pprof conversion (and every other pprof producer) has
+  `Compile::Compile`, and a recording compared with its own conversion mismatched on every such
+  frame. Frames whose JFR frame type is `Native`, `C++` or `Kernel` now drop the class. This changes
+  `jfr_compare`'s `method` values for those frames
+- **The parser uses one thread per processor by default** - `StreamingChunkParser.defaultParallelism()`
+  was `max(availableProcessors - 2, 1)`, 2 threads on 4 processors; it is now
+  `availableProcessors`. On a 4-processor machine and a 4.16 GB recording, 4 threads walked the
+  headers, decoded one type and decoded every event 1.6-1.7x faster than 2, and 6 or 8 were no
+  faster than 4. Pass `ParsingContext.withParallelism(n)` to keep processors free. The allocation
+  gate now pins `-XX:ActiveProcessorCount=2` (still a 2-thread pool). See
+  [doc/performance/ParserParallelism.md](doc/performance/ParserParallelism.md)
 - **`jfr_compare` and `jfr-shell compare` report dotted class names** - a frame's `method` was the
   class name as the recording stores it, `java/lang/String.indexOf`; it is now
   `java.lang.String.indexOf`, so it matches the same frame read from a pprof profile. Native frames
@@ -198,6 +223,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a recording that does not declare `jdk.CPULoad` at all (one not written by the JDK) failed with
   "Event type 'jdk.CPULoad' not found"; it now falls back to the thread states too (the memory and
   I/O sections still fail that way: #291).
+- **`jfr-mcp --attach` waited out its handshake timeout when a reconnect's stream ended (#321).**
+  If the daemon's stream ended while the bridge waited for the answer to its replayed `initialize`,
+  nothing woke the wait: the client's request waited the whole timeout (10 seconds) before the bridge
+  tried a new session. The wait now ends with the stream, and the retry follows at once.
+- **OTLP: stacks, attributes and values of real files** - OtlpPath (`show samples`, the `otlp_*`
+  MCP tools) took OTLP table indices as one-based and resolved every stack, location, function and
+  attribute to the entry before it; opentelemetry-proto v1.10.0 puts each table's zero value at
+  index 0 and async-profiler 4.6 writes it, so indices are absolute. A sample's value is now the sum
+  of its values, or its timestamp count when it has none (`jfrconv -o otlp` writes one value per
+  timestamp, or none), not its first value. The OTLP parser refuses older `v1development` layouts
+  (opentelemetry-proto v1.7.0, which async-profiler 4.1 writes; v1.8.0 and v1.9.0 samples with
+  attributes) instead of misreading them
+- **`groupBy`, `stats()`, `quantiles()` and `timerange()` got slower with more parser threads** -
+  each updated one shared accumulator under a lock for every event. They now accumulate per thread
+  and merge after the parse. On a 4.16 GB recording at the new default of 4 threads:
+  `groupBy(sampledThread/javaName)` 12.6-16.7 s -> 7.1-8.6 s, `timerange()` 15.3-18.9 s -> 8.6-9.4 s,
+  `quantiles()` 15.7-18.5 s -> 11.5-12.6 s, `stats()` 7.9-10.1 s -> 5.7-6.1 s; same results
+- **Compare judged Go mutex and block profiles on scaled contention counts** - Go writes period 1
+  for both whatever the sampling rate, and each sampled contention is already multiplied by the
+  rate, so `contentions` divided by the period read as a count of samples (1,430 "samples" for 286
+  sampled events at `SetMutexProfileFraction(5)`) and moves were called significant. Lock columns,
+  like allocation ones, now never give counts: shares are reported, nothing is judged. Found on real
+  Go 1.24 profiles, now fixtures in `pprof-shell/src/test/resources/real/`
+- **async-profiler's allocation, lock and native-memory pprof columns had no sampler kind** -
+  `jfrconv` (4.1) names them `allocations`, `locks` and `malloc`; read as `UNKNOWN`, an
+  async-profiler allocation profile was compared against a CPU profile with a note instead of being
+  refused. They are now allocation and lock kinds. The "observation counts unknown" reason and note
+  no longer claim a count column or period is missing when the profile has one that does not count
+  samples
+- **`jfr-mcp --attach` could send the client a second response to its `initialize` (#318).** When
+  the bridge reconnects after losing its session (a restarted daemon, a dropped stream) it replays
+  the client's `initialize` and hides the daemon's reply. It kept one hidden id for all its
+  connections and cleared it when a replay timed out, so a reply that came late, on the stream of
+  the attempt that had given up, went to the client as a second response with the `initialize` id;
+  read while the next attempt waited, it would have released that attempt before its own session was
+  initialized. The hidden id and its wait now belong to each connection, and a timed-out attempt
+  keeps hiding its late reply.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
@@ -259,6 +321,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The buffer is not unmapped at close directly: event values resolve constant-pool entries from it
   lazily, and a read after an explicit unmap could crash the JVM
+- **A closed recording could stay mapped after `jfr_close` (#279).** `CloseReleasesMappedFileTest`
+  failed on CI: the file was still mapped after the collection `jfr_close` requests. It was not
+  reproduced on demand (6 of 150 runs once, then 0 of 750), so the two changes below close the gaps
+  found rather than a confirmed cause:
+  - `StreamingChunkParser.close()` shut its chunk parsing pool down without waiting, so its worker
+    threads, whose thread-locals hold the last parse's data, could outlive the call. When a parse
+    failed, `close()` could return while another chunk's task was still running on the file.
+    `close()` now waits up to 5 seconds in all for the pool to terminate and its threads to end,
+    then interrupts the tasks still running and logs a warning for each thread still alive. An
+    interrupted `close()` stops waiting and keeps the interrupt; a `close()` called from one of the
+    parser's own threads (a listener) does not wait. The threads are now named
+    `jafar-chunk-parser-<n>`, numbered across parsers.
+  - `jfr_close`, `hdump_close` and the `--attach` server's release of disconnected clients' sessions
+    request a follow-up collection 500 ms after the last close, on a daemon thread, in case a buffer
+    was still briefly held while the first collection ran. It is requested on every close (closes
+    within 500 ms of each other share one): there is no portable way to ask the JVM whether the file
+    is still mapped
 - **Numbers in tool payloads, reports and shell output followed the JVM default locale (#224).**
   On a ru-RU or de-DE host `jfr_summary` returned `"pct": "66,6%"` and `"topMethod": "... (34,9%)"`,
   `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON

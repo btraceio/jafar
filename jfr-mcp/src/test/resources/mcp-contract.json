@@ -730,7 +730,7 @@
     }
   }, {
     "name" : "profile_compare",
-    "description" : "Compares a candidate profile against a baseline where either side may be a JFR recording or a pprof profile: per-frame self-time shares (and inclusive shares on request), normalised to each side's total, with jfr_compare's significance rule and findings. When a pprof side is involved, samplers that measure different things (CPU against wall clock) are refused unless allowMixedSamplers, and allocation against CPU or wall always; two JFR sides get jfr_compare's note instead, as jfr-shell compare does. Event rates only when both sides are JFR. The top-level sampleType applies to pprof sides only; a JFR side takes its event type from its own sampleType, or detects it. Open each side with jfr_open or pprof_open first.",
+    "description" : "Compares a candidate profile against a baseline where either side may be a JFR recording, a pprof profile or an OTLP profiles file: per-frame self-time shares (and inclusive shares on request), normalised to each side's total, with jfr_compare's significance rule and findings. When a pprof or OTLP side is involved, samplers that measure different things (CPU against wall clock) are refused unless allowMixedSamplers, and allocation against CPU or wall always; two JFR sides get jfr_compare's note instead, as jfr-shell compare does. Event rates only when both sides are JFR. The top-level sampleType applies to pprof and OTLP sides only; a JFR side takes its event type from its own sampleType, or detects it. Open each side with jfr_open, pprof_open or otlp_open first.",
     "inputSchema" : {
       "type" : "object",
       "properties" : {
@@ -739,8 +739,8 @@
           "properties" : {
             "format" : {
               "type" : "string",
-              "enum" : [ "jfr", "pprof" ],
-              "description" : "The side's format: jfr (opened with jfr_open) or pprof (opened with pprof_open)."
+              "enum" : [ "jfr", "pprof", "otlp" ],
+              "description" : "The side's format: jfr (opened with jfr_open), pprof (opened with pprof_open) or otlp (opened with otlp_open)."
             },
             "sessionId" : {
               "type" : "string",
@@ -748,7 +748,7 @@
             },
             "sampleType" : {
               "type" : "string",
-              "description" : "This side's sample type: a JFR event type, or a pprof type or type/unit. Overrides the top-level sampleType."
+              "description" : "This side's sample type: a JFR event type, or a pprof or OTLP type or type/unit (for OTLP, the profiles of that sample type). Overrides the top-level sampleType."
             }
           },
           "required" : [ "format" ]
@@ -758,8 +758,8 @@
           "properties" : {
             "format" : {
               "type" : "string",
-              "enum" : [ "jfr", "pprof" ],
-              "description" : "The side's format: jfr (opened with jfr_open) or pprof (opened with pprof_open)."
+              "enum" : [ "jfr", "pprof", "otlp" ],
+              "description" : "The side's format: jfr (opened with jfr_open), pprof (opened with pprof_open) or otlp (opened with otlp_open)."
             },
             "sessionId" : {
               "type" : "string",
@@ -767,14 +767,14 @@
             },
             "sampleType" : {
               "type" : "string",
-              "description" : "This side's sample type: a JFR event type, or a pprof type or type/unit. Overrides the top-level sampleType."
+              "description" : "This side's sample type: a JFR event type, or a pprof or OTLP type or type/unit (for OTLP, the profiles of that sample type). Overrides the top-level sampleType."
             }
           },
           "required" : [ "format" ]
         },
         "sampleType" : {
           "type" : "string",
-          "description" : "pprof sample type (type or type/unit) for every pprof side. Default: the first CPU sample type, else the first. Ignored for JFR sides, which take their own sampleType or detect their execution-sample event type."
+          "description" : "pprof or OTLP sample type (type or type/unit) for every pprof and OTLP side. Default: the first CPU sample type, else the first. Ignored for JFR sides, which take their own sampleType or detect their execution-sample event type."
         },
         "minDeltaPct" : {
           "type" : "number",
@@ -790,7 +790,7 @@
         },
         "allowMixedSamplers" : {
           "type" : "boolean",
-          "description" : "With a pprof side, compare samplers of different kinds (CPU against wall clock) instead of refusing; no change is then called significant. Allocation against CPU or wall is always refused. Two JFR sides are never refused (they get a note), so this has no effect there. Default: false"
+          "description" : "With a pprof or OTLP side, compare samplers of different kinds (CPU against wall clock) instead of refusing; no change is then called significant. Allocation against CPU or wall is always refused. Two JFR sides are never refused (they get a note), so this has no effect there. Default: false"
         }
       },
       "required" : [ "baseline", "candidate" ]
@@ -808,7 +808,7 @@
       "description" : "Path to the candidate recording",
       "required" : false
     } ],
-    "renderedText" : "Compare the baseline (baseline) against the candidate (candidate).\n\n1. jfr_open both, giving each a clear alias.\n2. Call jfr_compare with baselineSessionId and candidateSessionId. If either side is a pprof profile, open it with pprof_open instead and call profile_compare with {format, sessionId} for each side.\n3. Read the `comparability` block before anything else. If it reports different execution-sample event types, very different durations, or low sample counts, say so in your answer and temper every conclusion accordingly.\n4. Treat `frames` as shares of samples, not wall-clock time. A frame growing from 3% to 9% of samples means the profile shifted; it is evidence of a slowdown only together with a rate or duration change.\n5. Changes below `minDeltaPct` are withheld deliberately. Do not go looking for smaller ones and present them as findings.\n\nConclude with either a named regression and the frame or metric that carries it, or an explicit \"no regression above the noise floor\". Never claim an improvement without the measurement that shows it.\n\n"
+    "renderedText" : "Compare the baseline (baseline) against the candidate (candidate).\n\n1. jfr_open both, giving each a clear alias.\n2. Call jfr_compare with baselineSessionId and candidateSessionId. If either side is a pprof or OTLP profile, open it with pprof_open or otlp_open instead and call profile_compare with {format, sessionId} for each side.\n3. Read the `comparability` block before anything else. If it reports different execution-sample event types, very different durations, or low sample counts, say so in your answer and temper every conclusion accordingly.\n4. Treat `frames` as shares of samples, not wall-clock time. A frame growing from 3% to 9% of samples means the profile shifted; it is evidence of a slowdown only together with a rate or duration change.\n5. Changes below `minDeltaPct` are withheld deliberately. Do not go looking for smaller ones and present them as findings.\n\nConclude with either a named regression and the frame or metric that carries it, or an explicit \"no regression above the noise floor\". Never claim an improvement without the measurement that shows it.\n\n"
   }, {
     "name" : "latency",
     "description" : "Investigate response-time problems that are not CPU-bound: contention, parking, queue saturation and blocking I/O.",
