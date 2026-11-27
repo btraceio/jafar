@@ -15,6 +15,11 @@ import java.util.List;
  * <p>The string table is built automatically — add strings with {@link #addString(String)} and use
  * the returned index wherever a string-table reference is expected.
  *
+ * <p>Every dictionary table starts with its zero value, as opentelemetry-proto v1.10.0 requires
+ * ("MUST be the zero value ... and present") and async-profiler 4.6 writes: an empty mapping,
+ * location, function, attribute and stack at index 0, and {@code ""} in the string table. The
+ * {@code add*} methods return the absolute index of what they add, so the first function is 1.
+ *
  * <p>Usage:
  *
  * <pre>{@code
@@ -44,17 +49,13 @@ public final class MinimalOtlpBuilder {
   // String table: index 0 = "" (null sentinel)
   private final List<String> strings = new ArrayList<>();
 
-  // Sample type (singular in OTLP)
-  private int sampleTypeTypeIdx = 0;
-  private int sampleTypeUnitIdx = 0;
+  /** The profiles written so far; the last is the one the profile-level setters change. */
+  private final List<ProfileDef> profiles = new ArrayList<>(List.of(new ProfileDef()));
 
   private final List<FunctionDef> functions = new ArrayList<>();
   private final List<LocationDef> locations = new ArrayList<>();
   private final List<StackDef> stacks = new ArrayList<>();
   private final List<AttributeDef> attributes = new ArrayList<>();
-  private final List<SampleDef> samples = new ArrayList<>();
-  private long durationNanos = 0;
-  private long timeUnixNano = 0;
 
   private record FunctionDef(int nameIdx, int filenameIdx) {}
 
@@ -64,14 +65,32 @@ public final class MinimalOtlpBuilder {
 
   private record AttributeDef(int keyIdx, String value) {}
 
-  private record SampleDef(int stackIndex, List<Integer> attrIndices, List<Long> values) {}
+  private record SampleDef(
+      int stackIndex, List<Integer> attrIndices, List<Long> values, List<Long> timestamps) {}
+
+  /** One profile: a sample type (singular in OTLP), its samples, period and time. */
+  private static final class ProfileDef {
+    int sampleTypeTypeIdx;
+    int sampleTypeUnitIdx;
+    final List<SampleDef> samples = new ArrayList<>();
+    long durationNanos;
+    long timeUnixNano;
+    boolean hasPeriodType;
+    int periodTypeTypeIdx;
+    int periodTypeUnitIdx;
+    long period;
+  }
+
+  private ProfileDef current() {
+    return profiles.get(profiles.size() - 1);
+  }
 
   public MinimalOtlpBuilder() {
     // index 0 must be the empty string (null sentinel)
     strings.add("");
   }
 
-  /** Adds a string to the string table and returns its 1-based index. */
+  /** Adds a string to the string table and returns its index (the first is 1). */
   public int addString(String s) {
     strings.add(s);
     return strings.size() - 1;
@@ -79,69 +98,103 @@ public final class MinimalOtlpBuilder {
 
   /** Sets the sample type (e.g. cpu / nanoseconds). */
   public MinimalOtlpBuilder setSampleType(int typeIdx, int unitIdx) {
-    this.sampleTypeTypeIdx = typeIdx;
-    this.sampleTypeUnitIdx = unitIdx;
+    current().sampleTypeTypeIdx = typeIdx;
+    current().sampleTypeUnitIdx = unitIdx;
     return this;
   }
 
   /**
-   * Adds a function and returns its 1-based index into the function table. {@code nameIdx} and
-   * {@code filenameIdx} are string table indices.
+   * Starts another profile in the same file, sharing the dictionary: the profile-level setters and
+   * {@code addSample} then apply to it.
+   */
+  public MinimalOtlpBuilder addProfile(int typeIdx, int unitIdx) {
+    profiles.add(new ProfileDef());
+    return setSampleType(typeIdx, unitIdx);
+  }
+
+  /** Sets the period type and period (e.g. cpu / nanoseconds, 10 ms). */
+  public MinimalOtlpBuilder setPeriod(int typeIdx, int unitIdx, long period) {
+    current().hasPeriodType = true;
+    current().periodTypeTypeIdx = typeIdx;
+    current().periodTypeUnitIdx = unitIdx;
+    current().period = period;
+    return this;
+  }
+
+  /**
+   * Adds a function and returns its index into the function table (the first is 1, after the zero
+   * value). {@code nameIdx} and {@code filenameIdx} are string table indices.
    */
   public int addFunction(int nameIdx, int filenameIdx) {
     functions.add(new FunctionDef(nameIdx, filenameIdx));
-    return functions.size(); // 1-based index
+    return functions.size(); // index 0 is the zero value
   }
 
   /**
-   * Adds a location referencing a single function. Returns its 1-based index into the location
-   * table. {@code functionIndex} is a 1-based index into the function table.
+   * Adds a location referencing a single function. Returns its index into the location table (the
+   * first is 1). {@code functionIndex} is an index into the function table.
    */
   public int addLocation(int functionIndex, long lineNumber) {
     locations.add(new LocationDef(functionIndex, lineNumber));
-    return locations.size(); // 1-based index
+    return locations.size(); // index 0 is the zero value
   }
 
   /**
-   * Adds a stack with the given location indices. Returns its 1-based index into the stack table.
-   * Location indices are 1-based.
+   * Adds a stack with the given location indices, leaf first. Returns its index into the stack
+   * table (the first is 1).
    */
   public int addStack(List<Integer> locationIndices) {
     stacks.add(new StackDef(new ArrayList<>(locationIndices)));
-    return stacks.size(); // 1-based index
+    return stacks.size(); // index 0 is the zero value
   }
 
   /**
-   * Adds an attribute (key-value pair). Returns its 1-based index into the attribute table. {@code
-   * keyIdx} is a string table index. Value is stored as a string.
+   * Adds an attribute (key-value pair). Returns its index into the attribute table (the first is
+   * 1). {@code keyIdx} is a string table index. Value is stored as a string.
    */
   public int addAttribute(int keyIdx, String value) {
     attributes.add(new AttributeDef(keyIdx, value));
-    return attributes.size(); // 1-based index
+    return attributes.size(); // index 0 is the zero value
   }
 
   /**
    * Adds a sample.
    *
-   * @param stackIndex 1-based index into the stack table
-   * @param attrIndices 1-based indices into the attribute table
-   * @param values one value per sample type
+   * @param stackIndex index into the stack table
+   * @param attrIndices indices into the attribute table
+   * @param values the sample's values, in the profile's sample type
    */
   public MinimalOtlpBuilder addSample(
       int stackIndex, List<Integer> attrIndices, List<Long> values) {
-    samples.add(new SampleDef(stackIndex, new ArrayList<>(attrIndices), new ArrayList<>(values)));
+    return addSample(stackIndex, attrIndices, values, List.of());
+  }
+
+  /**
+   * Adds a sample with per-event timestamps. Without values, each timestamp counts one; with
+   * values, there must be one value per timestamp.
+   */
+  public MinimalOtlpBuilder addSample(
+      int stackIndex, List<Integer> attrIndices, List<Long> values, List<Long> timestamps) {
+    current()
+        .samples
+        .add(
+            new SampleDef(
+                stackIndex,
+                new ArrayList<>(attrIndices),
+                new ArrayList<>(values),
+                new ArrayList<>(timestamps)));
     return this;
   }
 
   /** Sets the recording duration in nanoseconds. */
   public MinimalOtlpBuilder setDurationNanos(long nanos) {
-    this.durationNanos = nanos;
+    current().durationNanos = nanos;
     return this;
   }
 
   /** Sets the collection timestamp in nanoseconds since epoch. */
   public MinimalOtlpBuilder setTimeUnixNano(long nanos) {
-    this.timeUnixNano = nanos;
+    current().timeUnixNano = nanos;
     return this;
   }
 
@@ -174,25 +227,32 @@ public final class MinimalOtlpBuilder {
   private byte[] encodeScopeProfiles() throws IOException {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     // field 2: profiles (LEN) — field 2 per SCOPE_PROFILES_PROFILES = 2
-    writeLen(out, 2, encodeProfile());
+    for (ProfileDef profile : profiles) {
+      writeLen(out, 2, encodeProfile(profile));
+    }
     return out.toByteArray();
   }
 
-  private byte[] encodeProfile() throws IOException {
+  private static byte[] encodeProfile(ProfileDef p) throws IOException {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     // field 1: sample_type (LEN)
-    writeLen(out, 1, encodeValueType(sampleTypeTypeIdx, sampleTypeUnitIdx));
+    writeLen(out, 1, encodeValueType(p.sampleTypeTypeIdx, p.sampleTypeUnitIdx));
     // field 2: samples (repeated LEN)
-    for (SampleDef s : samples) {
+    for (SampleDef s : p.samples) {
       writeLen(out, 2, encodeSample(s));
     }
     // field 3: time_unix_nano (I64 / wire type 1)
-    if (timeUnixNano != 0) {
-      writeFixed64(out, 3, timeUnixNano);
+    if (p.timeUnixNano != 0) {
+      writeFixed64(out, 3, p.timeUnixNano);
     }
     // field 4: duration_nanos (varint)
-    if (durationNanos != 0) {
-      writeVarint(out, 4, durationNanos);
+    if (p.durationNanos != 0) {
+      writeVarint(out, 4, p.durationNanos);
+    }
+    if (p.hasPeriodType) {
+      // field 5: period_type (LEN), field 6: period (varint)
+      writeLen(out, 5, encodeValueType(p.periodTypeTypeIdx, p.periodTypeUnitIdx));
+      writeVarint(out, 6, p.period);
     }
     return out.toByteArray();
   }
@@ -224,16 +284,31 @@ public final class MinimalOtlpBuilder {
       }
       writeLen(out, 4, packed.toByteArray());
     }
+    // field 5: timestamps_unix_nano (packed fixed64)
+    if (!s.timestamps().isEmpty()) {
+      ByteArrayOutputStream packed = new ByteArrayOutputStream();
+      for (long t : s.timestamps()) {
+        for (int i = 0; i < 8; i++) {
+          packed.write((int) ((t >>> (8 * i)) & 0xFF));
+        }
+      }
+      writeLen(out, 5, packed.toByteArray());
+    }
     return out.toByteArray();
   }
 
   private byte[] encodeDictionary() throws IOException {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
+    // Each table's zero value comes first, at index 0 (an empty message).
+    // field 1: mapping_table (repeated LEN): the zero value only
+    writeLen(out, 1, new byte[0]);
     // field 2: location_table (repeated LEN)
+    writeLen(out, 2, new byte[0]);
     for (LocationDef loc : locations) {
       writeLen(out, 2, encodeLocation(loc));
     }
     // field 3: function_table (repeated LEN)
+    writeLen(out, 3, new byte[0]);
     for (FunctionDef fn : functions) {
       writeLen(out, 3, encodeFunction(fn));
     }
@@ -242,10 +317,12 @@ public final class MinimalOtlpBuilder {
       writeLen(out, 5, s.getBytes(StandardCharsets.UTF_8));
     }
     // field 6: attribute_table (repeated LEN)
+    writeLen(out, 6, new byte[0]);
     for (AttributeDef attr : attributes) {
       writeLen(out, 6, encodeAttribute(attr));
     }
     // field 7: stack_table (repeated LEN)
+    writeLen(out, 7, new byte[0]);
     for (StackDef stack : stacks) {
       writeLen(out, 7, encodeStack(stack));
     }

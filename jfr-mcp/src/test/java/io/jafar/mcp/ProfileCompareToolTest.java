@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.jafar.mcp.jfr.ProfileCompareTools;
 import io.jafar.mcp.query.DefaultQueryEvaluator;
 import io.jafar.mcp.result.McpResultFactory;
+import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
 import io.jafar.pprof.MinimalPprofBuilder;
@@ -38,23 +39,81 @@ class ProfileCompareToolTest {
 
   @TempDir Path dir;
 
+  /** async-profiler 4.6's real files: one run as JFR and as jfrconv's OTLP, and agent OTLP. */
+  private static final Path REAL_OTLP =
+      Path.of("..", "otlp-shell", "src", "test", "resources", "real").toAbsolutePath().normalize();
+
   private SessionRegistry jfr;
   private PprofSessionRegistry pprof;
+  private OtlpSessionRegistry otlp;
   private ProfileCompareTools tools;
 
   @BeforeEach
   void setUp() {
     jfr = new SessionRegistry();
     pprof = new PprofSessionRegistry();
+    otlp = new OtlpSessionRegistry();
     tools =
         new ProfileCompareTools(
-            jfr, pprof, new DefaultQueryEvaluator(), new McpResultFactory(MAPPER));
+            jfr, pprof, otlp, new DefaultQueryEvaluator(), new McpResultFactory(MAPPER));
   }
 
   @AfterEach
   void tearDown() {
     jfr.shutdown();
     pprof.shutdown();
+    otlp.shutdown();
+  }
+
+  @Test
+  void comparesARecordingWithItsOtlpConversion() throws Exception {
+    jfr.open(REAL_OTLP.resolve("ap-cpu.jfr"), "rec");
+    otlp.open(REAL_OTLP.resolve("conv-cpu.otlp"), "conv");
+    JsonNode result =
+        success(
+            tools.handleProfileCompare(
+                Map.of(
+                    "baseline",
+                    Map.of("format", "jfr", "sessionId", "rec"),
+                    "candidate",
+                    Map.of("format", "otlp", "sessionId", "conv"),
+                    "inclusiveFrames",
+                    true,
+                    "minDeltaPct",
+                    0)));
+    assertEquals("otlp", result.at("/candidate/format").asString());
+    assertEquals("conv", result.at("/candidate/alias").asString());
+    assertEquals("cpu/count", result.at("/candidate/eventType").asString());
+    assertEquals(216, result.at("/candidate/samples").asInt());
+    assertEquals(216, result.at("/baseline/samples").asInt());
+    assertTrue(result.at("/candidate/sampleCountKnown").asBoolean());
+    // One run in two formats: every row unchanged.
+    assertFalse(result.at("/frames").isEmpty());
+    for (JsonNode row : result.at("/frames")) {
+      assertEquals(0.0, row.at("/deltaPct").asDouble(), row.toString());
+      assertFalse(row.at("/significant").asBoolean(), row.toString());
+    }
+  }
+
+  @Test
+  void otlpSamplersOfDifferentKindsAreRefused() throws Exception {
+    otlp.open(REAL_OTLP.resolve("ap-cpu.otlp"), "cpu");
+    otlp.open(REAL_OTLP.resolve("ap-wall.otlp"), "wall");
+    String message =
+        error(
+            tools.handleProfileCompare(
+                Map.of(
+                    "baseline", Map.of("format", "otlp", "sessionId", "cpu"),
+                    "candidate", Map.of("format", "otlp", "sessionId", "wall"))));
+    assertTrue(message.contains("Different samplers (baseline otlp perf_events/count"), message);
+    JsonNode allowed =
+        success(
+            tools.handleProfileCompare(
+                Map.of(
+                    "baseline", Map.of("format", "otlp", "sessionId", "cpu"),
+                    "candidate", Map.of("format", "otlp", "sessionId", "wall"),
+                    "allowMixedSamplers", true)));
+    assertTrue(allowed.at("/comparability").toString().contains("Mixed samplers"));
   }
 
   @Test
@@ -152,9 +211,9 @@ class ProfileCompareToolTest {
         error(
                 tools.handleProfileCompare(
                     Map.of(
-                        "baseline", Map.of("format", "otlp"),
+                        "baseline", Map.of("format", "heap"),
                         "candidate", Map.of("format", "pprof"))))
-            .contains("otlp profiles cannot be compared yet"));
+            .contains("baseline.format must be jfr, pprof or otlp, not heap"));
     pprof.open(profile("cpu", 0), "one");
     assertTrue(
         error(
