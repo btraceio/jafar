@@ -1482,14 +1482,70 @@ public final class HdumpPathEvaluator {
       Query query,
       HeapSession baseHeapSession,
       String joinKey) {
-    // Build baseline query: same root/typePattern/predicates, empty pipeline
+    // The baseline must have the same shape as the rows being joined (#260): run the steps up to
+    // and including the last groupBy before this join. Later steps (top, sortBy, a filter on the
+    // aggregate) are left out, or they would hide baseline groups and report them as missing.
+    List<PipelineOp> baselinePipeline = new ArrayList<>();
+    GroupByOp lastGroup = null;
+    boolean joinBeforeLastGroup = false;
+    boolean joinSeen = false;
+    for (PipelineOp op : query.pipeline()) {
+      if (op == joinOp) {
+        break;
+      }
+      if (op instanceof CountOp || op instanceof SumOp || op instanceof StatsOp) {
+        throw new IllegalArgumentException(
+            "join(session=...) after count, sum or stats has no key to join on; use"
+                + " groupBy(...) before join");
+      }
+      if (op instanceof JoinOp) {
+        joinSeen = true;
+      }
+      baselinePipeline.add(op);
+      if (op instanceof GroupByOp g) {
+        lastGroup = g;
+        joinBeforeLastGroup = joinSeen;
+      }
+    }
+    if (joinBeforeLastGroup) {
+      // The baseline would have to repeat the earlier join, which needs its own session
+      throw new IllegalArgumentException(
+          "join(session=...) after groupBy cannot follow a join that comes before that groupBy:"
+              + " the baseline cannot repeat the earlier join");
+    }
+    if (lastGroup == null) {
+      baselinePipeline.clear(); // raw rows: unchanged behaviour
+    } else {
+      // Drops the steps after the last groupBy, earlier joins among them
+      baselinePipeline
+          .subList(baselinePipeline.indexOf(lastGroup) + 1, baselinePipeline.size())
+          .clear();
+    }
+    // Grouped rows carry the group fields, not the root's default key (className, type, ...)
+    List<String> keyFields;
+    boolean grouped = lastGroup != null;
+    if (!grouped) {
+      keyFields = List.of(joinKey);
+    } else if (joinOp.byField() == null) {
+      keyFields = lastGroup.groupFields();
+    } else if (groupFieldNamed(lastGroup, joinOp.byField()) != null) {
+      // The group field's own name: a grouped row carries that column, not by='s alias of it
+      keyFields = List.of(groupFieldNamed(lastGroup, joinOp.byField()));
+    } else {
+      throw new IllegalArgumentException(
+          lastGroup.groupFields().isEmpty()
+              ? "After groupBy without group fields, join(by=...) has no field to join on"
+              : "After groupBy, join(by=...) must name a group field: "
+                  + String.join(", ", lastGroup.groupFields()));
+    }
+
     Query baselineQuery =
         new Query(
             query.root(),
             query.typePattern(),
             query.instanceof_(),
             query.predicates(),
-            List.of(),
+            baselinePipeline,
             query.rootParam());
 
     // Evaluate baseline
@@ -1498,7 +1554,7 @@ public final class HdumpPathEvaluator {
     // Index baseline results by join key (first occurrence wins for duplicate keys)
     Map<Object, Map<String, Object>> baselineIndex = new LinkedHashMap<>();
     for (Map<String, Object> row : baselineResults) {
-      Object key = getField(row, joinKey);
+      Object key = joinKeyOf(row, keyFields, grouped);
       if (key != null) {
         baselineIndex.putIfAbsent(key, row);
       }
@@ -1526,7 +1582,7 @@ public final class HdumpPathEvaluator {
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
     for (Map<String, Object> row : results) {
       Map<String, Object> out = aliasCopy(row);
-      Object key = getField(row, joinKey);
+      Object key = joinKeyOf(row, keyFields, grouped);
       Map<String, Object> baseRow = key != null ? baselineIndex.get(key) : null;
 
       out.put("baseline.exists", baseRow != null);
@@ -1557,6 +1613,37 @@ public final class HdumpPathEvaluator {
     }
 
     return joined;
+  }
+
+  /**
+   * The group field of {@code group} that {@code field} names, aliases ({@code class} for {@code
+   * className}) resolved on both sides, or {@code null}.
+   */
+  private static String groupFieldNamed(GroupByOp group, String field) {
+    String wanted = FIELD_ALIASES.getOrDefault(field, field);
+    for (String groupField : group.groupFields()) {
+      if (FIELD_ALIASES.getOrDefault(groupField, groupField).equals(wanted)) {
+        return groupField;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * A row's join key. Ungrouped: the one field's value, or null (no key, no match). Grouped: the
+   * list of the group fields' values, nulls included, so a null group (e.g. {@code arrayLength} of
+   * non-arrays) matches its baseline group as {@code groupRows} built it.
+   */
+  private static Object joinKeyOf(
+      Map<String, Object> row, List<String> keyFields, boolean grouped) {
+    if (!grouped) {
+      return getField(row, keyFields.get(0));
+    }
+    List<Object> key = new ArrayList<>(keyFields.size());
+    for (String field : keyFields) {
+      key.add(getField(row, field));
+    }
+    return key;
   }
 
   @SuppressWarnings("unchecked")

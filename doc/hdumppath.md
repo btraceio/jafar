@@ -800,9 +800,24 @@ The join key is auto-inferred from the query root type:
 - `objects` → `className`
 - `gcroots` → `type`
 
+After a `groupBy(...)`, the key is the group fields instead (`objects | groupBy(class, agg=count)
+| join(session=1)` joins on `class`).
+
 Override with `by=field` when needed.
 
 #### Heap diff mode
+
+The baseline runs the same root, filters and steps as the current query, up to and including the
+last `groupBy` before the `join`, so grouped rows are compared with grouped rows. Steps after that
+`groupBy` (`top`, `sortBy`, a filter on the aggregate) apply to the current dump only: on the
+baseline they would hide groups and report them as missing. Without a `groupBy` the baseline is
+the root's rows, under the same large-heap cap as any query (on a dump over the streaming
+threshold, `objects` without an aggregating step returns 100 rows, and so do steps such as
+`select` or `pathToRoot` before a `groupBy`). After a `groupBy`, `by=` must name a group field,
+directly or by its alias (`by=className` after `groupBy(class)`). A `join` after `count`, `sum` or
+`stats` is an error, and so is a heap `join` after a `groupBy` that itself follows an earlier
+`join`: the baseline cannot repeat that join. An earlier `join` after the last `groupBy`, or with
+no `groupBy` at all, is not repeated on the baseline.
 
 **Output columns added:** for each numeric field `F`:
 - `baseline.F` — value from the baseline session (null if absent)
@@ -823,7 +838,7 @@ classes | join(session="before.hprof") | sortBy(instanceCountDelta desc)
 # With explicit join key
 classes | join(session=1, by=name) | filter(instanceCountDelta > 0) | top(20, instanceCountDelta)
 
-# Object-level diff (joins by className)
+# Per-class instance counts, before and after (joins on the group field class)
 objects | groupBy(class, agg=count) | join(session=1) | sortBy(countDelta desc)
 
 # Find classes that only exist in the new dump
