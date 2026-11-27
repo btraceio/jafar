@@ -213,12 +213,14 @@ class BetweenFilterFunctionTest {
   void betweenCombinedWithOtherFilters() throws Exception {
     // Combine between() with other filter conditions
     dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[state=\"RUNNABLE\" and between(duration, 1000, 100000)]"
-            + " | count()");
+        "show events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\""
+            + " and between(startTime, 1704067200000000000, 1704067230000000000)] | count()");
 
     String output = io.getOutput();
     assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work in combination with other filters");
+    // test-ap.jfr's samples have no duration: the window is on startTime. Of its 8000 samples
+    // 4063 fall in it, 6467 are STATE_RUNNABLE ([state="RUNNABLE"] matches none, #288), 3263 both
+    assertTrue(output.contains("3263"), output);
   }
 
   @Test

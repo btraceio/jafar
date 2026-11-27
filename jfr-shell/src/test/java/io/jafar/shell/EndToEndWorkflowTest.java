@@ -210,22 +210,25 @@ class EndToEndWorkflowTest {
   @Test
   void filterAndCountWorkflow() {
     // Filter by state and count
-    dispatcher.dispatch("show events/jdk.ExecutionSample[state==\"RUNNABLE\"] | count()");
+    dispatcher.dispatch("show events/jdk.ExecutionSample[state==\"STATE_RUNNABLE\"] | count()");
 
     String output = io.getOutput();
     assertTrue(output.contains("count"), "Should show count");
+    // 6467 of test-ap.jfr's 8000 samples; [state=="RUNNABLE"] matches none (#288)
+    assertTrue(output.contains("6467"), output);
   }
 
   @Test
   void multipleFiltersWorkflow() {
     // Apply multiple filters
-    dispatcher.dispatch("set filtered = events/jdk.ExecutionSample[state==\"RUNNABLE\"]");
+    dispatcher.dispatch("set filtered = events/jdk.ExecutionSample[state==\"STATE_RUNNABLE\"]");
     io.clearOutput();
 
     dispatcher.dispatch("show ${filtered} | count()");
 
     String output = io.getOutput();
     assertNotNull(output);
+    assertTrue(output.contains("6467"), output);
   }
 
   // ==================== Conditional Workflows ====================
