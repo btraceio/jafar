@@ -54,17 +54,33 @@ public enum SamplerKind {
    * The kind of a pprof (or OTLP) sample type, by its name and unit: a name starting with {@code
    * cpu} ({@code cpu}, {@code cpu-time}, {@code cpu_time}, {@code cpu-samples}) is {@link #CPU},
    * one starting with {@code wall} ({@code wall}, {@code wall-time}, {@code wall_time}) is {@link
-   * #WALL}; {@code alloc_space}/{@code inuse_space} (or any {@code alloc*} in bytes) are {@link
-   * #ALLOC_BYTES}, {@code alloc_objects}/{@code inuse_objects} {@link #ALLOC_COUNT}, and {@code
-   * contentions}, {@code delay}, {@code lock} {@link #LOCK}. Matching ignores case. {@code samples}
-   * names a count of samples of whatever the profile samples, so it takes the kind of the profile's
-   * period type, or of another sample type in the profile, when that one is CPU or wall.
+   * #WALL}; {@code alloc_space}/{@code inuse_space} (or any {@code alloc*} or {@code malloc} in
+   * bytes) are {@link #ALLOC_BYTES}, {@code alloc_objects}/{@code inuse_objects} (or any other
+   * {@code alloc*} or {@code malloc}, as async-profiler's {@code allocations/count}) {@link
+   * #ALLOC_COUNT}, and {@code contentions}, {@code delay}, {@code lock}, {@code locks} {@link
+   * #LOCK}. async-profiler's agent names an OTLP sample type after its engine: {@code itimer} and
+   * {@code ctimer} are {@link #CPU}, {@code object_sampler} and {@code malloc_tracer} allocation
+   * kinds by unit, {@code lock_tracer} {@link #LOCK}, and {@code perf_events} is {@link #CPU} when
+   * its period type is {@code perf_events} in a time unit (a CPU clock, not a hardware counter).
+   * Matching ignores case. {@code samples} names a count of samples of whatever the profile
+   * samples, so it takes the kind of the profile's period type, or of another sample type in the
+   * profile, when that one is CPU or wall.
    *
    * @param others the profile's other sample types and its period type as {@code {type, unit}}
    *     pairs, to resolve {@code samples}; may be empty
    */
   public static SamplerKind forSampleType(String type, String unit, List<String[]> others) {
     SamplerKind own = byName(type, unit);
+    if (own == UNKNOWN && "perf_events".equals(lower(type))) {
+      // async-profiler's perf_events engine samples whatever perf event it was given; with the CPU
+      // clock (event=cpu) its OTLP period type is perf_events/ns, 10 ms by default.
+      for (String[] other : others) {
+        if ("perf_events".equals(lower(other[0])) && isTimeUnit(other[1])) {
+          return CPU;
+        }
+      }
+      return UNKNOWN;
+    }
     if (own != UNKNOWN || !"samples".equals(lower(type))) {
       return own;
     }
@@ -95,13 +111,32 @@ public enum SamplerKind {
     if (t.equals("alloc_objects") || t.equals("inuse_objects")) {
       return ALLOC_COUNT;
     }
-    if (t.equals("contentions") || t.equals("delay") || t.equals("lock")) {
+    // async-profiler's jfrconv (4.1) names its columns locks, allocations and malloc, in count or,
+    // with --total, in nanoseconds or bytes. Read by name only, allocations/count was UNKNOWN, so
+    // an allocation profile compared against a CPU one instead of being refused.
+    if (t.equals("contentions") || t.equals("delay") || t.equals("lock") || t.equals("locks")) {
       return LOCK;
     }
-    if (t.startsWith("alloc") && u.equals("bytes")) {
-      return ALLOC_BYTES;
+    if (t.startsWith("alloc") || t.equals("malloc")) {
+      return u.equals("bytes") ? ALLOC_BYTES : ALLOC_COUNT;
+    }
+    // async-profiler's agent (4.6) names its OTLP sample types after the engine: itimer, ctimer,
+    // perf_events (see forSampleType), wall, object_sampler, malloc_tracer, lock_tracer.
+    if (t.equals("itimer") || t.equals("ctimer")) {
+      return CPU;
+    }
+    if (t.equals("object_sampler") || t.equals("malloc_tracer")) {
+      return u.equals("bytes") ? ALLOC_BYTES : ALLOC_COUNT;
+    }
+    if (t.equals("lock_tracer")) {
+      return LOCK;
     }
     return UNKNOWN;
+  }
+
+  private static boolean isTimeUnit(String unit) {
+    String u = lower(unit);
+    return u.equals("ns") || u.equals("nanoseconds");
   }
 
   private static String lower(String s) {

@@ -245,7 +245,8 @@ public final class JafarMcpServer {
         new JfrCompareTools(
             sessionRegistry, evaluator, queryParser, resultFactory, this.jfrAnalysisTools);
     this.profileCompareTools =
-        new ProfileCompareTools(sessionRegistry, pprofSessionRegistry, evaluator, resultFactory);
+        new ProfileCompareTools(
+            sessionRegistry, pprofSessionRegistry, otlpSessionRegistry, evaluator, resultFactory);
     this.hdumpTools =
         new HdumpTools(
             heapSessionRegistry,
@@ -764,8 +765,8 @@ public final class JafarMcpServer {
    *
    * <p>JFR tools: jfr_open, jfr_query, jfr_list_types, jfr_close, jfr_help, jfr_flamegraph,
    * jfr_callgraph, jfr_exceptions, jfr_summary, jfr_hotmethods, jfr_use, jfr_tsa, jfr_diagnose,
-   * jfr_stackprofile, jfr_compare; and profile_compare, which compares a JFR recording or a pprof
-   * profile against either.
+   * jfr_stackprofile, jfr_compare; and profile_compare, which compares a JFR recording, a pprof or
+   * an OTLP profile against any of them.
    *
    * <p>Heap dump tools: hdump_open, hdump_close, hdump_query, hdump_summary, hdump_report,
    * hdump_help.

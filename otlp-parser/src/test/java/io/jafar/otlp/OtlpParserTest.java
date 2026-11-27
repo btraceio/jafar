@@ -54,25 +54,32 @@ class OtlpParserTest {
     assertEquals(1, sample.values().size());
     assertEquals(1_234_567L, sample.values().get(0));
 
-    // stack resolution
+    // stack resolution: every table holds its zero value at index 0, and indices are absolute
     OtlpProfile.Dictionary dict = data.dictionary();
-    assertEquals(1, dict.stackTable().size());
-    assertEquals(1, dict.stackTable().get(0).locationIndices().size());
+    assertEquals(1, sample.stackIndex());
+    assertEquals(2, dict.stackTable().size());
+    assertEquals(List.of(), dict.stackTable().get(0).locationIndices());
+    assertEquals(List.of(1), dict.stackTable().get(1).locationIndices());
 
     // function
-    assertEquals(1, dict.functionTable().size());
-    assertEquals("com.example.Foo.bar", dict.functionTable().get(0).name());
-    assertEquals("Foo.java", dict.functionTable().get(0).filename());
+    assertEquals(2, dict.functionTable().size());
+    assertEquals("", dict.functionTable().get(0).name());
+    assertEquals("com.example.Foo.bar", dict.functionTable().get(1).name());
+    assertEquals("Foo.java", dict.functionTable().get(1).filename());
 
     // location
-    assertEquals(1, dict.locationTable().size());
-    assertEquals(1, dict.locationTable().get(0).lines().size());
-    assertEquals(42L, dict.locationTable().get(0).lines().get(0).line());
+    assertEquals(2, dict.locationTable().size());
+    assertEquals(List.of(), dict.locationTable().get(0).lines());
+    assertEquals(1, dict.locationTable().get(1).lines().size());
+    assertEquals(1, dict.locationTable().get(1).lines().get(0).functionIndex());
+    assertEquals(42L, dict.locationTable().get(1).lines().get(0).line());
 
     // attribute
-    assertEquals(1, dict.attributeTable().size());
-    assertEquals("thread", dict.attributeTable().get(0).key());
-    assertEquals("main", dict.attributeTable().get(0).value());
+    assertEquals(List.of(1), sample.attributeIndices());
+    assertEquals(2, dict.attributeTable().size());
+    assertEquals("", dict.attributeTable().get(0).key());
+    assertEquals("thread", dict.attributeTable().get(1).key());
+    assertEquals("main", dict.attributeTable().get(1).value());
   }
 
   @Test
@@ -98,9 +105,10 @@ class OtlpParserTest {
 
     assertEquals(1, data.profiles().size());
     assertEquals(2, data.profiles().get(0).samples().size());
-    assertEquals(2, data.dictionary().functionTable().size());
-    assertEquals(2, data.dictionary().locationTable().size());
-    assertEquals(2, data.dictionary().stackTable().size());
+    // two of each, after each table's zero value
+    assertEquals(3, data.dictionary().functionTable().size());
+    assertEquals(3, data.dictionary().locationTable().size());
+    assertEquals(3, data.dictionary().stackTable().size());
   }
 
   @Test

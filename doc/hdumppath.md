@@ -358,6 +358,11 @@ Pipeline operators transform query results. Chain them with `|`:
 objects/java.lang.String | top(10, shallow) | select(class, shallow)
 ```
 
+A count (`head(n)`, `tail(n)`, `top(n)`, `depth=`, `threshold=`, a numeric `join(session=)`) is a
+whole number from 0 to 2147483647, after any size suffix: `head(-1)` and `head(2.5)` fail to parse,
+naming the argument. A size in bytes (`minsize=`, `minRetained=`) is 0 or more and rounds a fraction
+of a byte down (`minsize=1.3MB` is 1363148); `minsize=` is at most 2147483647 (`minsize=3GB` fails).
+
 ### `select(field1, field2 as alias, ...)`
 Project specific fields with optional aliases.
 
