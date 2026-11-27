@@ -72,10 +72,15 @@ public final class StreamingChunkParser implements AutoCloseable {
   /**
    * The number of chunk parsing threads used when none is requested.
    *
-   * @return {@code max(availableProcessors - 2, 1)}
+   * <p>Every processor: on 4 processors, 4 threads parsed a 4.16 GB recording 1.6-1.7x faster than
+   * 2 (header walk, one type decoded, every event decoded), and 6 or 8 threads were no faster than
+   * 4 (doc/performance/ParserParallelism.md). Lower it with {@link
+   * io.jafar.parser.api.ParsingContext#withParallelism(int)}.
+   *
+   * @return {@code availableProcessors}, which is at least 1
    */
   public static int defaultParallelism() {
-    return Math.max(Runtime.getRuntime().availableProcessors() - 2, 1);
+    return Runtime.getRuntime().availableProcessors();
   }
 
   /**
