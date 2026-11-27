@@ -819,6 +819,24 @@ directly or by its alias (`by=className` after `groupBy(class)`). A `join` after
 `join`: the baseline cannot repeat that join. An earlier `join` after the last `groupBy`, or with
 no `groupBy` at all, is not repeated on the baseline.
 
+Class names are compared without the parts that change between JVM runs: a hidden class's
+address (`java.util.stream.Collectors$$Lambda+0x0000000019009048`, as JDK 21 and later dumps
+write it) and a lambda class's number before JDK 21 (`Main$$Lambda$1`, which follows the order a
+run created its lambdas in). This applies to the `name` of `classes` rows and to `className`
+(`class`), whether it is the join key or a group field. The rows themselves keep the full names.
+
+Several classes can share a compared name: every lambda of `Collectors` is
+`java.util.stream.Collectors$$Lambda`, and on JDK 8 every `LambdaForm$MH` class has that name
+already. `classes` rows and grouped rows that share a key are paired in order, the first with the
+baseline's first, and so on, so a family that gained classes shows the extra ones with
+`baseline.exists = false`, and the deltas of a pair compare one member of the family with
+another. The order is each side's row order, and the current side has every step before the
+`join` applied (a `sortBy`, for one) while the baseline has only the steps up to the last
+`groupBy`, so which members pair can depend on those steps. How many are new does not depend on
+steps that only reorder rows; a step that removes rows (a `filter` before the `join`) can hide a
+new member. Other rows that share a key (`objects` of one class, or `classes` joined
+`by=superClass`) all match the baseline's first row with the key.
+
 **Output columns added:** for each numeric field `F`:
 - `baseline.F` — value from the baseline session (null if absent)
 - `FDelta` — `F - baseline.F`
