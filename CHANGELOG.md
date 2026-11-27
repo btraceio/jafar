@@ -317,6 +317,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and with no values its quantiles are `null`, not NaN, as are `quantiles()`'s.
   `decorateByTime()`/`decorateByKey()` anywhere but first (after another operator, or on a
   variable's rows) fail instead of being skipped.
+- **The jfr-mcp `leak-hunt` prompt's retained-size queries did not run (#289).** `classes` rows have
+  no `retained` column, and step 3 (`classes | sortBy(retained desc) | top(20)`) failed with "Field
+  'retained' is not available on classes". Step 6 joined classes `by=class` (on the `classes` root
+  that names `className`, which a classes row does not have, so every `allocCount` was null) and
+  then filtered on `retained > 10MB`, which returned no rows at all. Both now rank `objects |
+  groupBy(className, agg=sum, value=retainedSize)`, and step 6 joins those groups `by=className` and
+  keeps the classes with allocation samples. The same broken examples in the LLM language reference
+  (`ask`), doc/cli/AskTutorial.md and doc/hdumppath.md are corrected. `filter` on an absent field
+  still returns nothing silently (#295)
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
