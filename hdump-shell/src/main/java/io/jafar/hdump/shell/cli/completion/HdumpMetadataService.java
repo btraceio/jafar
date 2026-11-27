@@ -12,6 +12,7 @@ import io.jafar.shell.core.completion.MetadataService;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -167,7 +168,7 @@ public final class HdumpMetadataService implements MetadataService {
     if (rootType == null) {
       return Collections.emptyList();
     }
-    return switch (rootType.toLowerCase()) {
+    return switch (rootType.toLowerCase(Locale.ROOT)) {
       case "objects" -> OBJECT_FIELDS;
       case "classes" -> CLASS_FIELDS;
       case "gcroots" -> GC_ROOT_FIELDS;

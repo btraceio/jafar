@@ -384,13 +384,31 @@ of its own, runs the same cases with `parser-codegen` on the classpath, where a 
 factory is decoded by a run-time generated handler: the values are right and only the
 implementation class says the build-time handlers are not in use, so the test records it.
 
+### A pprof period is not the sampling rate, and a sample type's name is not its sampler
+
+pprof's `period` and `period_type` read like "one sample every `period` units", so `value / period`
+looks like a sample count. Go's mutex and block profiles write `contentions/count` with period
+**1 whatever the sampling rate** (`runtime/pprof.printCountCycleProfile`), and each sampled
+contention is already multiplied by the rate (`runtime.saveBlockEventStack`): at
+`SetMutexProfileFraction(5)` the real fixture `go-mutex.pb.gz` holds 1,430 contentions for 286
+sampled events. Read as counts, the compare called moves significant on five times the evidence
+it had. Go's heap profile has the same trap with a byte period (`space/bytes` 524288) and scaled
+`alloc_objects`.
+
+The name is no more reliable: async-profiler's `jfrconv --wall` names its column `cpu/count`, the
+same as `--cpu`, so a wall-clock profile reads as CPU, and its allocation column is `allocations`,
+which a list of Go names (`alloc_objects`, `alloc_space`) does not recognise. Both were found only
+by reading files the producers wrote; files built in a test say what the test's author believed.
+The real profiles and how they were made are in `pprof-shell/src/test/resources/real/`.
+
 ---
 
 ## Before you trust a shape
 
 - Print the value once, in the real path, with a real recording. Not the type — the value.
 - If it comes from metadata, ask whether it means *declared* or *present*.
-- If it is a count, ask what populated it and when.
+- If it is a count, ask what populated it and when. If it is a profile's value, ask whether the
+  producer scaled it, and check with a file the producer wrote.
 - If it is a string from a recording, assume it is wrapped until you have seen otherwise — and if
   it is a single-entry map from metadata, assume it is data.
 - If a structure has a display form and a data form, you want the data form, and the display form

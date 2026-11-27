@@ -9,6 +9,7 @@ import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.VariableStore;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -102,7 +103,7 @@ public final class HdumpQueryEvaluator implements QueryEvaluator {
 
   @Override
   public String getOperatorHelp(String operator) {
-    return switch (operator.toLowerCase()) {
+    return switch (operator.toLowerCase(Locale.ROOT)) {
       case "select" -> "select(field1, field2 as alias, ...) - Project specific fields";
       case "top" -> "top(n, field, [asc|desc]) - Get top N results sorted by field";
       case "groupby", "group" ->
