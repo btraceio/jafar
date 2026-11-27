@@ -28,6 +28,8 @@ public final class ExplicitLocaleFormatFixture {
   public static void all(PrintWriter w, Console c, DateTimeFormatterBuilder b, Object v) {
     Locale l = Locale.ROOT;
     String.format(l, "%.1f", v);
+    "Id".toLowerCase(l);
+    "id".toUpperCase(l);
     System.out.printf(l, "%.1f", v);
     System.out.format(l, "%.1f", v);
     w.printf(l, "%.1f", v);

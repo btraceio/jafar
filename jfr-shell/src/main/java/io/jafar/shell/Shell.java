@@ -220,7 +220,7 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    String subCommand = parts[1].toLowerCase();
+    String subCommand = parts[1].toLowerCase(Locale.ROOT);
     try {
       switch (subCommand) {
         case "start":
@@ -256,7 +256,7 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    String subCommand = parts[1].toLowerCase();
+    String subCommand = parts[1].toLowerCase(Locale.ROOT);
 
     switch (subCommand) {
       case "list":
@@ -338,7 +338,7 @@ public final class Shell implements AutoCloseable {
         if (line.startsWith("#")) {
           // First comment line is the description
           String desc = line.substring(1).trim();
-          if (!desc.isEmpty() && !desc.toLowerCase().startsWith("arguments:")) {
+          if (!desc.isEmpty() && !desc.toLowerCase(Locale.ROOT).startsWith("arguments:")) {
             return desc;
           }
         } else {

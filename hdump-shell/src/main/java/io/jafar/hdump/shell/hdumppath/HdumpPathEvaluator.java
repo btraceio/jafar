@@ -807,7 +807,7 @@ public final class HdumpPathEvaluator {
 
     // Filter by type
     if (query.typePattern() != null) {
-      String typeStr = query.typePattern().toUpperCase();
+      String typeStr = query.typePattern().toUpperCase(Locale.ROOT);
       try {
         GcRoot.Type type = GcRoot.Type.valueOf(typeStr);
         stream = stream.filter(root -> root.getType() == type);
@@ -1298,10 +1298,10 @@ public final class HdumpPathEvaluator {
               });
       case UppercaseOp u ->
           applyStringTransform(
-              results, u.field(), v -> v instanceof String s ? s.toUpperCase() : v);
+              results, u.field(), v -> v instanceof String s ? s.toUpperCase(Locale.ROOT) : v);
       case LowercaseOp l ->
           applyStringTransform(
-              results, l.field(), v -> v instanceof String s ? s.toLowerCase() : v);
+              results, l.field(), v -> v instanceof String s ? s.toLowerCase(Locale.ROOT) : v);
       case TrimOp t ->
           applyStringTransform(results, t.field(), v -> v instanceof String s ? s.trim() : v);
       case ReplaceOp r ->
@@ -1805,7 +1805,7 @@ public final class HdumpPathEvaluator {
   /** Checks if a field name indicates memory values. */
   private static boolean isMemoryFieldName(String fieldName) {
     if (fieldName == null) return false;
-    String lower = fieldName.toLowerCase();
+    String lower = fieldName.toLowerCase(Locale.ROOT);
     return lower.endsWith("size")
         || lower.contains("shallow")
         || lower.contains("retained")

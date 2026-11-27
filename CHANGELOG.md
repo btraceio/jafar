@@ -290,6 +290,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Throttling is reported as such, with raising the container's CPU limit as the action, instead of
   sending the agent to `jfr_tsa`, and the summary's `overallAssessment` only weighs a saturation
   given in percent
+- **Case-insensitive matching broke under a Turkish locale (#264).** Every `toLowerCase()` and
+  `toUpperCase()` in the shipped modules used the JVM default locale, and under tr-TR `"I"`
+  lower-cases to a dotless `"ı"` and `"i"` upper-cases to a dotted `"İ"`. `jfr_list_types` with
+  `filter=initial` found no types (`jdk.InitialSystemProperty` became `jdk.ınitialsystemproperty`),
+  and `gcroots/jni_global | count` gave 0: `JNİ_GLOBAL` names no root type, and the lookup
+  swallows the error and returns no rows. All 155 calls in `*/src/main` (one of them in
+  `test-recordings`) and the two `String::toLowerCase`/`toUpperCase` method references now pass
+  `Locale.ROOT`, and arch rule (j) fails the build on a new case mapping without a locale
+  (`doc/agents/Gates.md`)
 - **Filtered JfrPath queries threw an exception per event** - a filter resolves its field path
   for every event it tests, and the path parser told a field name from an index by catching
   `NumberFormatException` from `Integer.parseInt`. `events/bench.Common[bucket=7] | count()` on a

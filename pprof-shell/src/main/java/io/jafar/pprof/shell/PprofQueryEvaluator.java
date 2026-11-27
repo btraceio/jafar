@@ -8,6 +8,7 @@ import io.jafar.shell.core.Session;
 import io.jafar.shell.core.VariableStore;
 import io.jafar.shell.core.sampling.path.SamplesPath;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -60,7 +61,7 @@ public final class PprofQueryEvaluator implements QueryEvaluator {
 
   @Override
   public String getOperatorHelp(String operator) {
-    return switch (operator.toLowerCase()) {
+    return switch (operator.toLowerCase(Locale.ROOT)) {
       case "count" -> "count() - Count total samples";
       case "top" -> "top(n, field, [asc|desc]) - Get top N samples sorted by value type";
       case "groupby", "group" ->
