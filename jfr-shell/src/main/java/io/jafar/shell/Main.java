@@ -132,13 +132,67 @@ public final class Main implements Callable<Integer> {
   }
 
   /** Exit code for a usage error, as picocli's {@code execute} returns for invalid input. */
-  static final int USAGE_ERROR = 2;
+  public static final int USAGE_ERROR = 2;
 
   /** Prints a usage error's message and the failing command's usage to stderr. */
   static int usageError(CommandLine.ParameterException e) {
     System.err.println("Error: " + e.getMessage());
     e.getCommandLine().usage(System.err);
     return USAGE_ERROR;
+  }
+
+  /**
+   * The backend a subcommand runs with: its own {@code -b}, else the one given before the
+   * subcommand ({@code jfr-shell -b jdk script q.jfrs}), which used to be dropped silently (#268).
+   *
+   * @throws CommandLine.ParameterException when both are given and name different backends
+   */
+  static String subcommandBackend(CommandLine.Model.CommandSpec spec, Main parent, String own) {
+    String beforeSubcommand = parent == null ? null : parent.backend;
+    if (own == null) {
+      return beforeSubcommand;
+    }
+    if (beforeSubcommand != null && !beforeSubcommand.equalsIgnoreCase(own)) {
+      throw new CommandLine.ParameterException(
+          spec.commandLine(),
+          "--backend is '"
+              + beforeSubcommand
+              + "' before '"
+              + typedName(spec)
+              + "' and '"
+              + own
+              + "' after it; give one");
+    }
+    return own;
+  }
+
+  /**
+   * Refuses a {@code -b} given before a subcommand that reads no recording through a backend
+   * ({@code tail}, {@code ps}), rather than ignore it (#268).
+   *
+   * @throws CommandLine.ParameterException when one was given
+   */
+  static void refuseBackend(CommandLine.Model.CommandSpec spec, Main parent) {
+    if (parent != null && parent.backend != null) {
+      throw new CommandLine.ParameterException(
+          spec.commandLine(),
+          "--backend does not apply to '" + typedName(spec) + "': it uses no backend");
+    }
+  }
+
+  /**
+   * The subcommand's name as typed: an alias ({@code cp}) rather than its name ({@code constants}).
+   */
+  private static String typedName(CommandLine.Model.CommandSpec spec) {
+    CommandLine parent = spec.commandLine().getParent();
+    if (parent != null && parent.getParseResult() != null) {
+      for (String arg : parent.getParseResult().originalArgs()) {
+        if (arg.equals(spec.name()) || java.util.Arrays.asList(spec.aliases()).contains(arg)) {
+          return arg;
+        }
+      }
+    }
+    return spec.name();
   }
 
   /** An exception's message, or its class name when it has none (an NPE, many wrapped errors). */
@@ -200,6 +254,11 @@ public final class Main implements Callable<Integer> {
   }
 
   private boolean validateBackend() {
+    String conflict = environmentConflict(backend, System.getenv("JFRSHELL_BACKEND"));
+    if (conflict != null) {
+      System.err.println(conflict);
+      return false;
+    }
     try {
       BackendRegistry registry = BackendRegistry.getInstance();
 
@@ -334,7 +393,41 @@ public final class Main implements Callable<Integer> {
    * property, auto-installs a default when none is present, and honors {@code --backend} (incl. the
    * auto-install-and-restart path). Returns 0 on success, or the process exit code.
    */
-  static Integer validateBackend(String backend) {
+  public static Integer validateBackend(String backend) {
+    return validateBackend(backend, System.getenv("JFRSHELL_BACKEND"));
+  }
+
+  /**
+   * The error for a {@code -b} that {@code JFRSHELL_BACKEND} overrides, or {@code null}. The
+   * variable wins only when it names an installed backend (the registry passes over one it cannot
+   * find), so only then is a different {@code -b} refused.
+   */
+  static String environmentConflict(String backend, String envBackend) {
+    if (backend == null
+        || envBackend == null
+        || envBackend.isBlank()
+        || envBackend.trim().equalsIgnoreCase(backend)
+        || BackendRegistry.getInstance().get(envBackend).isEmpty()) {
+      return null;
+    }
+    return "Error: --backend is '"
+        + backend
+        + "' but JFRSHELL_BACKEND is '"
+        + envBackend.trim()
+        + "', which takes precedence; unset it or give the same backend";
+  }
+
+  /**
+   * As {@link #validateBackend(String)}, with the value of {@code JFRSHELL_BACKEND} given: it takes
+   * precedence over {@code -b} (doc/cli/Backends.md), so a {@code -b} that names another backend is
+   * refused here, naming the variable, rather than reported as a backend that is not installed.
+   */
+  static Integer validateBackend(String backend, String envBackend) {
+    String conflict = environmentConflict(backend, envBackend);
+    if (conflict != null) {
+      System.err.println(conflict);
+      return USAGE_ERROR;
+    }
     if (backend != null) {
       System.setProperty("jfr.shell.backend", backend);
     }
@@ -389,8 +482,17 @@ public final class Main implements Callable<Integer> {
         description = "JFR backend to use")
     protected String backend;
 
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     protected Integer executeNonInteractive(String command) {
-      Integer rc = validateBackend(backend);
+      Integer rc;
+      try {
+        rc = validateBackend(subcommandBackend(spec, parent, backend));
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       if (rc != 0) {
         return rc;
       }
@@ -613,8 +715,17 @@ public final class Main implements Callable<Integer> {
       mixinStandardHelpOptions = true,
       description = "List local JVMs ([jfr] marks a discoverable disk-backed JFR event repository)")
   static class PsCommand implements Callable<Integer> {
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     @Override
     public Integer call() {
+      try {
+        refuseBackend(spec, parent);
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       var processes = io.jafar.shell.live.DefaultLiveStreams.INSTANCE.listLocalJvm();
       if (processes.isEmpty()) {
         System.out.println(
@@ -676,10 +787,19 @@ public final class Main implements Callable<Integer> {
     transient PrintStream outOverride;
     transient PrintStream errOverride;
 
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     @Override
     public Integer call() {
       final PrintStream out = outOverride != null ? outOverride : System.out;
       final PrintStream err = errOverride != null ? errOverride : System.err;
+      try {
+        refuseBackend(spec, parent);
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       // Validate filter/format FIRST (cheap, no I/O) so a bad expression never reaches the
       // hardening check or opens any stream.
       io.jafar.shell.jfrpath.JfrPath.Query filter = null;
@@ -852,6 +972,8 @@ public final class Main implements Callable<Integer> {
         description = "JFR backend to use")
     private String backend;
 
+    @CommandLine.ParentCommand private Main parent;
+
     @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
 
     /** An option used wrongly: the message and the command's usage on stderr, exit 2. */
@@ -891,8 +1013,16 @@ public final class Main implements Callable<Integer> {
         if (misuse != null) {
           return usage(misuse);
         }
-        if (baseReader == null || candReader == null) {
-          Integer rc = validateBackend(backend);
+        String chosen;
+        try {
+          chosen = subcommandBackend(spec, parent, backend);
+        } catch (CommandLine.ParameterException e) {
+          return usageError(e);
+        }
+        // A JFR side is read through the backend; a named backend is checked even when no side
+        // is, so a typo or a conflict is not passed over in silence (#268)
+        if (baseReader == null || candReader == null || chosen != null) {
+          Integer rc = validateBackend(chosen);
           if (rc != 0) {
             return rc;
           }
@@ -1055,9 +1185,18 @@ public final class Main implements Callable<Integer> {
         description = "JFR backend to use")
     private String backend;
 
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     @Override
     public Integer call() {
-      Integer rc = validateBackend(backend);
+      Integer rc;
+      try {
+        rc = validateBackend(subcommandBackend(spec, parent, backend));
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       if (rc != 0) {
         return rc;
       }
