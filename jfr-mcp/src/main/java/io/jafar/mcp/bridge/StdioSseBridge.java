@@ -175,7 +175,7 @@ public final class StdioSseBridge {
      */
     volatile String swallowId;
 
-    /** Opens when this stream carried the reply to {@link #swallowId}. */
+    /** Opens when this stream carried the reply to {@link #swallowId}, or ended. */
     final CountDownLatch swallowed = new CountDownLatch(1);
 
     Connection(DaemonEndpoint endpoint, HttpURLConnection http, InputStream stream) {
@@ -186,6 +186,7 @@ public final class StdioSseBridge {
 
     void close() {
       dead = true;
+      swallowed.countDown(); // a dead connection's replay gets no answer, whoever closed it
       // HttpURLConnection.disconnect() closes the response stream first, and closing a chunked
       // stream waits for the reader thread's blocked read(): done inline it would stall the caller
       // (often while holding the bridge lock) until the daemon next sent something. Nothing the
@@ -404,6 +405,10 @@ public final class StdioSseBridge {
               + handshakeTimeout.toMillis()
               + "ms");
     }
+    if (c.dead) {
+      // The stream ended during the wait (#321): the answer, if any, went with it
+      throw new IOException("the daemon's SSE stream ended during the re-initialize");
+    }
     if (initializedLine != null) {
       postTo(c, initializedLine);
     }
@@ -532,6 +537,8 @@ public final class StdioSseBridge {
     // No bridge lock here: post() may hold it for a whole POST or handshake replay, and what is in
     // flight must not wait for that. ensureConnected() replaces a dead connection by itself.
     c.dead = true;
+    // A replay waiting on this stream will get no answer: let it fail now, not at its timeout
+    c.swallowed.countDown();
     if (!closing) {
       // The request being delivered is post()'s: it reconnects and delivers it, or fails it, or,
       // if this connection already accepted it, settleAccepted() sees it dead and fails it. The
