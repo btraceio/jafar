@@ -2,8 +2,11 @@ package io.jafar.mcp.jfr;
 
 import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.result.McpResultFactory;
+import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
 import io.jafar.mcp.session.SessionRegistry;
+import io.jafar.otlp.shell.OtlpProfileReader;
+import io.jafar.otlp.shell.OtlpSession;
 import io.jafar.pprof.shell.PprofProfileReader;
 import io.jafar.pprof.shell.PprofSession;
 import io.jafar.shell.core.analysis.AnalysisTarget;
@@ -26,8 +29,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * {@code profile_compare} — compares a candidate profile against a baseline when either side may be
- * a pprof profile: {@code jfr_compare}'s comparison ({@link ProfileCompare}), with each side named
- * by its format and its session id.
+ * a pprof or an OTLP profile: {@code jfr_compare}'s comparison ({@link ProfileCompare}), with each
+ * side named by its format and its session id.
  *
  * <p>A separate tool rather than new arguments on {@code jfr_compare}: that tool's response is a
  * documented contract, and session ids alone cannot name a side, because each format's registry
@@ -39,16 +42,28 @@ public final class ProfileCompareTools {
 
   private final SessionRegistry jfrSessions;
   private final PprofSessionRegistry pprofSessions;
+  private final OtlpSessionRegistry otlpSessions;
   private final McpResultFactory resultFactory;
   private final JfrCompare jfrReader;
 
+  /** Without OTLP sessions: an {@code otlp} side then finds no session. */
   public ProfileCompareTools(
       SessionRegistry jfrSessions,
       PprofSessionRegistry pprofSessions,
       QueryEvaluator evaluator,
       McpResultFactory resultFactory) {
+    this(jfrSessions, pprofSessions, new OtlpSessionRegistry(), evaluator, resultFactory);
+  }
+
+  public ProfileCompareTools(
+      SessionRegistry jfrSessions,
+      PprofSessionRegistry pprofSessions,
+      OtlpSessionRegistry otlpSessions,
+      QueryEvaluator evaluator,
+      McpResultFactory resultFactory) {
     this.jfrSessions = jfrSessions;
     this.pprofSessions = pprofSessions;
+    this.otlpSessions = otlpSessions;
     this.resultFactory = resultFactory;
     // Through the evaluator this server was given, as jfr_compare reads: a test substitutes it.
     this.jfrReader = new JfrCompare(JfrAnalysisTools.querySource(evaluator));
@@ -62,8 +77,8 @@ public final class ProfileCompareTools {
               "properties": {
                 "format": {
                   "type": "string",
-                  "enum": ["jfr", "pprof"],
-                  "description": "The side's format: jfr (opened with jfr_open) or pprof (opened with pprof_open)."
+                  "enum": ["jfr", "pprof", "otlp"],
+                  "description": "The side's format: jfr (opened with jfr_open), pprof (opened with pprof_open) or otlp (opened with otlp_open)."
                 },
                 "sessionId": {
                   "type": "string",
@@ -71,7 +86,7 @@ public final class ProfileCompareTools {
                 },
                 "sampleType": {
                   "type": "string",
-                  "description": "This side's sample type: a JFR event type, or a pprof type or type/unit. Overrides the top-level sampleType."
+                  "description": "This side's sample type: a JFR event type, or a pprof or OTLP type or type/unit (for OTLP, the profiles of that sample type). Overrides the top-level sampleType."
                 }
               },
               "required": ["format"]
@@ -88,7 +103,7 @@ public final class ProfileCompareTools {
             "candidate": %s,
             "sampleType": {
               "type": "string",
-              "description": "pprof sample type (type or type/unit) for every pprof side. Default: the first CPU sample type, else the first. Ignored for JFR sides, which take their own sampleType or detect their execution-sample event type."
+              "description": "pprof or OTLP sample type (type or type/unit) for every pprof and OTLP side. Default: the first CPU sample type, else the first. Ignored for JFR sides, which take their own sampleType or detect their execution-sample event type."
             },
             "minDeltaPct": {
               "type": "number",
@@ -104,7 +119,7 @@ public final class ProfileCompareTools {
             },
             "allowMixedSamplers": {
               "type": "boolean",
-              "description": "With a pprof side, compare samplers of different kinds (CPU against wall clock) instead of refusing; no change is then called significant. Allocation against CPU or wall is always refused. Two JFR sides are never refused (they get a note), so this has no effect there. Default: false"
+              "description": "With a pprof or OTLP side, compare samplers of different kinds (CPU against wall clock) instead of refusing; no change is then called significant. Allocation against CPU or wall is always refused. Two JFR sides are never refused (they get a note), so this has no effect there. Default: false"
             }
           },
           "required": ["baseline", "candidate"]
@@ -118,15 +133,18 @@ public final class ProfileCompareTools {
             .name("profile_compare")
             .description(
                 "Compares a candidate profile against a baseline where either side may be a JFR"
-                    + " recording or a pprof profile: per-frame self-time shares (and inclusive"
+                    + " recording, a pprof profile or an OTLP profiles file: per-frame self-time"
+                    + " shares (and inclusive"
                     + " shares on request), normalised to each side's total, with jfr_compare's"
-                    + " significance rule and findings. When a pprof side is involved, samplers"
+                    + " significance rule and findings. When a pprof or OTLP side is involved,"
+                    + " samplers"
                     + " that measure different things (CPU against wall clock) are refused unless"
                     + " allowMixedSamplers, and allocation against CPU or wall always; two JFR"
                     + " sides get jfr_compare's note instead, as jfr-shell compare does. Event rates"
                     + " only when both sides are JFR. The top-level sampleType applies to pprof"
-                    + " sides only; a JFR side takes its event type from its own sampleType, or"
-                    + " detects it. Open each side with jfr_open or pprof_open first.")
+                    + " and OTLP sides only; a JFR side takes its event type from its own"
+                    + " sampleType, or detects it. Open each side with jfr_open, pprof_open or"
+                    + " otlp_open first.")
             .inputSchema(McpJsonDefaults.getMapper(), schema)
             .build(),
         (exchange, args) -> handleProfileCompare(args.arguments()));
@@ -187,18 +205,29 @@ public final class ProfileCompareTools {
     final String sampleType;
     final SessionRegistry.SessionInfo jfr;
     final SamplingSessionRegistry.SessionInfo<PprofSession> pprof;
+    final SamplingSessionRegistry.SessionInfo<OtlpSession> otlp;
 
     Side(
         String format,
         String sampleType,
         SessionRegistry.SessionInfo jfr,
-        SamplingSessionRegistry.SessionInfo<PprofSession> pprof) {
+        SamplingSessionRegistry.SessionInfo<PprofSession> pprof,
+        SamplingSessionRegistry.SessionInfo<OtlpSession> otlp) {
       this.format = format;
       this.sampleType = sampleType;
       this.jfr = jfr;
       this.pprof = pprof;
-      this.id = jfr != null ? jfr.id() : pprof.id();
-      this.alias = jfr != null ? jfr.alias() : pprof.alias();
+      this.otlp = otlp;
+      if (jfr != null) {
+        this.id = jfr.id();
+        this.alias = jfr.alias();
+      } else if (pprof != null) {
+        this.id = pprof.id();
+        this.alias = pprof.alias();
+      } else {
+        this.id = otlp.id();
+        this.alias = otlp.alias();
+      }
     }
 
     RecordingProfile read(String defaultSampleType, boolean inclusive) throws Exception {
@@ -209,10 +238,12 @@ public final class ProfileCompareTools {
             sampleType,
             inclusive);
       }
-      return PprofProfileReader.read(
-          pprof.session().getProfile(),
-          pprof.path(),
-          new ProfileSelection(sampleType != null ? sampleType : defaultSampleType, inclusive));
+      ProfileSelection selection =
+          new ProfileSelection(sampleType != null ? sampleType : defaultSampleType, inclusive);
+      if (otlp != null) {
+        return OtlpProfileReader.read(otlp.session().getData(), otlp.path(), selection);
+      }
+      return PprofProfileReader.read(pprof.session().getProfile(), pprof.path(), selection);
     }
 
     /** The core's description, with this side's format, session id and alias in front. */
@@ -231,23 +262,22 @@ public final class ProfileCompareTools {
   private Side side(Object value, String which) {
     if (!(value instanceof Map<?, ?> map)) {
       throw new IllegalArgumentException(
-          which + " is required: an object {format: jfr|pprof, sessionId}");
+          which + " is required: an object {format: jfr|pprof|otlp, sessionId}");
     }
     Object formatValue = map.get("format");
     if (!(formatValue instanceof String format) || format.isBlank()) {
-      throw new IllegalArgumentException(which + ".format is required: jfr or pprof");
+      throw new IllegalArgumentException(which + ".format is required: jfr, pprof or otlp");
     }
     String sessionId = map.get("sessionId") == null ? null : String.valueOf(map.get("sessionId"));
     String sampleType = map.get("sampleType") instanceof String s && !s.isBlank() ? s : null;
     return switch (format.toLowerCase(Locale.ROOT)) {
-      case "jfr" -> new Side("jfr", sampleType, jfrSessions.getOrCurrent(sessionId), null);
-      case "pprof" -> new Side("pprof", sampleType, null, pprofSessions.getOrCurrent(sessionId));
-      case "otlp" ->
-          throw new IllegalArgumentException(
-              which
-                  + ": otlp profiles cannot be compared yet; profile_compare reads jfr and pprof");
+      case "jfr" -> new Side("jfr", sampleType, jfrSessions.getOrCurrent(sessionId), null, null);
+      case "pprof" ->
+          new Side("pprof", sampleType, null, pprofSessions.getOrCurrent(sessionId), null);
+      case "otlp" -> new Side("otlp", sampleType, null, null, otlpSessions.getOrCurrent(sessionId));
       default ->
-          throw new IllegalArgumentException(which + ".format must be jfr or pprof, not " + format);
+          throw new IllegalArgumentException(
+              which + ".format must be jfr, pprof or otlp, not " + format);
     };
   }
 }
