@@ -1,6 +1,8 @@
 package io.jafar.otlp.shell;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -8,6 +10,13 @@ import io.jafar.otlp.api.OtlpParser;
 import io.jafar.otlp.api.OtlpProfile;
 import io.jafar.otlp.shell.otlppath.OtlpPathEvaluator;
 import io.jafar.otlp.shell.otlppath.OtlpPathParser;
+import io.jafar.shell.core.compare.CompareOptions;
+import io.jafar.shell.core.compare.CompareResult;
+import io.jafar.shell.core.compare.ProfileCompare;
+import io.jafar.shell.core.compare.ProfileSelection;
+import io.jafar.shell.core.compare.RecordingProfile;
+import io.jafar.shell.core.compare.SampleTypeInfo;
+import io.jafar.shell.core.compare.SamplerKind;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -15,10 +24,11 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * The OTLP parser and OtlpPath against files a real producer wrote: async-profiler 4.6's agent and
- * its {@code jfrconv -o otlp}, and async-profiler 4.1's agent. How each file was made, and its
- * sha256, is in {@code src/test/resources/real/README.md}. The expected values were decoded
- * independently, field by field against opentelemetry-proto's {@code profiles.proto}.
+ * The OTLP parser, OtlpPath and the compare reader against files a real producer wrote:
+ * async-profiler 4.6's agent and its {@code jfrconv -o otlp}, and async-profiler 4.1's agent. How
+ * each file was made, and its sha256, is in {@code src/test/resources/real/README.md}. The expected
+ * values were decoded independently, field by field against opentelemetry-proto's {@code
+ * profiles.proto}.
  */
 class RealOtlpProfilesTest {
 
@@ -108,7 +118,123 @@ class RealOtlpProfilesTest {
     assertTrue(e.getMessage().contains("v1.7.0"), e.getMessage());
   }
 
+  // --- the compare reader ---------------------------------------------------------------------
+
+  @Test
+  void theAgentsCpuProfileCountsItsSamples() throws Exception {
+    Path file = REAL.resolve("ap-cpu.otlp");
+    assertEquals(
+        List.of(new SampleTypeInfo("perf_events", "count", SamplerKind.CPU)),
+        new OtlpProfileReader().sampleTypes(file));
+    RecordingProfile profile = read("ap-cpu.otlp", null);
+    assertEquals("perf_events/count", profile.eventType());
+    assertSame(SamplerKind.CPU, profile.samplerKind());
+    assertTrue(profile.countsKnown());
+    assertEquals(
+        "default: the first CPU sample type; counts: the sample type itself",
+        profile.sampleTypeReason());
+    assertEquals(217, profile.sampleCount());
+    assertEquals(217, profile.totalWeight());
+    assertEquals(2.018187, profile.durationSeconds(), 1e-9);
+    // Dotted (the profile has $$Lambda frames), hidden-class addresses dropped.
+    assertEquals(133L, profile.leafFrameCounts().get("RealProf$Hasher.mix"));
+    assertTrue(profile.inclusiveFrameCounts().containsKey("java.lang.invoke.LambdaForm$MH.invoke"));
+    assertTrue(profile.inclusiveFrameCounts().containsKey("RealProf.main"));
+  }
+
+  @Test
+  void theAgentsWallAndAllocationProfilesHaveTheirKinds() throws Exception {
+    RecordingProfile wall = read("ap-wall.otlp", null);
+    assertSame(SamplerKind.WALL, wall.samplerKind());
+    assertTrue(wall.countsKnown());
+    assertEquals(903, wall.sampleCount());
+
+    RecordingProfile alloc = read("ap-alloc.otlp", null);
+    assertSame(SamplerKind.ALLOC_COUNT, alloc.samplerKind());
+    assertFalse(alloc.countsKnown(), alloc.sampleTypeReason());
+    assertEquals(1405, alloc.totalWeight());
+    // The agent marks the allocated class byte[]_[i]; the key drops the mark.
+    assertEquals(
+        java.util.Set.of("byte[]", "java.lang.String", "java.lang.Object[]"),
+        alloc.leafFrameWeights().keySet());
+  }
+
+  @Test
+  void jfrconvsTimestampOnlyProfileCountsEveryTimestamp() throws Exception {
+    RecordingProfile profile = read("conv-cpu.otlp", null);
+    assertEquals("cpu/count", profile.eventType());
+    assertTrue(profile.countsKnown());
+    assertEquals(216, profile.sampleCount());
+    assertEquals(133L, profile.leafFrameCounts().get("RealProf$Hasher.mix"));
+  }
+
+  @Test
+  void jfrconvNamesAWallProfileCpu() throws Exception {
+    // As in its pprof output: the reader cannot tell this wall profile from a CPU one.
+    RecordingProfile wall = read("conv-multi-wall.otlp", null);
+    assertEquals("cpu/count", wall.eventType());
+    assertSame(SamplerKind.CPU, wall.samplerKind());
+    assertEquals(945, wall.sampleCount());
+  }
+
+  @Test
+  void aProfileAgainstItselfMovesNothing() throws Exception {
+    RecordingProfile cpu = read("ap-cpu.otlp", null);
+    CompareResult result = ProfileCompare.compare(cpu, cpu, all(false));
+    assertFalse(result.frames().isEmpty());
+    for (List<Map<String, Object>> rows : List.of(result.frames(), result.inclusiveFrames())) {
+      for (Map<String, Object> row : rows) {
+        assertEquals(0.0, row.get("deltaPct"), row.toString());
+        assertEquals(false, row.get("significant"), row.toString());
+      }
+    }
+  }
+
+  @Test
+  void twoRunsOfOneProgramJudgeNoChange() throws Exception {
+    CompareResult result =
+        ProfileCompare.compare(read("ap-cpu.otlp", null), read("ap-cpu-b.otlp", null), all(false));
+    assertFalse(result.frames().isEmpty(), "the runs differ by noise, so rows exist");
+    for (List<Map<String, Object>> rows : List.of(result.frames(), result.inclusiveFrames())) {
+      for (Map<String, Object> row : rows) {
+        assertEquals(false, row.get("significant"), row.toString());
+      }
+    }
+  }
+
+  @Test
+  void theAgentsCpuAndWallProfilesAreRefusedTogether() throws Exception {
+    RecordingProfile cpu = read("ap-cpu.otlp", null);
+    RecordingProfile wall = read("ap-wall.otlp", null);
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class, () -> ProfileCompare.compare(cpu, wall, all(false)));
+    assertTrue(
+        e.getMessage()
+            .startsWith(
+                "Different samplers (baseline otlp perf_events/count measures CPU, candidate otlp"
+                    + " wall/count measures WALL)"),
+        e.getMessage());
+    RecordingProfile alloc = read("ap-alloc.otlp", null);
+    assertThrows(
+        IllegalArgumentException.class, () -> ProfileCompare.compare(cpu, alloc, all(true)));
+  }
+
   // --- helpers --------------------------------------------------------------------------------
+
+  private static RecordingProfile read(String file, String sampleType) throws Exception {
+    return new OtlpProfileReader().read(REAL.resolve(file), new ProfileSelection(sampleType, true));
+  }
+
+  private static CompareOptions all(boolean allowMixed) {
+    return new CompareOptions(
+        null,
+        0.0,
+        100_000,
+        true,
+        CompareOptions.MixedSamplers.forPair(
+            OtlpProfileReader.FORMAT, OtlpProfileReader.FORMAT, allowMixed));
+  }
 
   static List<Map<String, Object>> run(String file, String query) throws Exception {
     try (OtlpSession session = OtlpSession.open(REAL.resolve(file))) {
