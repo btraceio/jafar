@@ -170,6 +170,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **The thread-state analyses never matched a JDK recording's states (#276).** JDK recordings name
+  HotSpot's thread statuses (`STATE_RUNNABLE`, `STATE_BLOCKED_ON_MONITOR_ENTER`, `STATE_SLEEPING`,
+  ...), and `jfr_tsa` (and the `tsa` analysis of jfr-shell's `ask`), its thread assessments and
+  `jfr_use`'s thread-state CPU fallback compared them with `RUNNABLE`, `BLOCKED`, `WAITING`, so
+  nothing matched: without `jdk.CPULoad`, `jfr_use` reported 0% of samples runnable. A state is now
+  named by the `Thread.State` it is (a sleep or a timed park or wait is `TIMED_WAITING`, a park or
+  wait `WAITING`, a monitor enter `BLOCKED`), and so are the Datadog profiler's `CONTENDED`
+  (`BLOCKED`), `PARKED` (`WAITING`) and `SLEEPING` (`TIMED_WAITING`); `jfr_tsa`'s
+  `stateDistribution`, `topThreadsByState` and `stateBreakdown` keys change with them (`RUNNABLE`
+  for `STATE_RUNNABLE`). HotSpot's samplers record running threads only, so a JDK recording's
+  samples are all `RUNNABLE` whatever the threads did. When every sample is `RUNNABLE` the analyses
+  no longer read anything into it: `jfr_tsa` adds a `stateNote`, reports each thread's assessment as
+  `NOT_APPLICABLE`, emits no state pattern or problematic thread (the `jdk.JavaMonitorEnter`
+  correlation still applies), and the `jfr_use` fallback reports utilization and saturation as `N/A`
+  with the reason. JfrPath filters still compare the names the recording holds (#288). `jfr_use` on
+  a recording that does not declare `jdk.CPULoad` at all (one not written by the JDK) failed with
+  "Event type 'jdk.CPULoad' not found"; it now falls back to the thread states too (the memory and
+  I/O sections still fail that way: #291).
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

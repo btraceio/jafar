@@ -929,9 +929,13 @@ public final class JfrAnalyses {
 
     try {
       // Query jdk.CPULoad events for actual CPU utilization
-      String cpuLoadQuery = "events/jdk.CPULoad" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(cpuLoadQuery);
-      List<Map<String, Object>> cpuLoadEvents = evaluator.evaluate(target.session(), parsed);
+      // A recording that does not declare jdk.CPULoad (not every producer is the JDK) falls back
+      // to the thread states as one with no such events does; querying the type would throw
+      List<Map<String, Object>> cpuLoadEvents =
+          target.session().getAvailableTypes().contains("jdk.CPULoad")
+              ? evaluator.evaluate(
+                  target.session(), JfrPathParser.parse("events/jdk.CPULoad" + timeFilter))
+              : List.of();
 
       if (!cpuLoadEvents.isEmpty()) {
         // Calculate statistics from jdk.CPULoad events
@@ -1073,6 +1077,26 @@ public final class JfrAnalyses {
         long runnableCount = counters.get(1);
         long saturatedCount = counters.get(2);
         long totalSamples = counters.get(0);
+        if (runnableCount == totalSamples) {
+          // Every sample RUNNABLE: what a CPU sampler records, whatever the threads did (#276)
+          String why = statesUninformative(eventType, totalSamples);
+          Map<String, Object> utilization = new LinkedHashMap<>();
+          utilization.put("value", "N/A");
+          utilization.put("detail", why);
+          utilization.put("note", "Enable jdk.CPULoad events for CPU utilization.");
+          cpu.put("utilization", utilization);
+          Map<String, Object> saturation = new LinkedHashMap<>();
+          saturation.put("source", JfrFindings.SATURATION_THREAD_STATES);
+          saturation.put("value", "N/A");
+          saturation.put("detail", why);
+          cpu.put("saturation", saturation);
+          Map<String, Object> errors = new LinkedHashMap<>();
+          errors.put("value", 0);
+          errors.put("detail", "No compilation failures detected");
+          cpu.put("errors", errors);
+          cpu.put("assessment", "UNKNOWN");
+          return cpu;
+        }
         double threadStatePct = (runnableCount * 100.0) / totalSamples;
 
         Map<String, Object> utilization = new LinkedHashMap<>();
@@ -1738,6 +1762,11 @@ public final class JfrAnalyses {
       result.put("totalSamples", totalSamples);
       result.put("totalThreads", threadMetrics.size());
 
+      boolean statesInformative = !onlyRunnable(globalStateCount);
+      if (!statesInformative) {
+        result.put("stateNote", statesUninformative(eventType, totalSamples));
+      }
+
       // Global state distribution
       Map<String, Object> stateDistribution = new LinkedHashMap<>();
       for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
@@ -1755,7 +1784,8 @@ public final class JfrAnalyses {
 
       // Thread profiles
       List<Map<String, Object>> threadProfiles =
-          buildThreadProfiles(threadMetrics, totalSamples, correlations, queueCorrelations);
+          buildThreadProfiles(
+              threadMetrics, totalSamples, correlations, queueCorrelations, statesInformative);
       result.put("threadProfiles", threadProfiles);
 
       // Correlations
@@ -1775,7 +1805,12 @@ public final class JfrAnalyses {
         result.put(
             "insights",
             generateTsaInsights(
-                threadMetrics, globalStateCount, totalSamples, correlations, queueCorrelations));
+                threadMetrics,
+                globalStateCount,
+                totalSamples,
+                correlations,
+                queueCorrelations,
+                statesInformative));
         result.put(
             "findings", Findings.toMaps(Findings.merge(JfrFindings.fromTsa(result, "jfr_tsa"))));
       }
@@ -1904,7 +1939,8 @@ public final class JfrAnalyses {
       Map<String, ThreadStateMetrics> threadMetrics,
       long totalSamples,
       Map<String, MonitorCorrelation> correlations,
-      Map<String, QueueCorrelation> queueCorrelations) {
+      Map<String, QueueCorrelation> queueCorrelations,
+      boolean statesInformative) {
     return threadMetrics.values().stream()
         .sorted((a, b) -> Long.compare(b.totalSamples.sum(), a.totalSamples.sum()))
         .limit(20) // Top 20 threads by sample count
@@ -1930,7 +1966,11 @@ public final class JfrAnalyses {
               profile.put("stateBreakdown", stateBreakdown);
 
               // Assessment
-              profile.put("assessment", assessThreadBehavior(m.stateCount, m.totalSamples.sum()));
+              profile.put(
+                  "assessment",
+                  statesInformative
+                      ? assessThreadBehavior(m.stateCount, m.totalSamples.sum())
+                      : "NOT_APPLICABLE");
 
               // Add queue correlation info if available
               if (queueCorrelations != null && !queueCorrelations.isEmpty()) {
@@ -2014,14 +2054,24 @@ public final class JfrAnalyses {
       Map<String, Long> globalStateCount,
       long totalSamples,
       Map<String, MonitorCorrelation> correlations,
-      Map<String, QueueCorrelation> queueCorrelations) {
+      Map<String, QueueCorrelation> queueCorrelations,
+      boolean statesInformative) {
     Map<String, Object> insights = new LinkedHashMap<>();
     List<String> patterns = new ArrayList<>();
     List<Map<String, Object>> problematicThreads = new ArrayList<>();
     List<String> recommendations = new ArrayList<>();
+    if (!statesInformative) {
+      // No state patterns or thread assessments: the blocking-event correlations below still are
+      recommendations.add(
+          "Thread states cannot show blocking in these samples; jdk.JavaMonitorEnter events"
+              + " (correlateBlocking) show monitor contention");
+    }
 
     // Analyze global state distribution
-    for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
+    for (Map.Entry<String, Long> entry :
+        statesInformative
+            ? globalStateCount.entrySet()
+            : java.util.Set.<Map.Entry<String, Long>>of()) {
       double pct = (entry.getValue() * 100.0) / totalSamples;
       String state = entry.getKey();
 
@@ -2057,7 +2107,8 @@ public final class JfrAnalyses {
     }
 
     // Find problematic threads
-    for (ThreadStateMetrics m : threadMetrics.values()) {
+    for (ThreadStateMetrics m :
+        statesInformative ? threadMetrics.values() : List.<ThreadStateMetrics>of()) {
       String assessment = assessThreadBehavior(m.stateCount, m.totalSamples.sum());
       if ("LOCK_CONTENTION".equals(assessment)) {
         Map<String, Object> problem = new LinkedHashMap<>();
@@ -2343,12 +2394,74 @@ public final class JfrAnalyses {
     return value instanceof Number n ? n.longValue() : -1;
   }
 
+  /**
+   * A sample's thread state, named as {@link #normalizeState} names it; {@code UNKNOWN} if none.
+   */
   String extractState(Map<String, Object> event) {
     Object state = Values.get(event, "state", "name");
     if (state == null) {
       state = Values.get(event, "state");
     }
-    return state != null ? String.valueOf(unwrapValue(state)) : "UNKNOWN";
+    return state != null ? normalizeState(String.valueOf(unwrapValue(state))) : "UNKNOWN";
+  }
+
+  /**
+   * HotSpot's thread statuses, as JDK recordings name them ({@code jdk.types.ThreadState}), mapped
+   * to the {@link Thread.State} each one is: {@code Thread.sleep}, a timed {@code Object.wait} and
+   * {@code parkNanos} are {@code TIMED_WAITING}, {@code Object.wait} and {@code park} are {@code
+   * WAITING}, waiting to enter a monitor is {@code BLOCKED} (see {@link Thread.State}).
+   */
+  private static final Map<String, String> JDK_THREAD_STATES =
+      Map.of(
+          "STATE_NEW", "NEW",
+          "STATE_RUNNABLE", "RUNNABLE",
+          "STATE_SLEEPING", "TIMED_WAITING",
+          "STATE_IN_OBJECT_WAIT", "WAITING",
+          "STATE_IN_OBJECT_WAIT_TIMED", "TIMED_WAITING",
+          "STATE_PARKED", "WAITING",
+          "STATE_PARKED_TIMED", "TIMED_WAITING",
+          "STATE_BLOCKED_ON_MONITOR_ENTER", "BLOCKED",
+          "STATE_TERMINATED", "TERMINATED");
+
+  /**
+   * A thread state as the analyses compare it (#276). JDK recordings name HotSpot's statuses
+   * ({@code STATE_RUNNABLE}, {@code STATE_BLOCKED_ON_MONITOR_ENTER}, ...), which become their
+   * {@link Thread.State}; another {@code STATE_} name loses the prefix. Other recordings' names
+   * ({@code RUNNABLE} in Datadog's, {@code PARKED}) stay as they are.
+   */
+  static String normalizeState(String state) {
+    String mapped = JDK_THREAD_STATES.get(state);
+    if (mapped == null) {
+      mapped = DATADOG_THREAD_STATES.get(state);
+    }
+    if (mapped != null) {
+      return mapped;
+    }
+    return state.startsWith("STATE_") ? state.substring("STATE_".length()) : state;
+  }
+
+  /**
+   * The Datadog profiler's names ({@code datadog.ExecutionSample}'s state pool) that are not a
+   * {@link Thread.State}: contending for a monitor is {@code BLOCKED}, a park {@code WAITING}, a
+   * sleep {@code TIMED_WAITING}. Its other names ({@code RUNNABLE}, {@code NEW}, {@code SYSCALL},
+   * {@code BREAKPOINT}, ...) stay.
+   */
+  private static final Map<String, String> DATADOG_THREAD_STATES =
+      Map.of("CONTENDED", "BLOCKED", "PARKED", "WAITING", "SLEEPING", "TIMED_WAITING");
+
+  /** Whether every sample was RUNNABLE, so the states say nothing about blocking or waiting. */
+  static boolean onlyRunnable(Map<String, Long> stateCount) {
+    return stateCount.size() == 1 && stateCount.containsKey("RUNNABLE");
+  }
+
+  /** Why thread states give no utilization, saturation or assessment for these samples (#276). */
+  static String statesUninformative(String eventType, long samples) {
+    return "All "
+        + samples
+        + " "
+        + eventType
+        + " samples are RUNNABLE, as a CPU sampler records them: the thread states show neither"
+        + " utilization nor blocking";
   }
 
   /** See {@link EventThreads}: {@code sampledThread} for samples, else {@code eventThread}. */
