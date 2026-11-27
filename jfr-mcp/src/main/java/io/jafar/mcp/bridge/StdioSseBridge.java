@@ -110,6 +110,12 @@ public final class StdioSseBridge {
 
     /** On an SSE reader thread: a response has been relayed or dropped. */
     default void responseHandled(String idKey) {}
+
+    /**
+     * On the stdin thread: the replayed initialize was not answered in time, and the connection it
+     * was sent on is not yet closed.
+     */
+    default void replayTimedOut() {}
   }
 
   private static final Hooks NO_HOOKS = new Hooks() {};
@@ -117,8 +123,6 @@ public final class StdioSseBridge {
   private final Hooks hooks;
 
   private volatile boolean closing;
-  private volatile String swallowId;
-  private volatile CountDownLatch swallowLatch = new CountDownLatch(0);
 
   // All guarded by this.
   private Connection connection;
@@ -163,6 +167,16 @@ public final class StdioSseBridge {
      * answer. Only those are recorded, since a stream that has ended delivers nothing more.
      */
     final Set<String> failed = ConcurrentHashMap.newKeySet();
+
+    /**
+     * The id of the replayed initialize whose reply this stream must hide from the client, or
+     * {@code null}. Per connection (#318): a reply that comes late, on the stream of an attempt
+     * that gave up, is swallowed there, and cannot release another attempt's wait.
+     */
+    volatile String swallowId;
+
+    /** Opens when this stream carried the reply to {@link #swallowId}. */
+    final CountDownLatch swallowed = new CountDownLatch(1);
 
     Connection(DaemonEndpoint endpoint, HttpURLConnection http, InputStream stream) {
       this.endpoint = endpoint;
@@ -377,14 +391,14 @@ public final class StdioSseBridge {
     if (init == null || init.idJson() == null) {
       return; // cannot happen for a line we cached, but never replay what we cannot match
     }
-    swallowId = init.idJson();
-    swallowLatch = new CountDownLatch(1);
+    c.swallowId = init.idJson();
     int status = postTo(c, initializeLine);
     if (status >= 300) {
       throw new IOException("the daemon rejected the re-initialize: HTTP " + status);
     }
-    if (!swallowLatch.await(handshakeTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-      swallowId = null;
+    if (!c.swallowed.await(handshakeTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+      // c.swallowId stays set: a reply that still comes on this stream is not the client's
+      hooks.replayTimedOut();
       throw new IOException(
           "the daemon did not answer the re-initialize within "
               + handshakeTimeout.toMillis()
@@ -485,9 +499,9 @@ public final class StdioSseBridge {
       return;
     }
     String idKey = frame.idJson();
-    if (idKey.equals(swallowId)) {
-      swallowId = null;
-      swallowLatch.countDown();
+    if (idKey.equals(c.swallowId)) {
+      c.swallowId = null;
+      c.swallowed.countDown();
       return;
     }
     hooks.responseArriving(idKey);
