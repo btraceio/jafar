@@ -195,6 +195,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **JfrPath `[...]` and `filter(...)` disagreed on `== null` and on indexed paths (#309).**
+  `[x == null]` matched nothing for a missing `x` while `filter(x == null)` matched every such row,
+  and `filter(stackTrace/frames/0/lineNumber >= 0)` read `0` as a map key and matched nothing while
+  the `[...]` form matched. Both now treat `= null`/`!= null` as presence checks (a missing or null
+  field, a missing step on a nested path included), and `filter(...)` reads array indexes as
+  `[...]` does: so a slice that is not the last part of a path now fails in `filter(...)` as in
+  `[...]`. A path crossing an array without an index does not resolve, and reads as missing. The
+  `any:`/`all:`/`none:` forms are unchanged.
 - **`jfr_use`'s summary called recordings healthy without grounds (#297).** `overallAssessment`
   weighed only the resources' saturation shares, which only the CPU section reports (thread-state
   blocking or container throttling, in percent). With none (a JDK recording outside a container,
