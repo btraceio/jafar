@@ -36,8 +36,8 @@ class StdioSseBridgeTest {
    * message endpoint, and for the replayed initialize to be answered. A request sent while the
    * bridge must (re)connect is delivered only if one of three attempts gets both within it; when
    * all three time out the bridge fails the request and the daemon never sees it (#257: 1.5 s, on a
-   * loaded CI runner). Three attempts fit in {@link #WAIT_MS}, so a failed reconnect still shows
-   * the bridge's error. Production waits 10 seconds.
+   * loaded CI runner). Three timed-out waits fit in {@link #WAIT_MS}, so a failed reconnect usually
+   * still shows the bridge's error. Production waits 10 seconds.
    */
   private static final Duration HANDSHAKE_TIMEOUT = Duration.ofSeconds(3);
 
