@@ -170,6 +170,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **`jfr-shell -b <backend> <subcommand>` ignored the backend (#268).** The option was set on the
+  root command, and `show`, `metadata`, `chunks`, `cp`, `compare` and `script` read only their own
+  `-b`, so `jfr-shell -b jdk script q.jfrs` ran on the default backend without a word. A `-b`
+  before the subcommand now applies to it; given before and after with different values, or before
+  `tail` or `ps` (which use no backend), it is a usage error (exit 2). `compare` checks a `-b` even
+  when neither side is a recording, and a `-b` that an installed `JFRSHELL_BACKEND` overrides is an
+  error naming the variable, in interactive mode too (it reported the backend as missing and
+  downloaded it). In `jafar-shell`, a `-b`
+  before `script` now runs the script in the unified shell, as `script -b` does, and `script -b`
+  checks the backend instead of falling back to the default for an unknown one
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

@@ -32,6 +32,19 @@ java -Djfr.shell.backend=jdk -jar jfr-shell.jar
 java -jar jfr-shell.jar --backend jdk
 ```
 
+`--backend` (`-b`) can go before a subcommand or after it: `jfr-shell -b jdk script q.jfrs` and
+`jfr-shell script -b jdk q.jfrs` both run the script on the JDK backend, and so do the same two
+command lines with `jafar-shell`, where the script runs in the unified shell either way (unless
+another jfr-shell option, `--plugin-dir` or `--install-plugin`, comes before `script`: then
+jfr-shell runs it, for recordings only). Given on
+both sides, the two must name the same backend, or the command stops with a usage error (exit 2).
+Before `tail` or `ps`, which use no backend, it is a usage error too. `compare` checks a `-b` it
+is given even when neither side is a recording.
+
+`JFRSHELL_BACKEND` takes precedence over `--backend` when it names an installed backend: when the
+two then differ, the command stops with an error that names the variable. A `JFRSHELL_BACKEND`
+that names no installed backend is passed over, and `--backend` applies.
+
 ## Backend Capabilities
 
 Each backend declares a set of capabilities. JFR Shell adapts its features based on what the current backend supports.
