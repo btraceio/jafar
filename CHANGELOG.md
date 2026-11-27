@@ -164,12 +164,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Changed
+- **The parser uses one thread per processor by default** - `StreamingChunkParser.defaultParallelism()`
+  was `max(availableProcessors - 2, 1)`, 2 threads on 4 processors; it is now
+  `availableProcessors`. On a 4-processor machine and a 4.16 GB recording, 4 threads walked the
+  headers, decoded one type and decoded every event 1.6-1.7x faster than 2, and 6 or 8 were no
+  faster than 4. Pass `ParsingContext.withParallelism(n)` to keep processors free. The allocation
+  gate now pins `-XX:ActiveProcessorCount=2` (still a 2-thread pool). See
+  [doc/performance/ParserParallelism.md](doc/performance/ParserParallelism.md)
 - **`jfr_compare` and `jfr-shell compare` report dotted class names** - a frame's `method` was the
   class name as the recording stores it, `java/lang/String.indexOf`; it is now
   `java.lang.String.indexOf`, so it matches the same frame read from a pprof profile. Native frames
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **`groupBy`, `stats()`, `quantiles()` and `timerange()` got slower with more parser threads** -
+  each updated one shared accumulator under a lock for every event. They now accumulate per thread
+  and merge after the parse. On a 4.16 GB recording at the new default of 4 threads:
+  `groupBy(sampledThread/javaName)` 12.6-16.7 s -> 7.1-8.6 s, `timerange()` 15.3-18.9 s -> 8.6-9.4 s,
+  `quantiles()` 15.7-18.5 s -> 11.5-12.6 s, `stats()` 7.9-10.1 s -> 5.7-6.1 s; same results
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path
