@@ -170,6 +170,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **`jfr_use` memory and I/O failed on recordings that do not declare the JDK's types (#291).** A
+  JfrPath query naming an event type the recording does not declare throws "Event type ... not
+  found", and `jfr_use` queried `jdk.GCHeapSummary`, `jdk.GCPhasePause` and the four I/O types by
+  name, so on a recording not written by the JDK the memory and I/O sections reported "Failed to
+  analyze ..." instead of no data. They now query only the types the recording declares, and with no
+  heap figures the memory section's `assessment` is `UNKNOWN` instead of `HEALTHY`. The CPU
+  section's `jdk.CPULoad` query gets the same guard in PR #292.
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

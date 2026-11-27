@@ -1150,9 +1150,8 @@ public final class JfrAnalyses {
 
     try {
       // Get heap usage (after GC)
-      String heapQuery = "events/jdk.GCHeapSummary" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(heapQuery);
-      List<Map<String, Object>> heapEvents = evaluator.evaluate(target.session(), parsed);
+      List<Map<String, Object>> heapEvents =
+          declaredEvents(target, "jdk.GCHeapSummary", timeFilter);
 
       Map<String, Object> utilization = new LinkedHashMap<>();
       if (!heapEvents.isEmpty()) {
@@ -1191,9 +1190,7 @@ public final class JfrAnalyses {
       memory.put("utilization", utilization);
 
       // Get GC pause statistics
-      String gcQuery = "events/jdk.GCPhasePause" + timeFilter;
-      parsed = JfrPathParser.parse(gcQuery);
-      List<Map<String, Object>> gcEvents = evaluator.evaluate(target.session(), parsed);
+      List<Map<String, Object>> gcEvents = declaredEvents(target, "jdk.GCPhasePause", timeFilter);
 
       Map<String, Object> saturation = new LinkedHashMap<>();
       if (!gcEvents.isEmpty()) {
@@ -1268,9 +1265,13 @@ public final class JfrAnalyses {
       memory.put("errors", errors);
 
       // Assessment
-      double heapPct = utilization.get("value") instanceof Number n ? n.doubleValue() : 0.0;
-      double gcTimePct = 0.0; // Would need recording duration to calculate
-      memory.put("assessment", assessMemoryPressure(heapPct, gcTimePct));
+      // Without heap figures there is nothing to judge: not knowing is not "HEALTHY" (#291)
+      if (utilization.get("value") instanceof Number n) {
+        double gcTimePct = 0.0; // Would need recording duration to calculate
+        memory.put("assessment", assessMemoryPressure(n.doubleValue(), gcTimePct));
+      } else {
+        memory.put("assessment", "UNKNOWN");
+      }
 
     } catch (Exception e) {
       memory.put("error", "Failed to analyze memory: " + e.getMessage());
@@ -1491,25 +1492,34 @@ public final class JfrAnalyses {
       AtomicLong ioMaxNs = new AtomicLong(0L);
       LongAdder ioSlowCount = new LongAdder();
 
-      // Single-pass over all four I/O types
+      // Single pass over the I/O types the recording declares (#291: naming one it does not
+      // declare fails the query)
+      List<String> ioTypes =
+          java.util.stream.Stream.of(
+                  "jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead", "jdk.SocketWrite")
+              .filter(type -> declares(target, type))
+              .toList();
       JfrPath.Query ioParsed =
-          JfrPathParser.parse(
-              "events/(jdk.FileRead|jdk.FileWrite|jdk.SocketRead|jdk.SocketWrite)" + timeFilter);
-      evaluator.consume(
-          target.session(),
-          ioParsed,
-          event -> {
-            ioOps.increment();
-            Object durationObj = Values.get(event, "duration");
-            if (durationObj instanceof Number) {
-              long durationNs = ((Number) durationObj).longValue();
-              ioTotalNs.add(durationNs);
-              ioMaxNs.accumulateAndGet(durationNs, Math::max);
-              if (durationNs > 10_000_000) {
-                ioSlowCount.increment();
+          ioTypes.isEmpty()
+              ? null
+              : JfrPathParser.parse("events/(" + String.join("|", ioTypes) + ")" + timeFilter);
+      if (ioParsed != null) {
+        evaluator.consume(
+            target.session(),
+            ioParsed,
+            event -> {
+              ioOps.increment();
+              Object durationObj = Values.get(event, "duration");
+              if (durationObj instanceof Number) {
+                long durationNs = ((Number) durationObj).longValue();
+                ioTotalNs.add(durationNs);
+                ioMaxNs.accumulateAndGet(durationNs, Math::max);
+                if (durationNs > 10_000_000) {
+                  ioSlowCount.increment();
+                }
               }
-            }
-          });
+            });
+      }
       long totalOps = ioOps.longValue();
 
       if (totalOps > 0) {
@@ -2175,6 +2185,25 @@ public final class JfrAnalyses {
       long s = samples.sum();
       return s > 0 ? (totalDurationNs.sum() / (double) s) / 1_000_000.0 : 0.0;
     }
+  }
+
+  /**
+   * Whether the recording declares the event type. A JfrPath query that names a type the recording
+   * does not declare throws "Event type ... not found"; not every producer is the JDK (#291). As
+   * {@code JfrPathEvaluator.validateEventTypes}: with no type information the query is run.
+   */
+  private static boolean declares(AnalysisTarget target, String eventType) {
+    Set<String> types = target.session().getAvailableTypes();
+    return types == null || types.isEmpty() || types.contains(eventType);
+  }
+
+  /** The type's events in the window, or none when the recording does not declare the type. */
+  private List<Map<String, Object>> declaredEvents(
+      AnalysisTarget target, String eventType, String timeFilter) throws Exception {
+    return declares(target, eventType)
+        ? evaluator.evaluate(
+            target.session(), JfrPathParser.parse("events/" + eventType + timeFilter))
+        : List.of();
   }
 
   String extractState(Map<String, Object> event) {
