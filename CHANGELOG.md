@@ -418,6 +418,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing. THREAD_OBJ rows now carry it; HotSpot gives a thread's THREAD_OBJ and frame roots the
   same serial, so `groupBy(threadSerial)` counts now include each thread's object, and threads with
   no frame roots appear.
+- **HdumpPath heap diff reported every lambda and hidden class as new (#261).** A heap join matched
+  classes by name, and a hidden class's name carries its address
+  (`Collectors$$Lambda+0x0000000019009048` on JDK 21 and later), which differs between runs; before
+  JDK 21 a lambda's name carries a number that follows the order a run created its lambdas in
+  (`Main$$Lambda$1`). On two JDK 25 dumps of the same program from two runs, `classes |
+  join(session=1) | filter(baseline.exists = false)` returned 76 rows; it now returns none. Class
+  names in the join key are compared without those parts (`FrameNames.stableClassName`, next to the
+  frame normalizer `jfr_compare` uses). `classes` rows keyed by their name and grouped rows that
+  share a key, such as a lambda family or JDK 8's `LambdaForm$MH` classes, are paired in order, so a
+  family that gained classes still shows the extra ones as new; before, every row with a duplicate
+  key matched the baseline's first. Other rows (`objects`, ...) keep matching the first.
 - **HdumpPath `join(session=N)` after `groupBy` never matched the baseline (#260).** The baseline
   was evaluated without the pipeline, on the root's default key, so grouped rows were compared with
   raw objects or roots: every group had `baseline.exists=false` and `countDelta == count`, and the

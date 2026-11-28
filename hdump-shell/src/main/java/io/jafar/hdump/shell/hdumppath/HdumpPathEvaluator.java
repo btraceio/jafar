@@ -10,6 +10,7 @@ import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.SessionResolver;
+import io.jafar.shell.core.compare.FrameNames;
 import io.jafar.shell.core.expr.BinaryExpr;
 import io.jafar.shell.core.expr.FieldRef;
 import io.jafar.shell.core.expr.NumberLiteral;
@@ -1724,14 +1725,28 @@ public final class HdumpPathEvaluator {
     // Evaluate baseline
     List<Map<String, Object>> baselineResults = evaluate(baseHeapSession, baselineQuery);
 
-    // Index baseline results by join key (first occurrence wins for duplicate keys)
-    Map<Object, Map<String, Object>> baselineIndex = new LinkedHashMap<>();
+    // Class names are compared without their per-run parts (#261): a lambda or hidden class has a
+    // different name in each dump
+    boolean[] classNameKey = new boolean[keyFields.size()];
+    for (int i = 0; i < classNameKey.length; i++) {
+      classNameKey[i] = isClassNameField(keyFields.get(i), query.root());
+    }
+
+    // Index baseline results by join key, every row with the key in order
+    Map<Object, List<Map<String, Object>>> baselineIndex = new LinkedHashMap<>();
     for (Map<String, Object> row : baselineResults) {
-      Object key = joinKeyOf(row, keyFields, grouped);
+      Object key = joinKeyOf(row, keyFields, classNameKey, grouped);
       if (key != null) {
-        baselineIndex.putIfAbsent(key, row);
+        baselineIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
       }
     }
+    // Group rows, and classes rows keyed by their name, pair in order (k-th with the baseline's
+    // k-th): such a row is one group or class, and rows that share the key are a family of classes
+    // (every Collectors lambda, or the JDK 8 LambdaForm$MH classes, which share one name). Other
+    // rows (objects, roots, classes joined by=superClass, ...) all match the first baseline row
+    // with their key.
+    boolean pairInOrder = grouped || (query.root() == Root.CLASSES && classNameKey[0]);
+    Map<Object, Integer> pairedSoFar = new HashMap<>();
 
     // Collect numeric field names from baseline for delta computation
     Set<String> numericFields = new LinkedHashSet<>();
@@ -1755,8 +1770,16 @@ public final class HdumpPathEvaluator {
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
     for (Map<String, Object> row : results) {
       Map<String, Object> out = aliasCopy(row);
-      Object key = joinKeyOf(row, keyFields, grouped);
-      Map<String, Object> baseRow = key != null ? baselineIndex.get(key) : null;
+      Object key = joinKeyOf(row, keyFields, classNameKey, grouped);
+      List<Map<String, Object>> candidates = key != null ? baselineIndex.get(key) : null;
+      Map<String, Object> baseRow = null;
+      if (candidates != null && pairInOrder) {
+        // Classes a family gained have no baseline row left
+        int k = pairedSoFar.merge(key, 1, Integer::sum) - 1;
+        baseRow = k < candidates.size() ? candidates.get(k) : null;
+      } else if (candidates != null) {
+        baseRow = candidates.get(0); // first occurrence wins for duplicate keys
+      }
 
       out.put("baseline.exists", baseRow != null);
 
@@ -1805,18 +1828,29 @@ public final class HdumpPathEvaluator {
   /**
    * A row's join key. Ungrouped: the one field's value, or null (no key, no match). Grouped: the
    * list of the group fields' values, nulls included, so a null group (e.g. {@code arrayLength} of
-   * non-arrays) matches its baseline group as {@code groupRows} built it.
+   * non-arrays) matches its baseline group as {@code groupRows} built it. A class-name field's
+   * value is {@link FrameNames#stableClassName}.
    */
   private static Object joinKeyOf(
-      Map<String, Object> row, List<String> keyFields, boolean grouped) {
-    if (!grouped) {
-      return getField(row, keyFields.get(0));
+      Map<String, Object> row, List<String> keyFields, boolean[] classNameKey, boolean grouped) {
+    List<Object> values = new ArrayList<>(keyFields.size());
+    for (int i = 0; i < keyFields.size(); i++) {
+      Object value = getField(row, keyFields.get(i));
+      if (classNameKey[i] && value instanceof String name) {
+        value = FrameNames.stableClassName(name);
+      }
+      values.add(value);
     }
-    List<Object> key = new ArrayList<>(keyFields.size());
-    for (String field : keyFields) {
-      key.add(getField(row, field));
-    }
-    return key;
+    return grouped ? values : values.get(0);
+  }
+
+  /**
+   * Whether {@code field} holds a class name: an object's class, or a {@code classes} row's name.
+   */
+  private static boolean isClassNameField(String field, Root root) {
+    String canonical = FIELD_ALIASES.getOrDefault(field, field);
+    return ObjectFields.CLASS_NAME.equals(canonical)
+        || (root == Root.CLASSES && ClassFields.NAME.equals(canonical));
   }
 
   @SuppressWarnings("unchecked")
