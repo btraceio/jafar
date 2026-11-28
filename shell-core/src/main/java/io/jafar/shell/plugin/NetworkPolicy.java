@@ -11,10 +11,11 @@ import java.util.Locale;
  * backend uses one already installed or fails, saying so. Installing a plugin from a local jar
  * still works.
  *
- * <p>It is on when the system property {@value #PROPERTY} or the environment variable {@value #ENV}
- * is {@code true}, {@code 1} or {@code yes}, or the command line has {@value #FLAG} (see {@link
- * #applyFlag}). It is read at each use, so it holds whenever the property is set before the first
- * network access.
+ * <p>It is on when the command line has {@value #FLAG} (see {@link #applyFlag}), or the system
+ * property {@value #PROPERTY} is {@code true}, {@code 1} or {@code yes}, or, with the property not
+ * set, the environment variable {@value #ENV} is: a property set to anything else, such as {@code
+ * false}, turns it off for one run whatever the variable says. It is read at each use, so it holds
+ * whenever the property is set before the first network access.
  */
 public final class NetworkPolicy {
 
@@ -31,7 +32,8 @@ public final class NetworkPolicy {
 
   /** Whether offline mode is on. */
   public static boolean offline() {
-    return isOn(System.getProperty(PROPERTY)) || isOn(System.getenv(ENV));
+    String property = System.getProperty(PROPERTY);
+    return property != null ? isOn(property) : isOn(System.getenv(ENV));
   }
 
   static boolean isOn(String value) {
@@ -43,18 +45,24 @@ public final class NetworkPolicy {
   }
 
   /**
-   * Takes {@value #FLAG} out of a command line, turning offline mode on if it was there. Only the
-   * arguments before a {@code --} separator are looked at: those after it belong to a script.
+   * Takes {@value #FLAG} and {@code --offline=<value>} out of a command line, turning offline mode
+   * on (or, for a value that is not on, off) as the last of them says. Only the arguments before a
+   * {@code --} separator are looked at: those after it belong to a script. The flag is never an
+   * option's value: {@code -b --offline} is {@code -b} followed by the flag.
    *
    * @return the command line without the flag
    */
   public static String[] applyFlag(String[] args) {
     List<String> rest = new ArrayList<>(args.length);
-    boolean found = false;
+    String value = null;
     boolean afterSeparator = false;
     for (String arg : args) {
       if (!afterSeparator && FLAG.equals(arg)) {
-        found = true;
+        value = "true";
+        continue;
+      }
+      if (!afterSeparator && arg.startsWith(FLAG + "=")) {
+        value = arg.substring(FLAG.length() + 1);
         continue;
       }
       if ("--".equals(arg)) {
@@ -62,14 +70,22 @@ public final class NetworkPolicy {
       }
       rest.add(arg);
     }
-    if (found) {
-      System.setProperty(PROPERTY, "true");
+    if (value != null) {
+      System.setProperty(PROPERTY, isOn(value) ? "true" : "false");
     }
     return rest.toArray(new String[0]);
   }
 
   /** Why {@code what} cannot be done in offline mode, and what to do instead. */
   public static String refusal(String what) {
+    return refusal(
+        what,
+        "Install a plugin from a local jar with --install-plugin <jar>, point -Djfr.shell"
+            + ".backend.jars=<jar> at a backend jar, or run without offline mode to download it");
+  }
+
+  /** As {@link #refusal(String)}, with the remedy given. */
+  public static String refusal(String what, String remedy) {
     return "offline mode ("
         + FLAG
         + ", -D"
@@ -78,7 +94,7 @@ public final class NetworkPolicy {
         + ENV
         + ") forbids "
         + what
-        + ". Install a plugin from a local jar with --install-plugin <jar>, point -Djfr.shell"
-        + ".backend.jars=<jar> at a backend jar, or run without offline mode to download it";
+        + ". "
+        + remedy;
   }
 }

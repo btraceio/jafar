@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -58,6 +59,9 @@ class OfflineModeTest {
 
   @BeforeEach
   void setUp() throws IOException {
+    // The online controls clear the property, which is all it takes only while the variable is
+    // not set to on as well (a property set to false would win, but clearing is what they test)
+    assumeFalse(NetworkPolicy.isOn(System.getenv(NetworkPolicy.ENV)), NetworkPolicy.ENV + " is on");
     server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
     server.createContext(
         "/",
@@ -73,7 +77,7 @@ class OfflineModeTest {
     savedRemote = System.getProperty("jfr.shell.registry.remote");
     savedUserHome = System.getProperty("user.home");
     savedPluginDir = System.getProperty("jfr.shell.plugin.dir");
-    // The build turns the remote registry off for every test; here it must be on, so that only
+    // The plugin-system test task turns the remote registry off; here it must be on, so that only
     // offline mode stands between the registry and the server.
     System.clearProperty("jfr.shell.registry.remote");
     System.setProperty("user.home", tempDir.toString());
@@ -216,6 +220,25 @@ class OfflineModeTest {
             new String[] {"show", "--offline", "x.jfr", "q", "--", "--offline"});
     assertArrayEquals(new String[] {"show", "x.jfr", "q", "--", "--offline"}, rest);
     assertTrue(NetworkPolicy.offline());
+  }
+
+  @Test
+  void flagWithAValue() {
+    offline(false);
+    assertArrayEquals(
+        new String[] {"show", "x.jfr"},
+        NetworkPolicy.applyFlag(new String[] {"--offline=true", "show", "x.jfr"}));
+    assertTrue(NetworkPolicy.offline());
+    // The last one wins, and a value that is not on turns the mode off for this run
+    NetworkPolicy.applyFlag(new String[] {"--offline", "show", "--offline=false"});
+    assertEquals("false", System.getProperty(NetworkPolicy.PROPERTY));
+    assertFalse(NetworkPolicy.offline());
+  }
+
+  @Test
+  void propertyOffWins() {
+    System.setProperty(NetworkPolicy.PROPERTY, "false");
+    assertFalse(NetworkPolicy.offline());
   }
 
   @Test

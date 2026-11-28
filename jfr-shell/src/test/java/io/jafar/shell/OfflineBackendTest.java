@@ -95,4 +95,23 @@ class OfflineBackendTest {
       assertTrue(stderr.contains("forbids downloading backend 'nosuch'"), stderr);
     }
   }
+
+  @Test
+  void unknownBackendOfflineListsTheBackendsThereAre() throws PluginInstallException {
+    try (MockedStatic<PluginManager> pmStatic = mockStatic(PluginManager.class)) {
+      PluginManager pm = mock(PluginManager.class);
+      pmStatic.when(PluginManager::getInstance).thenReturn(pm);
+      when(pm.canInstall(anyString())).thenReturn(false);
+
+      int exit = Main.validateBackend("jdkk", null);
+
+      assertEquals(1, exit);
+      verify(pm, never()).installPlugin(anyString());
+      String stderr = err.toString();
+      // Nothing could be downloaded, online or not: no offline refusal, the usual list instead
+      assertFalse(stderr.contains("offline mode"), stderr);
+      assertTrue(stderr.contains("Error: Backend not found: jdkk"), stderr);
+      assertTrue(stderr.contains("Available backends: "), stderr);
+    }
+  }
 }

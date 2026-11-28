@@ -83,8 +83,9 @@ public final class Main implements Callable<Integer> {
       description = "Launch full-screen TUI mode instead of readline REPL")
   private boolean tui;
 
-  // Never parsed: main takes it out of the command line wherever it is (NetworkPolicy.applyFlag),
-  // so it works after a subcommand too. Declared so that --help lists it.
+  // Mostly never parsed: main takes it out of the command line wherever it is
+  // (NetworkPolicy.applyFlag), so it works after a subcommand too. Declared so that --help lists
+  // it, and read for an @argfile holding it.
   @CommandLine.Option(
       names = {NetworkPolicy.FLAG},
       description =
@@ -118,6 +119,11 @@ public final class Main implements Callable<Integer> {
       // A usage error (missing or malformed arguments): say what is wrong and how the command is
       // used, as picocli's own handler would, instead of escaping with a stack trace.
       System.exit(usageError(e));
+    }
+
+    // The spellings applyFlag leaves alone: inside an @argfile, which picocli expands
+    if (main.offline) {
+      System.setProperty(NetworkPolicy.PROPERTY, "true");
     }
 
     // Set plugin directory if specified
@@ -290,13 +296,15 @@ public final class Main implements Callable<Integer> {
       // If user specified a backend, verify it was selected
       if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
         // Check if plugin can be auto-installed
-        if (NetworkPolicy.offline()) {
-          System.err.println("Error: Backend not found: " + backend);
-          System.err.println(
-              "Error: " + NetworkPolicy.refusal("downloading backend '" + backend + "'"));
-          return false;
-        }
         if (PluginManager.getInstance().canInstall(backend)) {
+          // Offline, only a backend that could be downloaded gets the refusal: an unknown id
+          // falls through to the list of the backends there are, as it does online
+          if (NetworkPolicy.offline()) {
+            System.err.println("Error: Backend not found: " + backend);
+            System.err.println(
+                "Error: " + NetworkPolicy.refusal("downloading backend '" + backend + "'"));
+            return false;
+          }
           System.err.println("Backend not found: " + backend);
           System.err.print("Downloading from Maven repositories... ");
 
@@ -470,13 +478,15 @@ public final class Main implements Callable<Integer> {
       JfrBackend current = registry.getCurrent();
       warnIfBackendNotFromThisBuild(current);
       if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
-        if (NetworkPolicy.offline()) {
-          System.err.println("Error: Backend not found: " + backend);
-          System.err.println(
-              "Error: " + NetworkPolicy.refusal("downloading backend '" + backend + "'"));
-          return 1;
-        }
         if (PluginManager.getInstance().canInstall(backend)) {
+          // Offline, only a backend that could be downloaded gets the refusal: an unknown id
+          // falls through to the list of the backends there are, as it does online
+          if (NetworkPolicy.offline()) {
+            System.err.println("Error: Backend not found: " + backend);
+            System.err.println(
+                "Error: " + NetworkPolicy.refusal("downloading backend '" + backend + "'"));
+            return 1;
+          }
           System.err.println("Backend not found: " + backend);
           System.err.print("Downloading from Maven repositories... ");
           try {
