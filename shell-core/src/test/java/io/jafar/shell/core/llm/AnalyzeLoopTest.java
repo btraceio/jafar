@@ -68,7 +68,8 @@ class AnalyzeLoopTest {
       List.of(PromptBuilder.TypeEntry.documented("jdk.ExecutionSample", "Samples", null));
 
   private static LlmService service(LlmBackend backend, Map<String, String> settings) {
-    return new LlmService(backend, new LlmConfig(settings::get));
+    return new LlmService(
+        backend, new LlmConfig(settings::get, Optional::empty, Map.<String, String>of()::get));
   }
 
   private static LlmService.Investigation run(LlmService service, LlmService.QueryRunner runner)
