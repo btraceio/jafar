@@ -462,6 +462,54 @@ RUN java -jar /app/jfr-shell.jar --install-plugin /tmp/jfr-shell-jdk-1.0.0.jar &
 ENTRYPOINT ["java", "-jar", "/app/jfr-shell.jar"]
 ```
 
+### Offline mode
+
+By default, a command that finds no backend installed downloads the default one (`jafar`) from
+Maven Central, `--backend <id>` downloads a backend that is not installed, the plugin system
+fetches the plugin catalog from GitHub, and the interactive shell checks for plugin updates.
+Offline mode turns all of these off: nothing in the plugin system uses the network. It does not
+touch anything else: an installed LLM backend still talks to its endpoint (see
+[LLM setup](LlmSetup.md)).
+
+```bash
+# Any one of these
+java -jar jfr-shell.jar --offline show recording.jfr 'events/jdk.ExecutionSample | count()'
+java -jar jfr-shell.jar show recording.jfr 'events/jdk.ExecutionSample | count()' --offline
+java -Djfr.shell.offline=true -jar jfr-shell.jar show recording.jfr '...'
+JFRSHELL_OFFLINE=true java -jar jfr-shell.jar show recording.jfr '...'
+```
+
+- `--offline` may stand anywhere on the command line before a `--`, but not as another option's
+  value (`-b --offline` is `-b` without a value); `jafar-shell` takes it too. `--offline=<value>`
+  works as the property does. In an `@argfile` (jfr-shell only) just the bare `--offline` is
+  read, and only to turn the mode on.
+- The property and the variable are on for `true`, `1` or `yes`. A property set to anything else
+  (`-Djfr.shell.offline=false`, `--offline=false`) turns the mode off for that run even when
+  `JFRSHELL_OFFLINE` is on.
+- A backend already installed, or one given with `-Djfr.shell.backend.jars=<jar>`, is used as
+  usual.
+- With no backend installed, a jfr-shell command (`show`, `metadata`, `chunks`, `cp`, `compare`
+  with a JFR side, `script`, or the interactive shell) fails before reading the recording, exit
+  status 1. (`jafar-shell` bundles the `jafar` and `jdk` JFR backends and never installs one.)
+
+  ```
+  No backends installed; offline mode (--offline, -Djfr.shell.offline or JFRSHELL_OFFLINE) forbids installing the default backend from Maven. Install a plugin from a local jar with --install-plugin <jar>, point -Djfr.shell.backend.jars=<jar> at a backend jar, or run without offline mode to download it
+  Error: No JFR backends available
+  ```
+
+- `--backend <id>` naming a backend that is not installed but is in the bundled catalog fails the
+  same way, in both shells; any other id is reported with the list of installed backends, as
+  without offline mode.
+- An LLM backend named in the LLM configuration but not installed is not downloaded either, in
+  both shells (see [LLM setup](LlmSetup.md)).
+- `--install-plugin <jar>` still works: it reads only the local jar.
+- No Maven resolution runs: a released backend found only in `~/.m2/repository` is not installed
+  from there (give its jar to `--install-plugin`). SNAPSHOT backends in `~/.m2` are still loaded,
+  as without offline mode.
+
+Without offline mode nothing changes. `-Djfr.shell.registry.remote=false` still turns off only
+the catalog fetch, not the download of a missing backend.
+
 ### Custom Plugin Directory
 
 Use `--plugin-dir` to specify an alternative plugin directory:
