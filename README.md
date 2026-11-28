@@ -291,6 +291,40 @@ were 8.8% faster in median over 8 paired runs.
 "... does not implement HandlerFactory.create ... Rebuild it with the current jafar-processor".
 Rebuild them with the processor of the same Jafar version.
 
+#### Or: Generate the Interface From Your `jdk.jfr.Event` Class
+
+An event class you already commit can be read back without declaring its fields a second time
+(#89). Annotate it `@GenerateJfrType`, and the processor writes the `@JfrType` interface (and,
+as for any interface, its handler):
+
+```java
+@GenerateJfrType
+@Name("com.example.Request")
+public class RequestEvent extends jdk.jfr.Event {
+    @Label("Request ID") String requestId;
+    long bytes;
+}
+
+// generated in com.example:
+//   @JfrType("com.example.Request") public interface RequestEventJfr {
+//     long startTime(); long duration(); JfrThread eventThread(); String requestId(); long bytes();
+//   }
+parser.handle(RequestEventJfr.class, (e, ctl) -> System.out.println(e.requestId() + " " + e.bytes()));
+```
+
+- The interface is named after the class with `Jfr` appended (a nested class's enclosing class
+  names first: `Outer.Inner` gives `OuterInnerJfr`), or `@GenerateJfrType("Name")`.
+- Its accessors are the fields JFR records for the class: non-static, non-transient fields, its
+  superclasses' included, of a primitive type, `String` or `Thread`, named by the field's
+  `@jdk.jfr.Name` or else its own name - never its `@Label`, a display string. `startTime()`,
+  `duration()` and `eventThread()` are added. `Thread` values use a `JfrThread` interface
+  (`osName`, `osThreadId`, `javaName`, `javaThreadId`) generated once per package. A field of any
+  other type (`Class`, an array, ...) is left out, with a compiler note.
+- The event is read like any typed event: lazily, into a reused instance. No instance of the
+  event class is created, so the parser's allocation profile is that of a hand-written interface.
+- It is a compile error on a class that does not extend `jdk.jfr.Event`, on an abstract class
+  (JFR records only concrete ones), and when the interface's name is taken.
+
 #### 3. Parse Events (Factories Auto-Discovered)
 
 ```java
