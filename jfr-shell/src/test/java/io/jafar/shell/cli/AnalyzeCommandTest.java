@@ -125,7 +125,11 @@ class AnalyzeCommandTest {
 
   private static LlmCommands commands(Host host, ScriptedBackend backend) {
     LlmCommands commands = new LlmCommands(host);
-    commands.pinService(new LlmService(backend, new LlmConfig(host.settings::get)));
+    commands.pinService(
+        new LlmService(
+            backend,
+            new LlmConfig(
+                host.settings::get, java.util.Optional::empty, Map.<String, String>of()::get)));
     return commands;
   }
 

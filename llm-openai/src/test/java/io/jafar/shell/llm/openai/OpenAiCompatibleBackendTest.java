@@ -85,7 +85,7 @@ class OpenAiCompatibleBackendTest {
     // No settings-file fallback: a developer machine with a real ~/.config/jafar/llm.properties
     // (llm.model=…) must not leak into these assertions — the model then overrides the profile
     // default and the test fails everywhere except on machines without the file.
-    return new LlmConfig(settings::get, java.util.Optional::empty);
+    return new LlmConfig(settings::get, java.util.Optional::empty, Map.<String, String>of()::get);
   }
 
   private static LlmRequest request() {
@@ -208,7 +208,11 @@ class OpenAiCompatibleBackendTest {
 
   @Test
   void readinessReportsAnUnreachableLocalEndpointWithAFix() {
-    LlmConfig config = new LlmConfig(Map.of("llm.base-url", "http://127.0.0.1:1/v1")::get);
+    LlmConfig config =
+        new LlmConfig(
+            Map.of("llm.base-url", "http://127.0.0.1:1/v1")::get,
+            java.util.Optional::empty,
+            Map.<String, String>of()::get);
     LlmBackend.Readiness readiness = new TestBackend().readiness(config);
 
     assertFalse(readiness.ready());
@@ -221,7 +225,11 @@ class OpenAiCompatibleBackendTest {
     assertEquals("ollama", ollama.id());
     // No key required: readiness must not fail for a missing credential, only for an absent server.
     LlmBackend.Readiness readiness =
-        ollama.readiness(new LlmConfig(Map.of("llm.base-url", "http://127.0.0.1:1/v1")::get));
+        ollama.readiness(
+            new LlmConfig(
+                Map.of("llm.base-url", "http://127.0.0.1:1/v1")::get,
+                java.util.Optional::empty,
+                Map.<String, String>of()::get));
     assertFalse(readiness.ready());
     assertTrue(readiness.detail().contains("Cannot reach"), readiness.detail());
     assertTrue(ollama.credentialHelp().contains("ollama serve"), ollama.credentialHelp());
@@ -231,7 +239,12 @@ class OpenAiCompatibleBackendTest {
   void openAiRequiresAKeyAndSaysSo() {
     OpenAiBackend openai = new OpenAiBackend();
     assertEquals("openai", openai.id());
-    LlmBackend.Readiness readiness = openai.readiness(new LlmConfig(Map.<String, String>of()::get));
+    LlmBackend.Readiness readiness =
+        openai.readiness(
+            new LlmConfig(
+                Map.<String, String>of()::get,
+                java.util.Optional::empty,
+                Map.<String, String>of()::get));
     if (System.getenv("OPENAI_API_KEY") == null) {
       assertFalse(readiness.ready());
       assertTrue(readiness.detail().contains("No API key"), readiness.detail());

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -13,7 +14,9 @@ import org.junit.jupiter.api.Test;
 class LlmConfigTest {
 
   private static LlmConfig of(Map<String, String> settings) {
-    return new LlmConfig(settings::get, Optional::empty);
+    // Empty environment and settings file: the test must not see the process env or the
+    // developer's ~/.config/jafar/llm.properties.
+    return new LlmConfig(settings::get, Optional::empty, Map.<String, String>of()::get);
   }
 
   @Test
@@ -129,6 +132,43 @@ class LlmConfigTest {
   void describeShowsRedactionOffLoudly() {
     assertTrue(of(Map.of("llm.redact", "false")).describe().contains("OFF"));
     assertTrue(of(Map.of()).describe().contains("on"));
+  }
+
+  @Test
+  void theAmbientEnvironmentIsNotConsultedWhenTheEnvSeamIsEmpty() {
+    // An empty environment source: every value must come from the defaults (or shell settings),
+    // never from the process environment — even when a developer shell exports JAFAR_LLM_*.
+    List<String> consulted = new java.util.ArrayList<>();
+    java.util.function.Function<String, String> emptyEnv =
+        name -> {
+          consulted.add(name);
+          return null;
+        };
+    LlmConfig config = new LlmConfig(Map.<String, String>of()::get, Optional::empty, emptyEnv);
+    assertTrue(config.enabled());
+    assertEquals("auto", config.backendId());
+    assertNull(config.model());
+    assertNull(config.apiKey());
+    assertNull(config.baseUrl());
+    assertEquals(LlmConfig.DEFAULT_MAX_ROWS, config.maxRows());
+    assertEquals(LlmConfig.DEFAULT_MAX_RETRIES, config.maxRetries());
+    assertTrue(config.redactionEnabled());
+    assertEquals(LlmConfig.Source.DEFAULT, config.sourceOf("llm.model", "JAFAR_LLM_MODEL"));
+    assertTrue(config.describe().contains("on"));
+    assertTrue(consulted.contains("JAFAR_LLM_MODEL"), "the env seam is the only env channel");
+  }
+
+  @Test
+  void theEnvSeamIsConsultedAndLosesToShellVariables() {
+    Map<String, String> env =
+        Map.of("JAFAR_LLM_MODEL", "from-env", "JAFAR_LLM_BACKEND", "from-env-backend");
+    LlmConfig fromEnv = new LlmConfig(Map.<String, String>of()::get, Optional::empty, env::get);
+    assertEquals("from-env", fromEnv.model());
+    assertEquals("from-env-backend", fromEnv.backendId());
+    assertEquals(LlmConfig.Source.ENVIRONMENT, fromEnv.sourceOf("llm.model", "JAFAR_LLM_MODEL"));
+    LlmConfig shellWins =
+        new LlmConfig(Map.of("llm.model", "from-shell")::get, Optional::empty, env::get);
+    assertEquals("from-shell", shellWins.model());
   }
 
   @Test
