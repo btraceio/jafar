@@ -21,7 +21,9 @@ import picocli.CommandLine;
       "JFR commands: show, metadata, chunks, constants (cp).",
       "compare <baseline> <candidate> [options]: compare two JFR recordings, pprof or",
       "  OTLP profiles, in any pairing (see 'jafar-shell compare --help').",
-      "JFR options: --backend, --plugin-dir, --install-plugin."
+      "JFR options: --backend, --plugin-dir, --install-plugin.",
+      "--offline (anywhere before '--'): never use the network for plugins; a backend that is",
+      "  not installed is not downloaded (also -Djfr.shell.offline=true, JFRSHELL_OFFLINE=true)."
     })
 public final class Main implements Callable<Integer> {
 
@@ -206,6 +208,8 @@ public final class Main implements Callable<Integer> {
   }
 
   public static void main(String[] args) {
+    // Before anything reads the plugin system, so no step below it can use the network (#235)
+    args = io.jafar.shell.plugin.NetworkPolicy.applyFlag(args);
     if (isJfrCommandLine(args)) {
       io.jafar.shell.Main.main(args);
       return;

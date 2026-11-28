@@ -39,6 +39,9 @@ final class UpdateChecker {
   List<PluginUpdate> checkForUpdates(Map<String, PluginMetadata> installed) {
     log.debug("Checking for updates for {} installed plugins", installed.size());
     List<PluginUpdate> updates = new ArrayList<>();
+    if (NetworkPolicy.offline()) {
+      return updates;
+    }
     registry.refreshIfNeeded();
 
     for (Map.Entry<String, PluginMetadata> entry : installed.entrySet()) {

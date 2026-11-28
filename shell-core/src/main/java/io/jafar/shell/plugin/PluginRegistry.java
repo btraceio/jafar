@@ -447,6 +447,12 @@ final class PluginRegistry {
 
   /** Load remote plugin registry from GitHub or cache. */
   private void loadRemotePlugins() {
+    if (NetworkPolicy.offline()) {
+      log.debug("Remote plugin registry not fetched: offline mode");
+      this.remotePlugins = new HashMap<>();
+      this.lastRemoteFetch = Instant.now();
+      return;
+    }
     if ("false".equals(System.getProperty("jfr.shell.registry.remote", "true"))) {
       // Test isolation / air-gapped builds: the remote fetch fires at plugin-system construction,
       // so tests that bind the singleton to fixture directories shut it off at task level.
