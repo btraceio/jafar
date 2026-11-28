@@ -314,16 +314,22 @@ parser.handle(RequestEventJfr.class, (e, ctl) -> System.out.println(e.requestId(
 
 - The interface is named after the class with `Jfr` appended (a nested class's enclosing class
   names first: `Outer.Inner` gives `OuterInnerJfr`), or `@GenerateJfrType("Name")`.
-- Its accessors are the fields JFR records for the class: non-static, non-transient fields, its
-  superclasses' included, of a primitive type, `String` or `Thread`, named by the field's
-  `@jdk.jfr.Name` or else its own name - never its `@Label`, a display string. `startTime()`,
-  `duration()` and `eventThread()` are added. `Thread` values use a `JfrThread` interface
-  (`osName`, `osThreadId`, `javaName`, `javaThreadId`) generated once per package. A field of any
-  other type (`Class`, an array, ...) is left out, with a compiler note.
+- Its accessors are the fields JFR records for the class: the class's own non-static,
+  non-transient fields and its superclasses' that are not private, of a primitive type, `String`
+  or `Thread`, named by the field's `@jdk.jfr.Name` when that is a valid Java identifier and else
+  its own name (JFR does the same) - never its `@Label`, a display string. `startTime()`,
+  `duration()` and `eventThread()` are added. The event name is the class's `@jdk.jfr.Name`, or
+  its binary name when that is not a valid type name. `Thread` values use a `JfrThread` interface
+  (`osName`, `osThreadId`, `javaName`, `javaThreadId`), generated once per package or the
+  package's own `@JfrType("java.lang.Thread")` interface of that name. A field of any other type
+  (`Class`, an array, ...) is left out, with a compiler note.
 - The event is read like any typed event: lazily, into a reused instance. No instance of the
   event class is created, so the parser's allocation profile is that of a hand-written interface.
 - It is a compile error on a class that does not extend `jdk.jfr.Event`, on an abstract class
-  (JFR records only concrete ones), and when the interface's name is taken.
+  (JFR records only concrete ones), when the interface's name is taken (an earlier build's own
+  output is used as it is), when two fields are recorded under one name (a field named like
+  `startTime`, `duration`, `eventThread` or `stackTrace` included), and when the package's
+  `JfrThread` is not a `@JfrType("java.lang.Thread")` interface.
 
 #### 3. Parse Events (Factories Auto-Discovered)
 

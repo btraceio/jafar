@@ -291,7 +291,8 @@ public class JfrTypeProcessor extends AbstractProcessor {
       eventClassInterfaces = new EventClassInterfaces(processingEnv);
     }
     eventClassInterfaces.process(
-        roundEnv.getElementsAnnotatedWith(io.jafar.parser.api.GenerateJfrType.class));
+        roundEnv.getElementsAnnotatedWith(io.jafar.parser.api.GenerateJfrType.class),
+        roundEnv.processingOver());
 
     // Known before generating any handler: a handler may read another interface's values inline
     // with that interface's handler, generated in this same round (generatedHandlerName)
@@ -306,6 +307,12 @@ public class JfrTypeProcessor extends AbstractProcessor {
       Set<String> types = new HashSet<>();
       for (Element element : roundEnv.getElementsAnnotatedWith(JfrType.class)) {
         types.add(element.getAnnotation(JfrType.class).value());
+      }
+      // The interfaces @GenerateJfrType writes this round are compiled in the next: their types
+      // are looked up now, as the layouts are loaded once
+      types.addAll(eventClassInterfaces.eventNames());
+      if (!eventClassInterfaces.eventNames().isEmpty()) {
+        types.add("java.lang.Thread");
       }
       layouts = Layouts.load(processingEnv.getOptions(), types);
       for (String note : layouts.notes()) {

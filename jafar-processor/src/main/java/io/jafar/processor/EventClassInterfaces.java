@@ -1,12 +1,14 @@
 package io.jafar.processor;
 
 import io.jafar.parser.api.GenerateJfrType;
+import io.jafar.parser.api.JfrType;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.processing.Filer;
@@ -33,15 +35,22 @@ import javax.tools.Diagnostic;
  * {@link GenerateJfrType} (#89). The interfaces are compiled in a later round, where {@link
  * JfrTypeProcessor} generates their handlers as for any other {@code @JfrType} interface.
  *
- * <p>Which fields: those JFR records for the class (see {@code jdk.jfr.Event}): non-static,
- * non-transient fields of the class and its superclasses below {@code jdk.jfr.Event}, of a
- * primitive type, {@code String} or {@code Thread}, named by {@code @jdk.jfr.Name} or else as
- * declared; plus the implicit {@code startTime}, {@code duration} and {@code eventThread}.
+ * <p>The fields are those JFR records for the class, by the JDK's own rules ({@code
+ * jdk.jfr.internal.util.Utils.getVisibleEventFields} and {@code TypeLibrary}): the class's own
+ * non-static, non-transient fields and its superclasses' that are not private, below {@code
+ * jdk.jfr.Event}, of a primitive type, {@code String} or {@code Thread}; named by {@code
+ * jdk.jfr.Name} when that is a valid Java identifier and else as declared; plus the implicit {@code
+ * startTime}, {@code duration} and {@code eventThread}. The event's name is the class's {@code
+ * jdk.jfr.Name} when that is a valid type name, and else its binary name.
  */
 final class EventClassInterfaces {
   private static final String EVENT = "jdk.jfr.Event";
   private static final String NAME = "jdk.jfr.Name";
   private static final String THREAD_INTERFACE = "JfrThread";
+
+  /** Every user event has these, and {@code stackTrace}, which is not generated. */
+  private static final List<String> IMPLICIT =
+      List.of("startTime", "duration", "eventThread", "stackTrace");
 
   private final Elements elements;
   private final Types types;
@@ -49,6 +58,12 @@ final class EventClassInterfaces {
   private final Messager messager;
   // Packages whose JfrThread interface this compilation has written or found
   private final Set<String> threadInterfaces = new HashSet<>();
+  // Interfaces this compilation has written: the Filer refuses a second one, less helpfully
+  private final Set<String> written = new HashSet<>();
+  // Event classes whose superclass does not resolve yet: another processor may generate it
+  private final Set<String> deferred = new HashSet<>();
+  // The JFR names of the events whose interfaces were written, for the processor's layouts
+  private final Set<String> eventNames = new HashSet<>();
 
   EventClassInterfaces(ProcessingEnvironment env) {
     this.elements = env.getElementUtils();
@@ -57,10 +72,27 @@ final class EventClassInterfaces {
     this.messager = env.getMessager();
   }
 
-  void process(Set<? extends Element> annotated) {
-    for (Element element : annotated) {
+  /** The JFR names of the events whose interfaces this compilation wrote. */
+  Set<String> eventNames() {
+    return eventNames;
+  }
+
+  /**
+   * Writes the interfaces for {@code annotated}, and for the classes deferred in earlier rounds. In
+   * the last round a class still deferred is an error.
+   */
+  void process(Set<? extends Element> annotated, boolean lastRound) {
+    List<Element> todo = new ArrayList<>(annotated);
+    for (String name : List.copyOf(deferred)) {
+      deferred.remove(name);
+      TypeElement type = elements.getTypeElement(name);
+      if (type != null) {
+        todo.add(type);
+      }
+    }
+    for (Element element : todo) {
       try {
-        generate(element);
+        generate(element, lastRound);
       } catch (IOException e) {
         messager.printMessage(
             Diagnostic.Kind.ERROR,
@@ -70,13 +102,21 @@ final class EventClassInterfaces {
     }
   }
 
-  private void generate(Element element) throws IOException {
+  private void generate(Element element, boolean lastRound) throws IOException {
     TypeElement eventType = elements.getTypeElement(EVENT);
     if (element.getKind() != ElementKind.CLASS) {
       error(element, "@GenerateJfrType goes on a class that extends " + EVENT);
       return;
     }
     TypeElement type = (TypeElement) element;
+    if (unresolvedSuperclass(type)) {
+      if (lastRound) {
+        error(element, "@GenerateJfrType: a superclass of " + type + " does not resolve");
+      } else {
+        deferred.add(type.getQualifiedName().toString());
+      }
+      return;
+    }
     if (eventType == null || !types.isSubtype(types.erasure(type.asType()), eventType.asType())) {
       error(element, "@GenerateJfrType goes on a class that extends " + EVENT);
       return;
@@ -90,28 +130,35 @@ final class EventClassInterfaces {
     }
     String pkg = elements.getPackageOf(type).getQualifiedName().toString();
     String interfaceName = interfaceName(type);
-    if (!SourceVersion.isIdentifier(interfaceName) || SourceVersion.isKeyword(interfaceName)) {
+    if (!isIdentifier(interfaceName)) {
       error(element, "@GenerateJfrType(\"" + interfaceName + "\") is not a Java type name");
       return;
     }
-    String qualified = pkg.isEmpty() ? interfaceName : pkg + "." + interfaceName;
-    if (elements.getTypeElement(qualified) != null) {
+    String eventName = eventName(type);
+    String qualified = qualify(pkg, interfaceName);
+    if (interfaceName.equals(THREAD_INTERFACE) || written.contains(qualified)) {
+      error(element, "@GenerateJfrType: " + qualified + " is taken; name the interface");
+      return;
+    }
+    TypeElement existing = elements.getTypeElement(qualified);
+    if (existing != null && !isOwnOutput(existing, eventName)) {
       error(element, "@GenerateJfrType: " + qualified + " exists already; name the interface");
       return;
     }
 
-    // Field name -> accessor return type, in the order JFR lays them out: implicit fields, then
-    // superclass fields before the class's own
+    // Recorded field name -> accessor return type, in the order JFR lays them out: the implicit
+    // fields, then superclass fields before the class's own
     Map<String, String> fields = new LinkedHashMap<>();
     fields.put("startTime", "long");
     fields.put("duration", "long");
-    fields.put("eventThread", THREAD_INTERFACE); // so the package needs JfrThread
+    fields.put("eventThread", THREAD_INTERFACE);
     List<TypeElement> chain = new ArrayList<>();
     for (TypeElement t = type;
         t != null && !t.getQualifiedName().contentEquals(EVENT);
         t = superclass(t)) {
       chain.add(0, t);
     }
+    boolean clash = false;
     for (TypeElement t : chain) {
       for (Element member : t.getEnclosedElements()) {
         if (member.getKind() != ElementKind.FIELD) {
@@ -122,7 +169,10 @@ final class EventClassInterfaces {
         if (modifiers.contains(Modifier.STATIC) || modifiers.contains(Modifier.TRANSIENT)) {
           continue;
         }
-        String name = jfrName(field, field.getSimpleName().toString());
+        if (t != type && modifiers.contains(Modifier.PRIVATE)) {
+          continue; // JFR records a superclass's private fields only for the class itself
+        }
+        String name = fieldName(field);
         String javaType = javaType(field.asType());
         if (javaType == null) {
           messager.printMessage(
@@ -133,18 +183,62 @@ final class EventClassInterfaces {
                   + field.asType()
                   + ") is left out of "
                   + interfaceName
-                  + ": JFR does not record its type, or it needs an interface of its own",
+                  + (isClass(field.asType())
+                      ? ": JFR records it, but no interface is generated for java.lang.Class;"
+                          + " declare one by hand"
+                      : ": JFR does not record a field of this type"),
               field);
+          continue;
+        }
+        if (fields.containsKey(name) || IMPLICIT.contains(name)) {
+          error(
+              field,
+              "@GenerateJfrType: "
+                  + type
+                  + " records two fields named '"
+                  + name
+                  + "'"
+                  + (IMPLICIT.contains(name) ? " (every event has one)" : "")
+                  + "; give one another name with @jdk.jfr.Name");
+          clash = true;
           continue;
         }
         fields.put(name, javaType);
       }
     }
-    if (!threadInterface(pkg, element)) {
+    if (clash || !threadInterface(pkg, element)) {
       return;
     }
-    writeInterface(
-        pkg, interfaceName, jfrName(type, elements.getBinaryName(type).toString()), type, fields);
+    if (existing == null) {
+      writeInterface(pkg, interfaceName, eventName, type, fields);
+    }
+    written.add(qualified);
+    eventNames.add(eventName);
+  }
+
+  /**
+   * Whether {@code existing} is this processor's interface for the event from a build that did not
+   * clean first (its output on the class path or source path): then it is used as it is.
+   */
+  private static boolean isOwnOutput(TypeElement existing, String eventName) {
+    JfrType jfrType = existing.getAnnotation(JfrType.class);
+    return existing.getKind() == ElementKind.INTERFACE
+        && jfrType != null
+        && jfrType.value().equals(eventName);
+  }
+
+  private boolean unresolvedSuperclass(TypeElement type) {
+    for (TypeMirror sup = type.getSuperclass();
+        sup.getKind() != TypeKind.NONE;
+        sup = ((TypeElement) ((DeclaredType) sup).asElement()).getSuperclass()) {
+      if (sup.getKind() == TypeKind.ERROR) {
+        return true;
+      }
+      if (sup.getKind() != TypeKind.DECLARED) {
+        return false;
+      }
+    }
+    return false;
   }
 
   private String interfaceName(TypeElement type) {
@@ -159,6 +253,63 @@ final class EventClassInterfaces {
     return name.append("Jfr").toString();
   }
 
+  /**
+   * The event's name, as JFR gives it: the class's {@code jdk.jfr.Name} when each of its
+   * dot-separated parts is a Java identifier, else the binary name (JFR warns and does the same).
+   */
+  private String eventName(TypeElement type) {
+    String binary = elements.getBinaryName(type).toString();
+    String named = annotatedName(type);
+    if (named == null) {
+      return binary;
+    }
+    for (String part : named.split("\\.", -1)) {
+      if (!isIdentifier(part)) {
+        messager.printMessage(
+            Diagnostic.Kind.WARNING,
+            "@GenerateJfrType: @Name(\""
+                + named
+                + "\") is not a valid type name, so JFR names the event "
+                + binary
+                + "; so does the generated interface",
+            type);
+        return binary;
+      }
+    }
+    return named;
+  }
+
+  /**
+   * A field's recorded name: its {@code jdk.jfr.Name} when that is a Java identifier, else its own
+   * name (JFR warns and does the same).
+   */
+  private String fieldName(VariableElement field) {
+    String declared = field.getSimpleName().toString();
+    String named = annotatedName(field);
+    if (named == null) {
+      return declared;
+    }
+    if (!isIdentifier(named)) {
+      messager.printMessage(
+          Diagnostic.Kind.WARNING,
+          "@GenerateJfrType: @Name(\""
+              + named
+              + "\") is not a Java identifier, so JFR records the field as '"
+              + declared
+              + "'; so does the generated interface",
+          field);
+      return declared;
+    }
+    return named;
+  }
+
+  /**
+   * As {@code jdk.internal.module.Checks.isJavaIdentifier}: not a keyword, true, false, null or _.
+   */
+  private static boolean isIdentifier(String s) {
+    return SourceVersion.isIdentifier(s) && !SourceVersion.isKeyword(s) && !s.equals("_");
+  }
+
   private TypeElement superclass(TypeElement type) {
     TypeMirror sup = type.getSuperclass();
     return sup.getKind() == TypeKind.DECLARED
@@ -166,8 +317,8 @@ final class EventClassInterfaces {
         : null;
   }
 
-  /** The {@code @jdk.jfr.Name} value on {@code element}, else {@code fallback}. */
-  private static String jfrName(Element element, String fallback) {
+  /** The {@code @jdk.jfr.Name} value on {@code element}, or null. */
+  private static String annotatedName(Element element) {
     for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
       if (((TypeElement) mirror.getAnnotationType().asElement())
           .getQualifiedName()
@@ -180,49 +331,48 @@ final class EventClassInterfaces {
         }
       }
     }
-    return fallback;
+    return null;
+  }
+
+  private static boolean isClass(TypeMirror type) {
+    return type.getKind() == TypeKind.DECLARED
+        && ((TypeElement) ((DeclaredType) type).asElement())
+            .getQualifiedName()
+            .contentEquals("java.lang.Class");
   }
 
   /** The accessor type for a field of type {@code type}, or null when it is not generated. */
   private static String javaType(TypeMirror type) {
-    switch (type.getKind()) {
-      case BOOLEAN:
-      case BYTE:
-      case SHORT:
-      case INT:
-      case LONG:
-      case CHAR:
-      case FLOAT:
-      case DOUBLE:
-        return type.toString();
-      case DECLARED:
-        String name =
-            ((TypeElement) ((DeclaredType) type).asElement()).getQualifiedName().toString();
-        if (name.equals("java.lang.String")) {
-          return "String";
-        }
-        if (name.equals("java.lang.Thread")) {
-          return THREAD_INTERFACE;
-        }
-        return null;
-      default:
-        return null;
+    TypeKind kind = type.getKind();
+    if (kind.isPrimitive()) {
+      // The kind, not the mirror's text: that carries type annotations ("@Unit long")
+      return kind.name().toLowerCase(Locale.ROOT);
     }
+    if (kind != TypeKind.DECLARED) {
+      return null;
+    }
+    String name = ((TypeElement) ((DeclaredType) type).asElement()).getQualifiedName().toString();
+    if (name.equals("java.lang.String")) {
+      return "String";
+    }
+    if (name.equals("java.lang.Thread")) {
+      return THREAD_INTERFACE;
+    }
+    return null;
   }
 
   /**
    * Makes sure {@code pkg} has the {@code JfrThread} interface: written once per package, or one
-   * the package already has for {@code java.lang.Thread}.
+   * the package already has for {@code java.lang.Thread} (an earlier build's, or the user's).
    */
   private boolean threadInterface(String pkg, Element element) throws IOException {
     if (threadInterfaces.contains(pkg)) {
       return true;
     }
-    String qualified = pkg.isEmpty() ? THREAD_INTERFACE : pkg + "." + THREAD_INTERFACE;
+    String qualified = qualify(pkg, THREAD_INTERFACE);
     TypeElement existing = elements.getTypeElement(qualified);
     if (existing != null) {
-      io.jafar.parser.api.JfrType jfrType =
-          existing.getAnnotation(io.jafar.parser.api.JfrType.class);
+      JfrType jfrType = existing.getAnnotation(JfrType.class);
       if (existing.getKind() != ElementKind.INTERFACE
           || jfrType == null
           || !jfrType.value().equals("java.lang.Thread")) {
@@ -255,15 +405,16 @@ final class EventClassInterfaces {
   private void writeInterface(
       String pkg, String name, String eventName, TypeElement type, Map<String, String> fields)
       throws IOException {
-    String qualified = pkg.isEmpty() ? name : pkg + "." + name;
-    try (Writer w = filer.createSourceFile(qualified, type).openWriter()) {
+    // eventName and the field names are valid Java names by now (eventName, fieldName), so they
+    // need no escaping in the comment or the string literal
+    try (Writer w = filer.createSourceFile(qualify(pkg, name), type).openWriter()) {
       w.write(packageLine(pkg));
       w.write("/**\n");
       w.write(" * The JFR event {@code " + eventName + "}, as {@link ");
       w.write(type.getQualifiedName().toString());
       w.write(
           "} records it.\n * Generated by jafar-processor from its {@code @GenerateJfrType}.\n */\n");
-      w.write("@io.jafar.parser.api.JfrType(\"" + escape(eventName) + "\")\n");
+      w.write("@io.jafar.parser.api.JfrType(\"" + eventName + "\")\n");
       w.write("public interface " + name + " {\n");
       boolean first = true;
       for (Map.Entry<String, String> field : fields.entrySet()) {
@@ -271,24 +422,18 @@ final class EventClassInterfaces {
           w.write("\n");
         }
         first = false;
-        String accessor = field.getKey();
-        if (!SourceVersion.isIdentifier(accessor) || SourceVersion.isKeyword(accessor)) {
-          // A recorded name that is not a Java method name: map it explicitly
-          w.write("  @io.jafar.parser.api.JfrField(\"" + escape(accessor) + "\")\n");
-          accessor = "field_" + accessor.replaceAll("[^A-Za-z0-9_]", "_");
-        }
-        w.write("  " + field.getValue() + " " + accessor + "();\n");
+        w.write("  " + field.getValue() + " " + field.getKey() + "();\n");
       }
       w.write("}\n");
     }
   }
 
-  private static String packageLine(String pkg) {
-    return pkg.isEmpty() ? "" : "package " + pkg + ";\n\n";
+  private static String qualify(String pkg, String simpleName) {
+    return pkg.isEmpty() ? simpleName : pkg + "." + simpleName;
   }
 
-  private static String escape(String s) {
-    return s.replace("\\", "\\\\").replace("\"", "\\\"");
+  private static String packageLine(String pkg) {
+    return pkg.isEmpty() ? "" : "package " + pkg + ";\n\n";
   }
 
   private void error(Element element, String message) {
