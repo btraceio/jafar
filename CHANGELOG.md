@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`@GenerateJfrType`: the typed interface generated from a `jdk.jfr.Event` class (#89)** - on a
+  `jdk.jfr.Event` subclass, `jafar-processor` writes the `@JfrType` interface (`<Class>Jfr`, or
+  the name given) with an accessor per recorded field: the class's non-static, non-transient fields
+  and its superclasses' non-private ones, of a primitive type, `String` or `Thread`, named as JFR
+  names them (a valid `@jdk.jfr.Name`, else the field's name), plus
+  `startTime()`, `duration()` and `eventThread()`; `Thread` values use a `JfrThread` interface
+  generated once per package. Its handler is generated as for any `@JfrType` interface, so events
+  are read lazily into a reused instance: no event class instance is created. See the
+  [README](README.md#or-generate-the-interface-from-your-jdkjfrevent-class).
 - **Offline mode for the shells (#235)** - `--offline` (anywhere before `--`),
   `-Djfr.shell.offline=true` or `JFRSHELL_OFFLINE=true`: the plugin system uses no network. No
   catalog fetch, no update check, no Maven resolution, and no backend is downloaded: with none

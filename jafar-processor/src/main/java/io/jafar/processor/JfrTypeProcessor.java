@@ -238,6 +238,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
   private final Set<String> generatedFactories = new HashSet<>();
   // Top-level @JfrType interfaces of this compilation, whose handlers this processor generates
   private final Set<String> processedInterfaces = new HashSet<>();
+  private EventClassInterfaces eventClassInterfaces;
   private TemplateEngine handlerTemplate;
   private TemplateEngine factoryTemplate;
   // read once, on the first round that has @JfrType interfaces (Layouts)
@@ -265,6 +266,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
   public Set<String> getSupportedAnnotationTypes() {
     Set<String> annotations = new HashSet<>();
     annotations.add(JfrType.class.getCanonicalName());
+    annotations.add(io.jafar.parser.api.GenerateJfrType.class.getCanonicalName());
     return annotations;
   }
 
@@ -283,6 +285,16 @@ public class JfrTypeProcessor extends AbstractProcessor {
 
   @Override
   public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+    // jdk.jfr.Event subclasses to read with the typed API: their @JfrType interfaces are written
+    // now and compiled in the next round, where the loop below generates their handlers (#89)
+    if (eventClassInterfaces == null) {
+      eventClassInterfaces = new EventClassInterfaces(processingEnv);
+    }
+    eventClassInterfaces.process(
+        roundEnv.getElementsAnnotatedWith(io.jafar.parser.api.GenerateJfrType.class),
+        roundEnv.getRootElements(),
+        roundEnv.processingOver());
+
     // Known before generating any handler: a handler may read another interface's values inline
     // with that interface's handler, generated in this same round (generatedHandlerName)
     for (Element element : roundEnv.getElementsAnnotatedWith(JfrType.class)) {
@@ -296,6 +308,12 @@ public class JfrTypeProcessor extends AbstractProcessor {
       Set<String> types = new HashSet<>();
       for (Element element : roundEnv.getElementsAnnotatedWith(JfrType.class)) {
         types.add(element.getAnnotation(JfrType.class).value());
+      }
+      // The interfaces @GenerateJfrType writes this round are compiled in the next: their types
+      // are looked up now, as the layouts are loaded once
+      types.addAll(eventClassInterfaces.eventNames());
+      if (!eventClassInterfaces.eventNames().isEmpty()) {
+        types.add("java.lang.Thread");
       }
       layouts = Layouts.load(processingEnv.getOptions(), types);
       for (String note : layouts.notes()) {
