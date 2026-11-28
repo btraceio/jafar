@@ -58,6 +58,17 @@ final class MavenResolver {
     this.repositories = createRepositories();
   }
 
+  /** For tests: the given remote repositories (id {@code test-N}) and local repository. */
+  MavenResolver(List<String> remoteUrls, Path localRepoPath) {
+    this.system = newRepositorySystem();
+    this.localRepoPath = localRepoPath;
+    List<RemoteRepository> repos = new ArrayList<>();
+    for (int i = 0; i < remoteUrls.size(); i++) {
+      repos.add(new RemoteRepository.Builder("test-" + i, "default", remoteUrls.get(i)).build());
+    }
+    this.repositories = repos;
+  }
+
   /**
    * Resolve an artifact and download it to the local Maven repository.
    *
@@ -263,8 +274,9 @@ final class MavenResolver {
     session.setConfigProperty("aether.connector.requestTimeout", 5000);
     session.setConfigProperty("aether.connector.http.connectionMaxTtl", 5);
 
-    // Prefer local repository - don't check for updates from remote
-    session.setOffline(false); // Allow remote if artifact not found locally
+    // Prefer local repository - don't check for updates from remote. Remote access only when the
+    // artifact is not found locally, and never in offline mode (#235)
+    session.setOffline(NetworkPolicy.offline());
     session.setUpdatePolicy(org.eclipse.aether.repository.RepositoryPolicy.UPDATE_POLICY_NEVER);
 
     return session;

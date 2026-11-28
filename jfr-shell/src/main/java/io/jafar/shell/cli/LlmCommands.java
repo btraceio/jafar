@@ -202,6 +202,15 @@ public final class LlmCommands {
     if (!explicit || !PluginManager.getInstance().canInstallOffline(backendId)) {
       return result;
     }
+    if (io.jafar.shell.plugin.NetworkPolicy.offline()) {
+      System.err.println("Backend not found: " + backendId);
+      System.err.println(
+          io.jafar.shell.plugin.NetworkPolicy.refusal(
+              "downloading LLM backend '" + backendId + "'",
+              "Restart the shell with it installed from its self-contained jar (--install-plugin"
+                  + " <jar>; for llm-anthropic the -all jar), or without offline mode"));
+      return result;
+    }
     System.err.println("Backend not found: " + backendId);
     System.err.print("Downloading from Maven repositories... ");
     try {

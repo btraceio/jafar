@@ -67,6 +67,7 @@ final class PluginInstaller {
       java.util.function.Function<List<String>, List<String>> confirmRecommendations,
       Consumer<String> progressCallback)
       throws PluginInstallException {
+    refuseIfOffline(pluginId);
 
     Map<String, PluginMetadata> installed;
     try {
@@ -135,6 +136,7 @@ final class PluginInstaller {
    * @throws PluginInstallException if installation fails
    */
   void install(String pluginId) throws PluginInstallException {
+    refuseIfOffline(pluginId);
     log.debug("Installing plugin: {}", pluginId);
     // 1. Lookup plugin in registry
     PluginRegistry.PluginDefinition definition =
@@ -220,6 +222,14 @@ final class PluginInstaller {
       // Rollback on failure
       rollback(targetVersionDir, pluginId);
       throw new PluginInstallException("Failed to install plugin to storage", e);
+    }
+  }
+
+  /** Installing from a repository is refused in offline mode (#235), before any lookup. */
+  private static void refuseIfOffline(String pluginId) throws PluginInstallException {
+    if (NetworkPolicy.offline()) {
+      throw new PluginInstallException(
+          NetworkPolicy.refusal("installing plugin '" + pluginId + "' from Maven repositories"));
     }
   }
 
