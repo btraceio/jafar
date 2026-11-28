@@ -50,7 +50,7 @@ jfr> events/jdk.FileRead/bytesRead --limit 5
   (`open "/data/my recordings/app.jfr"`) when it also contains ` --alias`.
 - `connect`: List local JVMs (`[jfr]` marks one with a discoverable disk-backed JFR event repository).
 - `connect <pid> [--alias NAME] [--repository <dir>]`: Attach a live session to a running JVM's JFR event repository (local machine only, no attach API). While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`, `backend`) are not available — use `tail`.
-- `tail [filter] [--limit N] [--format table|json]`: Stream events from the live session until Ctrl-C, the target JVM exits, or the limit is reached. The filter is a JfrPath expression with per-event operators only (`filter`, `select`, transforms) — aggregations (`count()`, `groupBy()`, …) need the full row set and are rejected.
+- `tail [filter] [--limit N] [--format table|json] [--every D] [--max-rows N]`: Stream events from the live session until Ctrl-C, the target JVM exits, or the limit is reached. The filter is a JfrPath expression. With per-event operators only (`filter`, `select`, transforms) each matching event is printed; with a row-set operator (`count()`, `groupBy()`, `top()`, `stats()`, …) the tail aggregates instead: see [Live aggregation](#live-aggregation).
 - `sessions`: List all sessions; marks the current one.
 - `use <id|alias>` (or `session`): Switch current session.
 - `close [<id|alias>|--all]`: Close a session or all.
@@ -127,7 +127,7 @@ Execute queries without entering the shell, suitable for scripting and CI/automa
 jfr-shell ps
 
 # Stream live events from a running JVM until Ctrl-C (exit 0 on interrupt)
-jfr-shell tail <pid> ["events/<type>[filter] | filter(...)"] [--repository <dir>] [--limit N] [--format table|json]
+jfr-shell tail <pid> ["events/<type>[filter] | filter(...)"] [--repository <dir>] [--limit N] [--format table|json] [--every D] [--max-rows N]
 
 # Show command - Execute JfrPath queries
 jfr-shell show <jfr-file> "<expression>" [options]
@@ -556,8 +556,8 @@ Notes:
   `%TEMP%` on Windows). If the target uses `-XX:FlightRecorderOptions=repository=...` or a
   custom location, pass it with `--repository <dir>` — supported by `connect <pid>` (interactive)
   and the one-shot `jfr-shell tail <pid>` command only. The interactive `tail` streams from the
-  repository the live session attached to at `connect` time; it accepts only `--limit` and
-  `--format`. Explicitly passed repositories are hardened like discovery-found ones (same owner,
+  repository the live session attached to at `connect` time; it accepts `--limit`, `--format`,
+  `--every` and `--max-rows`. Explicitly passed repositories are hardened like discovery-found ones (same owner,
   liveness and symlink checks).
 - While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`,
   `backend`, LLM queries) are rejected with a pointer to `tail`; `sessions`/`use`/`close`/`info`
@@ -565,6 +565,57 @@ Notes:
   `doc/design/jfr-event-streaming.md`).
 - Ctrl-C ends `tail` cleanly: the prompt stays alive (interactive) or the process exits 0
   (one-shot).
+
+
+### Live aggregation
+
+A `tail` filter with a row-set operator aggregates (#185). The operators before the first row-set
+operator run on each event as usual; the matching events are kept, and the operators from the
+first row-set one on run over all of them. The result therefore covers every matching event
+since the tail started, and is printed again every `--every` (default `5s`; also `500ms`, `1m`,
+or plain seconds) while new events come in, and once more when the tail ends, whatever ends it
+(Ctrl-C, the target exiting, `--limit`, `--max-rows`).
+
+For example, against a test program that commits a `test.Busy` event (field `group`: `g0`, `g1`
+or `g2` in turn) every 10 ms, stopped with Ctrl-C:
+
+```bash
+$ jfr-shell tail 12345 "events/test.Busy | groupBy(group)" --every 1s
+...
+result at 10:42:32.057 over 395 events (0 dropped by the live session):
+| key | count |
++-----+-------+
+| g1  | 132   |
+| g2  | 132   |
+| g0  | 131   |
+aggregating: 395 events, 36 filtered, 0 dropped
+final result at 10:42:32.457 over 395 events (0 dropped by the live session):
+| key | count |
++-----+-------+
+| g1  | 132   |
+| g2  | 132   |
+| g0  | 131   |
+tail finished (interrupted): 395 events aggregated, 36 filtered, 0 dropped by the live session
+
+$ jfr-shell tail 12345 "events/test.Busy | count()" --every 1s --format json
+{"type":"aggregate","final":false,"events":100,"dropped":0,"rows":[{"count":100}]}
+{"type":"aggregate","final":false,"events":198,"dropped":0,"rows":[{"count":198}]}
+...
+{"type":"aggregate","final":true,"events":493,"dropped":0,"rows":[{"count":493}]}
+```
+
+- Each result says how many events it covers and how many the live session dropped: a dropped
+  event is in no result. In `--format json` each result is one line, `"final": true` on the last.
+- `--limit N` counts the events taken in: the tail ends after N, with the final result over them.
+- The kept events are held in memory. `--max-rows N` (default `100000`) ends the tail once N are
+  kept, with a final result over those N, rather than let the memory grow without bound: narrow
+  the filter or raise the bound for a longer run.
+- Every row-set operator works except those that read the recording for other events
+  (`crossref()`, `decorateByTime()`, `decorateByKey()`) and `flamegraph()`, whose tree `tail`
+  cannot print (use `stackprofile()`). These are refused when `tail` is given the filter, before
+  any event is read.
+- `--every` and `--max-rows` apply only to a filter that aggregates; with any other they are an
+  error.
 
 ## See Also
 

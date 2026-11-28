@@ -14,7 +14,13 @@ public class UnsupportedPipelineOperationException extends IllegalArgumentExcept
         "Pipeline operator '"
             + operation
             + "()' requires the full row set and is not supported per event "
-            + "(live tail supports per-event filters and transforms only)");
+            + "(per-event filters and transforms only)");
+    this.operation = operation;
+  }
+
+  /** The operator {@code operation} cannot run here, for {@code reason}. */
+  public UnsupportedPipelineOperationException(String operation, String reason) {
+    super("Pipeline operator '" + operation + "()' " + reason);
     this.operation = operation;
   }
 

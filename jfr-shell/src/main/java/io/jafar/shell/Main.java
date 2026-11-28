@@ -805,8 +805,10 @@ public final class Main implements Callable<Integer> {
         index = "1",
         arity = "0..1",
         description =
-            "JfrPath filter (events root, per-event operators only), e.g. "
-                + "\"events/jdk.ExecutionSample | filter(costlyStacks == true)\"")
+            "JfrPath filter (events root), e.g. \"events/jdk.ExecutionSample |"
+                + " filter(costlyStacks == true)\"; with a row-set operator such as"
+                + " groupBy(...) the tail aggregates every matching event and prints the result"
+                + " every --every")
     private String filterExpr;
 
     @CommandLine.Option(
@@ -823,6 +825,20 @@ public final class Main implements Callable<Integer> {
         names = {"--format", "-f"},
         description = "Output format: table (default), json")
     private String format = "table";
+
+    @CommandLine.Option(
+        names = {"--every"},
+        description =
+            "With an aggregating filter: print the result this often, e.g. 5s (default), 500ms,"
+                + " 1m")
+    private String every;
+
+    @CommandLine.Option(
+        names = {"--max-rows"},
+        description =
+            "With an aggregating filter: end the tail after keeping this many events (default"
+                + " 100000)")
+    private Long maxRows;
 
     // Package-private output routing override; null => the process streams (System.out/err).
     // Integration tests (LiveTailIT) inject captured PrintStreams here so they can read tail
@@ -847,11 +863,23 @@ public final class Main implements Callable<Integer> {
       // hardening check or opens any stream.
       io.jafar.shell.jfrpath.JfrPath.Query filter = null;
       TailRunner.Format fmt;
+      java.time.Duration everyDuration = TailRunner.DEFAULT_EVERY;
       try {
         if (filterExpr != null && !filterExpr.isBlank()) {
           filter = TailRunner.parseFilter(filterExpr);
         }
         fmt = TailRunner.parseFormat(format);
+        if ((every != null || maxRows != null) && !TailRunner.aggregates(filter)) {
+          throw new IllegalArgumentException(
+              "--every and --max-rows apply to a filter that aggregates (count(), groupBy(),"
+                  + " ...)");
+        }
+        if (every != null) {
+          everyDuration = TailRunner.parseEvery(every);
+        }
+        if (maxRows != null && maxRows <= 0) {
+          throw new IllegalArgumentException("--max-rows must be more than 0");
+        }
       } catch (IllegalArgumentException e) {
         err.println("Error: " + e.getMessage());
         return 1;
@@ -898,6 +926,8 @@ public final class Main implements Callable<Integer> {
             filter,
             fmt,
             limit == null ? -1 : limit,
+            everyDuration,
+            maxRows == null ? TailRunner.DEFAULT_MAX_ROWS : maxRows,
             new TailRunner.PrintSink(
                 new CommandDispatcher.IO() {
                   @Override

@@ -1028,4 +1028,22 @@ public final class JfrPathEvaluator {
       List<JfrPath.PipelineOp> pipeline, Map<String, Object> event) {
     return RowOps.applyEventOps(pipeline, event);
   }
+
+  /**
+   * Where the per-event part of {@code pipeline} ends: the index of the first operator that needs
+   * rows rather than one event, or the pipeline's size. A live {@code tail} runs the part before it
+   * on each event and the rest on the rows it has collected (#185).
+   */
+  public static int firstRowSetOp(List<JfrPath.PipelineOp> pipeline) {
+    return RowOps.firstRowSetOp(pipeline);
+  }
+
+  /**
+   * Throws an {@link UnsupportedPipelineOperationException} for the first operator of {@code
+   * pipeline} that cannot run on a live stream's collected rows, so that a live filter is refused
+   * when it is given rather than later (#185).
+   */
+  public static void requireLiveOps(List<JfrPath.PipelineOp> pipeline) {
+    RowOps.requireLiveOps(pipeline);
+  }
 }

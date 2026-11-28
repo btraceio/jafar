@@ -304,15 +304,36 @@ class LiveCommandsDispatcherTest {
   }
 
   @Test
-  void tailRejectsBatchPipelineOps() {
+  void tailAggregatesWithARowSetOperator() {
     attachFirst();
+    // Row-set operators aggregate since #185: the replayed recording ends, and the final result
+    // covers its 200 probe events
     assertTrue(
         dispatcher.dispatch(
             "tail events/io.jafar.shell.cli.LiveCommandsDispatcherTest$ProbeEvent | count()"));
+    assertTrue(io.text().contains("final result at "), io.text());
+    assertTrue(io.text().contains("| 200   |"), io.text());
+    assertTrue(io.text().contains("200 events aggregated"), io.text());
+  }
+
+  @Test
+  void tailRefusesAnOperatorThatCannotRunLive() {
+    attachFirst();
     assertTrue(
-        io.text().contains("not supported per event")
-            || io.text().contains("requires the full row set"),
-        io.text());
+        dispatcher.dispatch(
+            "tail events/io.jafar.shell.cli.LiveCommandsDispatcherTest$ProbeEvent | flamegraph()"));
+    assertTrue(
+        io.text().contains("Invalid tail filter: Pipeline operator 'flamegraph()'"), io.text());
+    assertFalse(io.text().contains("tail finished"), io.text());
+  }
+
+  @Test
+  void tailRefusesEveryWithoutAnAggregatingFilter() {
+    attachFirst();
+    assertTrue(dispatcher.dispatch("tail events/jdk.FileRead --every 5s"));
+    assertTrue(
+        io.text().contains("--every and --max-rows apply to a filter that aggregates"), io.text());
+    assertFalse(io.text().contains("tail finished"), io.text());
   }
 
   @Test
@@ -412,7 +433,8 @@ class LiveCommandsDispatcherTest {
   void helpTailShowsUsageAndExamples() {
     assertTrue(dispatcher.dispatch("help tail"));
     assertTrue(io.text().contains("Usage: tail"), io.text());
-    assertTrue(io.text().contains("per-event"), io.text());
+    assertTrue(io.text().contains("--every"), io.text());
+    assertTrue(io.text().contains("aggregates"), io.text());
   }
 
   @Test

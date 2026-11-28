@@ -64,7 +64,7 @@ R3 `tail [filter] [--limit N]`: stream matching events from the live session cap
     at command start until interrupted, the target closes, or N events are emitted.
     Filter is a JfrPath expression (`events/jdk.X[pred] | filter(p) | select(...)`);
     per-event-capable ops only — batch ops are rejected with a clear, testable error
-    (that is Phase 2). In script mode `tail` requires `--limit` (output is buffered to
+    (that is Phase 2; see "Phase 2: live aggregation" below for what replaced this). In script mode `tail` requires `--limit` (output is buffered to
     script end and no interrupt path exists there).
 R4 Both UX shapes: interactive commands (readline shell and TUI) and one-shot CLI
     (`jfr-shell ps`, `jfr-shell tail <pid> [filter]`).
@@ -312,6 +312,28 @@ With a live session current, file-bound commands are **guarded**, not broken:
   `SessionManager` retyping.
 - Platform verification: macOS (local), Linux + Windows via the workspace testground;
   anything not verified is stated plainly in the PR (R8).
+
+## Phase 2: live aggregation (#185)
+
+Semantics chosen on #185: **cumulative**, re-printed on an interval.
+
+- The pipeline splits at its first operator that is not per-event applicable
+  (`JfrPathEvaluator.firstRowSetOp`). The part before it runs on each event as in Phase 1; the
+  matching events are kept, and the part from it on runs over all of them
+  (`JfrPathEvaluator.applyToRows`), so a result covers every matching event since the tail
+  started. The row operators copy the rows they change, so running them again on every print is
+  safe.
+- A result is printed every `--every` (default 5s, measured from the first event taken in) while
+  new events came in, and once at the end whatever ends the tail. Each states the events it covers
+  and the live session's drop count; JSON is one `{"type":"aggregate","final":..,...}` line.
+- Memory: the kept events are bounded by `--max-rows` (default 100000). Reaching it ends the tail
+  with a final result over what was kept, rather than silently covering only part of the stream.
+  Incremental accumulators (count/sum/stats/groupBy without keeping rows) would lift the bound and
+  are left for later.
+- Refused up front (`requireLiveOps`), when the filter is given: operators that read the
+  recording for other events (`crossref`, `decorateByTime`, `decorateByKey`) and `flamegraph`
+  (a tree with no line form). The Phase 1 mid-stream rejection stays only for a `Query` that
+  bypasses `TailRunner.parseFilter`.
 
 ## Documentation
 

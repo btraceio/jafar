@@ -1315,9 +1315,11 @@ public class CommandDispatcher {
   }
 
   /**
-   * {@code tail [filter] [--limit N] [--format table|json]} — stream events from the live session
-   * captured at command start until interrupted, the target closes, or the limit is reached. In
-   * script mode {@code --limit} is required (no interrupt path, buffered output).
+   * {@code tail [filter] [--limit N] [--format table|json] [--every D] [--max-rows N]} — stream
+   * events from the live session captured at command start until interrupted, the target closes, or
+   * the limit is reached; a filter with a row-set operator aggregates instead (see {@link
+   * TailRunner#run}). In script mode {@code --limit} is required (no interrupt path, buffered
+   * output).
    */
   private void cmdTail(List<String> args) {
     LiveStreamView session = currentLiveSession();
@@ -1327,6 +1329,8 @@ public class CommandDispatcher {
     }
     long limit = -1;
     String format = "table";
+    String every = null;
+    long maxRows = -1;
     List<String> filterParts = new ArrayList<>();
     for (int i = 0; i < args.size(); i++) {
       String a = args.get(i);
@@ -1350,6 +1354,26 @@ public class CommandDispatcher {
             return;
           }
           format = args.get(++i);
+        }
+        case "--every" -> {
+          if (i + 1 >= args.size()) {
+            io.error("--every requires a duration such as 5s");
+            return;
+          }
+          every = args.get(++i);
+        }
+        case "--max-rows" -> {
+          if (i + 1 >= args.size()) {
+            io.error("--max-rows requires a number");
+            return;
+          }
+          try {
+            maxRows = Long.parseLong(args.get(++i));
+            if (maxRows <= 0) throw new NumberFormatException();
+          } catch (NumberFormatException e) {
+            io.error("--max-rows requires a positive number");
+            return;
+          }
         }
         default -> {
           // Unknown --options are rejected loudly; bare words (including single-dash tokens,
@@ -1384,6 +1408,20 @@ public class CommandDispatcher {
         return;
       }
     }
+    java.time.Duration everyDuration = TailRunner.DEFAULT_EVERY;
+    if ((every != null || maxRows > 0) && !TailRunner.aggregates(filter)) {
+      io.error(
+          "--every and --max-rows apply to a filter that aggregates (count(), groupBy(), ...)");
+      return;
+    }
+    if (every != null) {
+      try {
+        everyDuration = TailRunner.parseEvery(every);
+      } catch (IllegalArgumentException e) {
+        io.error(e.getMessage());
+        return;
+      }
+    }
 
     // tail binds to the session captured NOW: a later 'use' does not re-target it; closing
     // this session (or the target dying) ends the stream with a summary line. The TUI surface
@@ -1392,7 +1430,14 @@ public class CommandDispatcher {
         io instanceof TuiOutput
             ? new TailRunner.TuiSink(io, limit > 0 ? (int) Math.min(limit, 10_000) : 500)
             : new TailRunner.PrintSink(io, fmt);
-    TailRunner.run(session, filter, fmt, limit, sink);
+    TailRunner.run(
+        session,
+        filter,
+        fmt,
+        limit,
+        everyDuration,
+        maxRows > 0 ? maxRows : TailRunner.DEFAULT_MAX_ROWS,
+        sink);
   }
 
   private void cmdClose(List<String> args) throws Exception {
@@ -2021,16 +2066,20 @@ public class CommandDispatcher {
       return;
     }
     if ("tail".equals(sub)) {
-      io.println("Usage: tail [filter] [--limit N] [--format table|json]");
+      io.println(
+          "Usage: tail [filter] [--limit N] [--format table|json] [--every D] [--max-rows N]");
       io.println("Stream events from the current live session until Ctrl-C, the target");
-      io.println("JVM exits, or the limit is reached. Filter is a JfrPath expression with");
-      io.println("per-event operators only (filter/select/transforms) - aggregations like");
-      io.println("count()/groupBy() need the full row set and are rejected.");
+      io.println("JVM exits, or the limit is reached. Filter is a JfrPath expression. With a");
+      io.println("row-set operator (count()/groupBy()/top()/...) the tail aggregates every");
+      io.println("matching event and prints the result every --every (default 5s) and at");
+      io.println("the end; --max-rows (default 100000) bounds the events it keeps.");
       io.println("");
       io.println("Examples:");
       io.println("  tail                                        # all events");
       io.println("  tail events/jdk.ExecutionSample             # one type only");
       io.println("  tail \"events/jdk.FileRead | filter(bytesRead > 0)\"");
+      io.println(
+          "  tail \"events/jdk.ExecutionSample | groupBy(sampledThread/javaName)\" --every 10s");
       io.println("  tail events/jdk.FileRead --limit 100 --format json");
       return;
     }
