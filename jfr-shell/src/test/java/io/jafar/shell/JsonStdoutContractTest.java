@@ -295,6 +295,26 @@ class JsonStdoutContractTest {
   }
 
   @Test
+  void warningsBeforeTheErrorAreNotPartOfIt() {
+    assertEquals(
+        "Error: Backend not found: x\nAvailable backends: jafar\n",
+        JsonOutput.fromFirstError(
+            "Warning: backend jar is not from this build\n"
+                + "Error: Backend not found: x\nAvailable backends: jafar\n"));
+    assertEquals("Error: a\n", JsonOutput.fromFirstError("Error: a\n"));
+    assertEquals("no error line\n", JsonOutput.fromFirstError("no error line\n"));
+  }
+
+  @Test
+  void aRecordingThatDoesNotOpenIsTheError() throws IOException {
+    Path bad = tempDir.resolve("bad.jfr");
+    Files.writeString(bad, "not a recording");
+    assertEquals(1, run("show", bad.toString(), "events/jdk.ExecutionSample", "--json"));
+    String error = document().getAsJsonObject().get("error").getAsString();
+    assertFalse(error.contains("No session open"), error);
+  }
+
+  @Test
   void scriptWithoutTheFlagIsUnchanged() throws IOException {
     Path s = script("open " + JFR, "show events/jdk.ExecutionSample | count()");
     assertEquals(0, run("script", s.toString()));

@@ -141,11 +141,20 @@ final class JsonOutput {
     return print(result) ? rc : 1;
   }
 
-  /** The recorded message, else what went to stderr; a placeholder when there is neither. */
+  /**
+   * The recorded message, else what went to stderr from its first {@code Error:} line on (the
+   * warnings before it are not the failure); a placeholder when there is neither.
+   */
   private String message() {
-    String text = error != null ? error : captured.toString(stderr.charset());
+    String text = error != null ? error : fromFirstError(captured.toString(stderr.charset()));
     text = normalize(text);
     return text.isEmpty() ? "failed (no message)" : text;
+  }
+
+  /** {@code stderr} from its first {@code Error:} line on, or all of it when it has none. */
+  static String fromFirstError(String stderr) {
+    int first = stderr.indexOf("\nError: ");
+    return stderr.startsWith("Error: ") || first < 0 ? stderr : stderr.substring(first + 1);
   }
 
   /** {@code text} trimmed, without the {@code Error: } that starts stderr lines. */
@@ -174,7 +183,13 @@ final class JsonOutput {
       stderr.println("Error: " + message);
       text = JsonText.pretty(Map.of("error", message));
     }
-    stdout.println(text);
+    try {
+      stdout.println(text);
+    } catch (Throwable e) {
+      // Too large to encode: what reached stdout may be cut short, so say so on stderr at least
+      stderr.println("Error: could not print the result: " + e);
+      printed = false;
+    }
     stdout.flush();
     return printed;
   }

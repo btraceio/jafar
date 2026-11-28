@@ -550,6 +550,9 @@ public final class Main implements Callable<Integer> {
       }
       Path path = Paths.get(jfrFile);
       if (!Files.exists(path)) {
+        if (json != null) {
+          json.error("JFR file not found: " + jfrFile);
+        }
         System.err.println("Error: JFR file not found: " + jfrFile);
         return 1;
       }
@@ -593,6 +596,12 @@ public final class Main implements Callable<Integer> {
 
         // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233)
         dispatcher.open(path, null);
+        if (json != null && errors.length() > 0) {
+          // The recording did not open: that is the failure, not the query's "No session open"
+          json.error(errors.toString());
+          System.err.print(errors.toString());
+          return 1;
+        }
 
         // Execute command
         boolean handled = dispatcher.dispatch(command);
@@ -1318,6 +1327,9 @@ public final class Main implements Callable<Integer> {
       Path path = fromStdin ? null : Paths.get(scriptPath);
 
       if (!fromStdin && !Files.exists(path)) {
+        if (json != null) {
+          json.error("Script file not found: " + scriptPath);
+        }
         System.err.println("Error: Script file not found: " + scriptPath);
         return 1;
       }

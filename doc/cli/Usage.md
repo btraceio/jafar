@@ -357,13 +357,13 @@ $ jfr-shell show recording.jfr "events/jdk.InitialSystemProperty" --limit 2 --js
   with those of the lines before the failure (or of every line that succeeded, with
   `--continue-on-error`). The message is the failure's own text without the `Error: ` prefix:
   the query error, the usage error, or for a script `Line <n>: <error>` for each failed line. The
-  exit status is `2` for an argument error found while reading the command line and `1`
-  otherwise.
+  exit status is `2` for an argument error (one found while reading the command line, or a `-b`
+  that `JFRSHELL_BACKEND` overrides) and `1` otherwise.
 - A `show` whose result has no JSON form fails: a flame graph, `--tree`, the bare `metadata`
   type list.
 - `jafar-shell script` runs in the unified shell, which does not take `--json` (exit status 2,
-  nothing on stdout), unless a jfr-shell option such as `--plugin-dir` comes before `script`:
-  that command line runs jfr-shell's `script`, which does.
+  nothing on stdout), unless `--plugin-dir` or `--install-plugin` comes before `script`: that
+  command line runs jfr-shell's `script`, which does.
 
 ## Metadata Field Paths (mini guide)
 
