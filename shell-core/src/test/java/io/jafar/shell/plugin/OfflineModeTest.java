@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -59,9 +58,6 @@ class OfflineModeTest {
 
   @BeforeEach
   void setUp() throws IOException {
-    // The online controls clear the property, which is all it takes only while the variable is
-    // not set to on as well (a property set to false would win, but clearing is what they test)
-    assumeFalse(NetworkPolicy.isOn(System.getenv(NetworkPolicy.ENV)), NetworkPolicy.ENV + " is on");
     server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
     server.createContext(
         "/",
@@ -105,7 +101,8 @@ class OfflineModeTest {
     if (on) {
       System.setProperty(NetworkPolicy.PROPERTY, "true");
     } else {
-      System.clearProperty(NetworkPolicy.PROPERTY);
+      // Set rather than cleared, so the online controls hold with JFRSHELL_OFFLINE on as well
+      System.setProperty(NetworkPolicy.PROPERTY, "false");
     }
   }
 
@@ -236,9 +233,12 @@ class OfflineModeTest {
   }
 
   @Test
-  void propertyOffWins() {
-    System.setProperty(NetworkPolicy.PROPERTY, "false");
-    assertFalse(NetworkPolicy.offline());
+  void aSetPropertyWinsOverTheVariable() {
+    assertFalse(NetworkPolicy.offline("false", "true"));
+    assertTrue(NetworkPolicy.offline("true", "false"));
+    assertTrue(NetworkPolicy.offline(null, "true"));
+    assertFalse(NetworkPolicy.offline(null, null));
+    assertFalse(NetworkPolicy.offline("", "true"));
   }
 
   @Test
@@ -246,6 +246,6 @@ class OfflineModeTest {
     offline(false);
     String[] rest = NetworkPolicy.applyFlag(new String[] {"show", "x.jfr", "--", "--offline"});
     assertArrayEquals(new String[] {"show", "x.jfr", "--", "--offline"}, rest);
-    assertFalse(NetworkPolicy.offline());
+    assertEquals("false", System.getProperty(NetworkPolicy.PROPERTY));
   }
 }

@@ -32,8 +32,12 @@ public final class NetworkPolicy {
 
   /** Whether offline mode is on. */
   public static boolean offline() {
-    String property = System.getProperty(PROPERTY);
-    return property != null ? isOn(property) : isOn(System.getenv(ENV));
+    return offline(System.getProperty(PROPERTY), System.getenv(ENV));
+  }
+
+  /** The mode for these values of the property and the variable: a set property wins. */
+  static boolean offline(String property, String variable) {
+    return property != null ? isOn(property) : isOn(variable);
   }
 
   static boolean isOn(String value) {
