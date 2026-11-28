@@ -363,20 +363,111 @@ class GenerateJfrTypeTest {
   }
 
   @Test
-  void aRebuildWithTheEarlierOutputOnTheClassPathWorks() throws Exception {
+  void aRebuildOverTheEarlierOutputWritesItAgain() throws Exception {
     Path out = dir.resolve("first");
-    ProcessorTestSupport.compileTo(out, BASE, PROBE);
+    ProcessorTestSupport.compileTo(
+        out,
+        src("Ev", "@GenerateJfrType public class Ev extends jdk.jfr.Event { public long a; }\n"));
     List<java.io.File> classpath = new ArrayList<>();
     classpath.add(out.toFile());
     for (String entry : System.getProperty("java.class.path").split(java.io.File.pathSeparator)) {
       classpath.add(new java.io.File(entry));
     }
+    // The class changed since: the earlier EvJfr (and JfrThread) on the class path are stale
     Compilation again =
         javac()
             .withProcessors(new JfrTypeProcessor())
             .withClasspath(classpath)
-            .compile(BASE, PROBE);
+            .compile(
+                src(
+                    "Ev",
+                    "@GenerateJfrType public class Ev extends jdk.jfr.Event { public long a; public"
+                        + " int b; }\n"),
+                src(
+                    "Use",
+                    "public class Use { static long use(EvJfr e) { return e.a() + e.b(); } }\n"));
     assertThat(again).succeeded();
+    assertThat(again).generatedSourceFile("test.EvJfr").contentsAsUtf8String().contains("int b();");
+    assertThat(again).generatedSourceFile("test.EvJfrHandler");
+    assertThat(again).generatedSourceFile("test.JfrThreadHandler");
+    assertThat(again)
+        .generatedFile(
+            javax.tools.StandardLocation.CLASS_OUTPUT,
+            "META-INF/services/io.jafar.parser.api.HandlerFactory")
+        .contentsAsUtf8String()
+        .contains("test.EvJfrFactory");
+    assertThat(again)
+        .generatedFile(
+            javax.tools.StandardLocation.CLASS_OUTPUT,
+            "META-INF/services/io.jafar.parser.api.HandlerFactory")
+        .contentsAsUtf8String()
+        .contains("test.JfrThreadFactory");
+  }
+
+  @Test
+  void aSourceOfTheSameNameIsAClash() {
+    Compilation c =
+        javac()
+            .withProcessors(new JfrTypeProcessor())
+            .compile(
+                src(
+                    "EvJfr",
+                    "@io.jafar.parser.api.JfrType(\"test.Ev\") public interface EvJfr { long a(); }\n"),
+                src(
+                    "Ev",
+                    "@GenerateJfrType public class Ev extends jdk.jfr.Event { public long a; }\n"));
+    assertThat(c).failed();
+    assertThat(c).hadErrorContaining("test.EvJfr exists already");
+  }
+
+  /** Writes {@code test.GenBase}, an event base class, in its first round. */
+  @javax.annotation.processing.SupportedAnnotationTypes("*")
+  static final class BaseWriter extends javax.annotation.processing.AbstractProcessor {
+    private boolean done;
+
+    @Override
+    public javax.lang.model.SourceVersion getSupportedSourceVersion() {
+      return javax.lang.model.SourceVersion.latestSupported();
+    }
+
+    @Override
+    public boolean process(
+        Set<? extends javax.lang.model.element.TypeElement> annotations,
+        javax.annotation.processing.RoundEnvironment roundEnv) {
+      if (!done) {
+        done = true;
+        try (java.io.Writer w =
+            processingEnv.getFiler().createSourceFile("test.GenBase").openWriter()) {
+          w.write(
+              "package test;\npublic abstract class GenBase extends jdk.jfr.Event {\n"
+                  + "  public int baseField;\n  private int hidden;\n}\n");
+        } catch (java.io.IOException e) {
+          throw new java.io.UncheckedIOException(e);
+        }
+      }
+      return false;
+    }
+  }
+
+  @Test
+  void aSuperclassAnotherProcessorGeneratesIsWaitedFor() {
+    Compilation c =
+        javac()
+            .withProcessors(new BaseWriter(), new JfrTypeProcessor())
+            .compile(
+                src(
+                    "Sub",
+                    "@GenerateJfrType public class Sub extends GenBase { public long own; }\n"));
+    assertThat(c).succeeded();
+    assertThat(c)
+        .generatedSourceFile("test.SubJfr")
+        .contentsAsUtf8String()
+        .contains("int baseField();");
+    assertThat(c)
+        .generatedSourceFile("test.SubJfr")
+        .contentsAsUtf8String()
+        .doesNotContain("hidden");
+    assertThat(c).generatedSourceFile("test.SubJfrHandler");
   }
 
   @Test

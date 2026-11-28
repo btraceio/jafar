@@ -326,8 +326,8 @@ parser.handle(RequestEventJfr.class, (e, ctl) -> System.out.println(e.requestId(
 - The event is read like any typed event: lazily, into a reused instance. No instance of the
   event class is created, so the parser's allocation profile is that of a hand-written interface.
 - It is a compile error on a class that does not extend `jdk.jfr.Event`, on an abstract class
-  (JFR records only concrete ones), when the interface's name is taken (an earlier build's own
-  output is used as it is), when two fields are recorded under one name (a field named like
+  (JFR records only concrete ones), when the interface's name is taken by another type (an earlier
+  build's own output is written again), when two fields are recorded under one name (a field named like
   `startTime`, `duration`, `eventThread` or `stackTrace` included), and when the package's
   `JfrThread` is not a `@JfrType("java.lang.Thread")` interface.
 

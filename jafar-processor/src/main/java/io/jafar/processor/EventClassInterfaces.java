@@ -64,6 +64,8 @@ final class EventClassInterfaces {
   private final Set<String> deferred = new HashSet<>();
   // The JFR names of the events whose interfaces were written, for the processor's layouts
   private final Set<String> eventNames = new HashSet<>();
+  // Types the compilation's own sources declare (root elements of every round so far)
+  private final Set<String> sourceTypes = new HashSet<>();
 
   EventClassInterfaces(ProcessingEnvironment env) {
     this.elements = env.getElementUtils();
@@ -81,7 +83,12 @@ final class EventClassInterfaces {
    * Writes the interfaces for {@code annotated}, and for the classes deferred in earlier rounds. In
    * the last round a class still deferred is an error.
    */
-  void process(Set<? extends Element> annotated, boolean lastRound) {
+  void process(Set<? extends Element> annotated, Set<? extends Element> roots, boolean lastRound) {
+    for (Element root : roots) {
+      if (root instanceof TypeElement t) {
+        sourceTypes.add(t.getQualifiedName().toString());
+      }
+    }
     List<Element> todo = new ArrayList<>(annotated);
     for (String name : List.copyOf(deferred)) {
       deferred.remove(name);
@@ -141,7 +148,8 @@ final class EventClassInterfaces {
       return;
     }
     TypeElement existing = elements.getTypeElement(qualified);
-    if (existing != null && !isOwnOutput(existing, eventName)) {
+    if (existing != null
+        && (sourceTypes.contains(qualified) || !isOwnOutput(existing, eventName))) {
       error(element, "@GenerateJfrType: " + qualified + " exists already; name the interface");
       return;
     }
@@ -209,16 +217,17 @@ final class EventClassInterfaces {
     if (clash || !threadInterface(pkg, element)) {
       return;
     }
-    if (existing == null) {
-      writeInterface(pkg, interfaceName, eventName, type, fields);
-    }
+    // Written also over an earlier build's output (found on the class path or source path): its
+    // accessors may be stale, and only a written source gets its handler and service entry
+    writeInterface(pkg, interfaceName, eventName, type, fields);
     written.add(qualified);
     eventNames.add(eventName);
   }
 
   /**
-   * Whether {@code existing} is this processor's interface for the event from a build that did not
-   * clean first (its output on the class path or source path): then it is used as it is.
+   * Whether {@code existing}, not one of this compilation's sources, is this processor's interface
+   * for the event from a build that did not clean first (on the class path or source path): then it
+   * is written again.
    */
   private static boolean isOwnOutput(TypeElement existing, String eventName) {
     JfrType jfrType = existing.getAnnotation(JfrType.class);
@@ -362,8 +371,9 @@ final class EventClassInterfaces {
   }
 
   /**
-   * Makes sure {@code pkg} has the {@code JfrThread} interface: written once per package, or one
-   * the package already has for {@code java.lang.Thread} (an earlier build's, or the user's).
+   * Makes sure {@code pkg} has the {@code JfrThread} interface: the package's own, when one of the
+   * compilation's sources declares it for {@code java.lang.Thread}; else written once, also over an
+   * earlier build's (whose handler would not be registered again otherwise).
    */
   private boolean threadInterface(String pkg, Element element) throws IOException {
     if (threadInterfaces.contains(pkg)) {
@@ -373,9 +383,14 @@ final class EventClassInterfaces {
     TypeElement existing = elements.getTypeElement(qualified);
     if (existing != null) {
       JfrType jfrType = existing.getAnnotation(JfrType.class);
-      if (existing.getKind() != ElementKind.INTERFACE
-          || jfrType == null
-          || !jfrType.value().equals("java.lang.Thread")) {
+      boolean threadInterface =
+          existing.getKind() == ElementKind.INTERFACE
+              && jfrType != null
+              && jfrType.value().equals("java.lang.Thread");
+      if (threadInterface && !sourceTypes.contains(qualified)) {
+        return writeThreadInterface(pkg, qualified, element);
+      }
+      if (!threadInterface) {
         error(
             element,
             "@GenerateJfrType: "
@@ -386,6 +401,11 @@ final class EventClassInterfaces {
       threadInterfaces.add(pkg);
       return true;
     }
+    return writeThreadInterface(pkg, qualified, element);
+  }
+
+  private boolean writeThreadInterface(String pkg, String qualified, Element element)
+      throws IOException {
     try (Writer w = filer.createSourceFile(qualified, element).openWriter()) {
       w.write(packageLine(pkg));
       w.write("/**\n");

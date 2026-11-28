@@ -292,6 +292,7 @@ public class JfrTypeProcessor extends AbstractProcessor {
     }
     eventClassInterfaces.process(
         roundEnv.getElementsAnnotatedWith(io.jafar.parser.api.GenerateJfrType.class),
+        roundEnv.getRootElements(),
         roundEnv.processingOver());
 
     // Known before generating any handler: a handler may read another interface's values inline
