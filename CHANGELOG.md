@@ -30,8 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as stored, and a trailing `:<line>` (jfr2pprof's `includeLineNumbers`) is not part of a frame's
   name. pprof records no truncation, so inclusive moves are judged with a note. The comparison is now `ProfileCompare` in
   `io.jafar.shell.core.compare`; `JfrCompare` reads recordings, `PprofProfileReader` (`pprof-shell`)
-  reads profiles, and a module offers its reader through `ShellModule.profileReader()`. OTLP is not
-  covered yet. See [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
+  reads profiles, and a module offers its reader through `ShellModule.profileReader()`. See
+  [doc/plans/cross-format-compare.md](doc/plans/cross-format-compare.md)
+- **OTLP profiles in `compare` and `profile_compare`** - an OTLP profiles file (`.otlp`) can be
+  compared against a JFR recording, a pprof profile or another OTLP file: `compare` reads it from
+  the `jafar-shell` jar, and `profile_compare` takes `{format: otlp, sessionId}` for a session
+  `otlp_open` opened. `OtlpProfileReader` (`otlp-shell`) follows the pprof reader's rules. A file's
+  sample types are its profiles' distinct `type/unit` pairs (`--list-sample-types`,
+  `--sample-type`); the selected type reads every profile of that type. Counts come from a `count`
+  sample type (not an allocation or lock one), one per sample timestamp, or values over the period.
+  async-profiler's agent sample-type names (`perf_events` with a `perf_events/ns` period, `itimer`,
+  `ctimer`, `wall`, `object_sampler`, `malloc_tracer`, `lock_tracer`) have their kinds, and its
+  frame-type marks (`byte[]_[i]`, `_[k]`) are not part of a frame's name. Checked against real
+  async-profiler 4.6 files (`otlp-shell/src/test/resources/real/`): one run as JFR, OTLP and pprof
+  gives identical frames and counts
 - **Work budgets** (`gradle/work-budgets.properties`, the `workTest` tasks of `parser-core` and
   `parser-codegen`) - a ratchet gate on how much work a parse does, counted rather than timed:
   chunks started and read, events read and decoded, varints read, values skipped, constant-pool
@@ -164,12 +176,248 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates a lazy variable run by that module's evaluator
 
 ### Changed
+- **Compare keys native, C++ and kernel JFR frames by their symbol alone** - async-profiler's JFR
+  gives a C++ frame its library as the class, so `jfr_compare` and `jfr-shell compare` named it
+  `libjvm.so.Compile::Compile`, where its pprof conversion (and every other pprof producer) has
+  `Compile::Compile`, and a recording compared with its own conversion mismatched on every such
+  frame. Frames whose JFR frame type is `Native`, `C++` or `Kernel` now drop the class. This changes
+  `jfr_compare`'s `method` values for those frames
+- **The parser uses one thread per processor by default** - `StreamingChunkParser.defaultParallelism()`
+  was `max(availableProcessors - 2, 1)`, 2 threads on 4 processors; it is now
+  `availableProcessors`. On a 4-processor machine and a 4.16 GB recording, 4 threads walked the
+  headers, decoded one type and decoded every event 1.6-1.7x faster than 2, and 6 or 8 were no
+  faster than 4. Pass `ParsingContext.withParallelism(n)` to keep processors free. The allocation
+  gate now pins `-XX:ActiveProcessorCount=2` (still a 2-thread pool). See
+  [doc/performance/ParserParallelism.md](doc/performance/ParserParallelism.md)
 - **`jfr_compare` and `jfr-shell compare` report dotted class names** - a frame's `method` was the
   class name as the recording stores it, `java/lang/String.indexOf`; it is now
   `java.lang.String.indexOf`, so it matches the same frame read from a pprof profile. Native frames
   keep their symbol. A script that matches `method` values against slashed names must change
 
 ### Fixed
+- **JfrPath negative numbers did not parse (#304).** `[gcId > -1]` failed with "Expected literal",
+  and in a function `[between(gcId, -1, 5)]` the bound was read as a field named `-1` and failed
+  with 'For input string: "null"'. Negative integers and decimals (`-1`, `-0.5`, `-.5`) are now
+  literals, in `[...]`, `filter(...)` and function arguments. Counts still may not be negative:
+  `head(-1)`, `tail`, `top` and `stackprofile(buckets=)` take a whole count of 0 to 2147483647 and
+  fail to parse naming the operator otherwise (`head(3000000000)` wrapped to a negative count, and
+  failed in `subList`), and `minPct=` is 0 or more. `quantiles()` now rejects values outside 0..1:
+  `quantiles(50, 90)` printed `p5000`/`p9000` columns holding the maximum; write
+  `quantiles(0.5, 0.9)`.
+- **Heap dump and pprof/OTLP count arguments were not checked (#312).** HdumpPath read `head`,
+  `tail`, `top`, `depth=`, `threshold=`, `minsize=` and `join(session=)` with `intValue()`:
+  `head(-1)` reached `limit(-1)`, `head(2.5)` became 2, and `head(3000000000)` or `minsize=3GB`
+  wrapped to a negative number. The samples queries of pprof-shell and otlp-shell cast `head`,
+  `tail` and `top` with `(int)`. Each count now takes a whole number from 0 to 2147483647 and fails
+  to parse naming the argument otherwise, by the rule JfrPath applies since #304 (`2.0` is 2). The
+  byte sizes `minsize=` and `dominators(minRetained=)` reject a negative value (`minRetained=-5MB`
+  meant the default) and still round a fraction of a byte down. A number too large for a long
+  (`9223372036854775807K`) is now a parse error in HdumpPath and JfrPath filters instead of
+  wrapping, and a malformed HdumpPath number (`1e`) is reported as such instead of escaping as a
+  `NumberFormatException`. In JfrPath expressions (`select(... as)`, `groupBy(...)`), `-.5` and
+  `.5` are numbers: `select(-.5 + v as x)` read `-.5` as a field and gave 0.0, and `.5` did not
+  parse.
+- **JfrPath `[...]` and `filter(...)` disagreed on `== null` and on indexed paths (#309).**
+  `[x == null]` matched nothing for a missing `x` while `filter(x == null)` matched every such row,
+  and `filter(stackTrace/frames/0/lineNumber >= 0)` read `0` as a map key and matched nothing while
+  the `[...]` form matched. Both now treat `= null`/`!= null` as presence checks (a missing or null
+  field, a missing step on a nested path included), and `filter(...)` reads array indexes as
+  `[...]` does: so a slice that is not the last part of a path now fails in `filter(...)` as in
+  `[...]`. A path crossing an array without an index does not resolve, and reads as missing. The
+  `any:`/`all:`/`none:` forms are unchanged.
+- **`jfr_use`'s summary called recordings healthy without grounds (#297).** `overallAssessment`
+  weighed only the resources' saturation shares, which only the CPU section reports (thread-state
+  blocking or container throttling, in percent). With none (a JDK recording outside a container,
+  whose CPU saturation is not measured, or one without `jdk.CPULoad` whose samples are all RUNNABLE) it said `HEALTHY`,
+  and the insights "system appears healthy"; and it said `HEALTHY` or `ACCEPTABLE` beside the
+  bottlenecks the insights listed (memory pressure, contention, queue saturation). Any listed
+  bottleneck now makes it `NEEDS_ATTENTION`, named in `summary.bottlenecks`; with no share and no
+  bottleneck it is `UNKNOWN`, with a `note` pointing to each resource's utilization and assessment,
+  and the insight says there is no verdict. A measured share of 0% with no bottleneck is still
+  `HEALTHY`.
+- **The thread-state analyses never matched a JDK recording's states (#276).** JDK recordings name
+  HotSpot's thread statuses (`STATE_RUNNABLE`, `STATE_BLOCKED_ON_MONITOR_ENTER`, `STATE_SLEEPING`,
+  ...), and `jfr_tsa` (and the `tsa` analysis of jfr-shell's `ask`), its thread assessments and
+  `jfr_use`'s thread-state CPU fallback compared them with `RUNNABLE`, `BLOCKED`, `WAITING`, so
+  nothing matched: without `jdk.CPULoad`, `jfr_use` reported 0% of samples runnable. A state is now
+  named by the `Thread.State` it is (a sleep or a timed park or wait is `TIMED_WAITING`, a park or
+  wait `WAITING`, a monitor enter `BLOCKED`), and so are the Datadog profiler's `CONTENDED`
+  (`BLOCKED`), `PARKED` (`WAITING`) and `SLEEPING` (`TIMED_WAITING`); `jfr_tsa`'s
+  `stateDistribution`, `topThreadsByState` and `stateBreakdown` keys change with them (`RUNNABLE`
+  for `STATE_RUNNABLE`). HotSpot's samplers record running threads only, so a JDK recording's
+  samples are all `RUNNABLE` whatever the threads did. When every sample is `RUNNABLE` the analyses
+  no longer read anything into it: `jfr_tsa` adds a `stateNote`, reports each thread's assessment as
+  `NOT_APPLICABLE`, emits no state pattern or problematic thread (the `jdk.JavaMonitorEnter`
+  correlation still applies), and the `jfr_use` fallback reports utilization and saturation as `N/A`
+  with the reason. JfrPath filters still compare the names the recording holds (#288). `jfr_use` on
+  a recording that does not declare `jdk.CPULoad` at all (one not written by the JDK) failed with
+  "Event type 'jdk.CPULoad' not found"; it now falls back to the thread states too (the memory and
+  I/O sections still fail that way: #291).
+- **`jfr-mcp --attach` waited out its handshake timeout when a reconnect's stream ended (#321).**
+  If the daemon's stream ended while the bridge waited for the answer to its replayed `initialize`,
+  nothing woke the wait: the client's request waited the whole timeout (10 seconds) before the bridge
+  tried a new session. The wait now ends with the stream, and the retry follows at once.
+- **OTLP: stacks, attributes and values of real files** - OtlpPath (`show samples`, the `otlp_*`
+  MCP tools) took OTLP table indices as one-based and resolved every stack, location, function and
+  attribute to the entry before it; opentelemetry-proto v1.10.0 puts each table's zero value at
+  index 0 and async-profiler 4.6 writes it, so indices are absolute. A sample's value is now the sum
+  of its values, or its timestamp count when it has none (`jfrconv -o otlp` writes one value per
+  timestamp, or none), not its first value. The OTLP parser refuses older `v1development` layouts
+  (opentelemetry-proto v1.7.0, which async-profiler 4.1 writes; v1.8.0 and v1.9.0 samples with
+  attributes) instead of misreading them
+- **`groupBy`, `stats()`, `quantiles()` and `timerange()` got slower with more parser threads** -
+  each updated one shared accumulator under a lock for every event. They now accumulate per thread
+  and merge after the parse. On a 4.16 GB recording at the new default of 4 threads:
+  `groupBy(sampledThread/javaName)` 12.6-16.7 s -> 7.1-8.6 s, `timerange()` 15.3-18.9 s -> 8.6-9.4 s,
+  `quantiles()` 15.7-18.5 s -> 11.5-12.6 s, `stats()` 7.9-10.1 s -> 5.7-6.1 s; same results
+- **Compare judged Go mutex and block profiles on scaled contention counts** - Go writes period 1
+  for both whatever the sampling rate, and each sampled contention is already multiplied by the
+  rate, so `contentions` divided by the period read as a count of samples (1,430 "samples" for 286
+  sampled events at `SetMutexProfileFraction(5)`) and moves were called significant. Lock columns,
+  like allocation ones, now never give counts: shares are reported, nothing is judged. Found on real
+  Go 1.24 profiles, now fixtures in `pprof-shell/src/test/resources/real/`
+- **async-profiler's allocation, lock and native-memory pprof columns had no sampler kind** -
+  `jfrconv` (4.1) names them `allocations`, `locks` and `malloc`; read as `UNKNOWN`, an
+  async-profiler allocation profile was compared against a CPU profile with a note instead of being
+  refused. They are now allocation and lock kinds. The "observation counts unknown" reason and note
+  no longer claim a count column or period is missing when the profile has one that does not count
+  samples
+- **`jfr-mcp --attach` could send the client a second response to its `initialize` (#318).** When
+  the bridge reconnects after losing its session (a restarted daemon, a dropped stream) it replays
+  the client's `initialize` and hides the daemon's reply. It kept one hidden id for all its
+  connections and cleared it when a replay timed out, so a reply that came late, on the stream of
+  the attempt that had given up, went to the client as a second response with the `initialize` id;
+  read while the next attempt waited, it would have released that attempt before its own session was
+  initialized. The hidden id and its wait now belong to each connection, and a timed-out attempt
+  keeps hiding its late reply.
+- **JfrPath function conditions in `| filter(...)` matched nothing; `len()` comparisons did not
+  parse (#303).** The pipeline filter had no case for a function condition, so `filter(between(...))`,
+  `filter(contains(...))` and the other functions matched no row while the same `[...]` predicate
+  matched, and an unknown function (`filter(foo(x))`) matched nothing instead of failing. It now
+  evaluates functions with the `[...]` predicates' code, an unknown one fails as there, `and`/`or`
+  short-circuit as there, and a value function compared (`filter(len(name) > 3)`) is compared by its
+  value. The documented `[len(path)>50]` failed with "Expected ']'": a function followed by a
+  comparison was read as a boolean function. It now parses, in `[...]` and in `filter(...)`; a
+  boolean function compared (`contains(...) = true`) fails to parse naming it. `=` and `!=` in
+  `[...]` (and the `any:`/`all:` forms) now compare a number with a numeric literal by exact value,
+  whatever their types: `[len(path) = 7]` matched nothing, since a length is an `Integer` and the
+  literal is not. The same held for short, byte, float and double fields (and `int` fields under
+  the `jdk` backend, which reports them as `Integer`), numeric strings, and decimal literals
+  (`[gcId = 0.0]`): such `=` queries now match, and `!=` ones match fewer rows. Integral values
+  compare exactly, a double or float by its decimal form (a float field `= 0.1` now matches), and a
+  string only when it is an ASCII decimal number.
+- **JfrPath operators after `head(n)` lost the projection or were skipped (#305).** With a
+  projection first piped to `head`, `tail`, `filter` or `distinct` (`events/T/heapUsed | head(2)`),
+  whole events came back, and a later `stats()` read the events' first column, whatever it was;
+  `sketch()` after another operator was ignored and the rows printed. The projected values are now
+  the rows: a scalar or string constant (a method name, a thread state) as a `value` column, as a
+  plain projection shows it, an object (`/sampledThread`) as its fields. A query that used the
+  dropped projection's other fields (`/heapUsed | filter(gcId > 0)`) now finds no such field: filter
+  on `value`, or drop the projection. `sketch()` after another operator computes as it does first,
+  and with no values its quantiles are `null`, not NaN, as are `quantiles()`'s.
+  `decorateByTime()`/`decorateByKey()` anywhere but first (after another operator, or on a
+  variable's rows) fail instead of being skipped.
+- **HdumpPath `filter` on a field that is no column returned nothing without a word (#295).**
+  `classes | filter(retained > 10MB)` returned no rows, while `top` and `sortBy` on the same field
+  fail; it led the jfr-mcp `leak-hunt` prompt astray (#289). A `filter(...)` or `[...]` predicate
+  that matches no row because it compares a field that is no column of its rows now fails, naming
+  the columns (`classes` with `retained` gets `top`'s hint to aggregate `objects`). A column the
+  root can have but these rows lack (`arrayLength` on non-arrays, `retainedSize` before it is
+  computed) is not an error; after a stage that builds new rows the columns are the keys they
+  carry. When the input is an operator's error row, the filter reports that error. `ages[...]`
+  predicates on the age columns (`estimatedAge`, `ageBucket`) now run after the ages are computed:
+  they matched nothing. `ages` and `gcroots` queries that read a retained size now compute retained
+  sizes first, as `objects` queries do: `gcroots[retained > 1KB] | count` gave 0 until another query
+  had computed them.
+- **The jfr-mcp `leak-hunt` prompt's retained-size queries did not run (#289).** `classes` rows have
+  no `retained` column, and step 3 (`classes | sortBy(retained desc) | top(20)`) failed with "Field
+  'retained' is not available on classes". Step 6 joined classes `by=class` (on the `classes` root
+  that names `className`, which a classes row does not have, so every `allocCount` was null) and
+  then filtered on `retained > 10MB`, which returned no rows at all. Both now rank `objects |
+  groupBy(className, agg=sum, value=retainedSize)`, and step 6 joins those groups `by=className` and
+  keeps the classes with allocation samples. The same broken examples in the LLM language reference
+  (`ask`), doc/cli/AskTutorial.md and doc/hdumppath.md are corrected.
+- **The Tutorial's thread-state filter matched nothing on JDK recordings (#288).** JDK recordings
+  name thread states as HotSpot does (`STATE_RUNNABLE`, ...), so
+  `events/jdk.ExecutionSample[state="RUNNABLE"]` in doc/cli/Tutorial.md counted 0, and the
+  `isRunnable()` helpers in doc/parser/TypedAPITutorial.md were never true. The examples now use
+  `STATE_RUNNABLE`, and the Tutorial says that state names are the producer's (the Datadog profiler
+  writes `RUNNABLE`). jfr-shell tests that filtered on `RUNNABLE` passed while matching nothing;
+  they now use the recording's names and assert what matched.
+- **A heap dump with an array over 2 GB reported a negative heap size (#262).** The shallow size
+  (header estimate plus data) was computed in `int`, so an array whose shallow size exceeds
+  `Integer.MAX_VALUE` bytes wrapped to a negative number. That number went into
+  `getTotalHeapSize()` (a dump holding one 300-million-element `long[]` reported -2,147,483,629
+  bytes in both parsing modes) and into retained sizes (-2,147,483,629 for that array, in both
+  modes). The heap total now adds exact `long` sizes (an indexed array's from its length and
+  element size). `HeapObject.getShallowSize()`, still an `int`, is capped at `Integer.MAX_VALUE`
+  instead of going negative; retained sizes are summed from it, so such an object counts as
+  `Integer.MAX_VALUE` bytes in them, an undercount, not a negative
+- **`show ... --format json` wrote arrays as strings (#266).** A stack trace's `frames`, an
+  `ArrayType` in the untyped model of both backends, came out as one JSON string of its `toString`
+  text (`"frames": "[{method={hidden=false, ...`), in jfr-shell and in the unified shell. One writer
+  (`io.jafar.shell.core.JsonText`) now serves `show --format json` in both shells and `tail --format
+  json`: parser wrappers are written as what they hold (an `ArrayType` as its array, a `ComplexType`
+  as its map), any Java array is a JSON array, and a non-finite `double` or `float` is `null` (it
+  was a bare `NaN`, which is not JSON). Constants nested inside a value keep their wrapper maps
+  (`"name": {"string": "libmPow"}`), as before; only cells are unwrapped. An `Iterable` that is not
+  a collection is written as its string in all three (the unified shell and `tail` wrote it as an
+  array). One-shot `jfr-shell show <file> ...` also no longer prints
+  `Opened session #1: ...` on stdout before the result, so its JSON pipes into a parser as the
+  tutorial shows (`-Djfr.shell.verbose=true` or `JFR_SHELL_VERBOSE` brings the line back). One-shot
+  `metadata` no longer prints `Note: 'types' is deprecated`, which it printed because it runs the
+  `types` command internally
+- **`jfr-shell -b <backend> <subcommand>` ignored the backend (#268).** The option was set on the
+  root command, and `show`, `metadata`, `chunks`, `cp`, `compare` and `script` read only their own
+  `-b`, so `jfr-shell -b jdk script q.jfrs` ran on the default backend without a word. A `-b`
+  before the subcommand now applies to it; given before and after with different values, or before
+  `tail` or `ps` (which use no backend), it is a usage error (exit 2). `compare` checks a `-b` even
+  when neither side is a recording, and a `-b` that an installed `JFRSHELL_BACKEND` overrides is an
+  error naming the variable, in interactive mode too (it reported the backend as missing and
+  downloaded it). In `jafar-shell`, a `-b`
+  before `script` now runs the script in the unified shell, as `script -b` does, and `script -b`
+  checks the backend instead of falling back to the default for an unknown one
+- **The dev-build backend warning was wrong for both in-tree backends (#267).** `JdkJfrBackend`
+  reported the JDK's version (`25.0.5.1+2-LTS`) as its own, so a `-SNAPSHOT` shell warned that its
+  `jdk` backend was not the one built with it even when `-Djfr.shell.backend.jars` loaded exactly
+  that jar. `JafarBackend` read its version through `Class.getPackage()`; the shell loads every
+  plugin jar through one class loader, where both backends' package takes the manifest of whichever
+  jar defines it first, so a released `jafar` backend next to a built `jdk` jar reported the `jdk`
+  jar's version and the warning about the stale `jafar` stayed silent. Both now report the
+  `Implementation-Version` of the jar they were loaded from, or `dev` from a classes directory, a
+  jar with no or a blank attribute, or an unreadable location; the `backend` command shows that
+  version (`dev` for the backends bundled in the `jafar-shell` jar, where the `jdk` backend used to
+  show the JDK's version). Released backend jars up to 0.29.0 keep the old code, so a released
+  `jafar` plugin next to a built `jdk` jar is still not flagged. The warning still compares versions
+  only, so it cannot tell a stale SNAPSHOT jar from a fresh one
+- **HdumpPath's JFR cross-type join never matched a hidden class (#280).** A heap dump names a
+  hidden class `Alloc$$Lambda+0x0000000030045a10`; for the class itself (not an array of it) JFR
+  stores `Class.getName()`'s `Alloc$$Lambda/0x...`, which the allocation statistics dot into
+  `Alloc$$Lambda.0x...`. Within one run the address is the same class, but `classes |
+  join(session=N, root="jdk.ObjectAllocationSample")` compared the two spellings, so every lambda
+  had `allocCount = null`. Both sides are now keyed with `+` before the address, which is kept: two
+  lambdas of one class stay apart, and a recording and a dump from different runs still do not match
+- **jfr-mcp wrote the parser's wrappers as Java beans (#283).** `jfr_query` rows hold the untyped
+  parser's `ArrayType` and `ComplexType`, which the result's Jackson mapper, and the MCP SDK for the
+  structured content, wrote as beans: a stack trace's `frames` came out as `{"array": [...], "type":
+  "[Ljava.lang.Object;"}` and every constant as `{"simpleType": ..., "value": ...}`. Every tool
+  result is now made of plain values first: a wrapper becomes what it holds, an array becomes a
+  list, map keys keep their order, and a non-finite `double` or `float` becomes `null` (Jackson
+  wrote the string `"NaN"` or `"Infinity"` where a number belongs). Constants nested inside keep
+  their wrapper maps (`"name": {"string": "libmPow"}`), as the cells of `show --format json` do
+- **`jfr_use` memory and I/O failed on recordings that do not declare the JDK's types (#291).** A
+  JfrPath query naming an event type the recording does not declare throws "Event type ... not
+  found", and `jfr_use` queried `jdk.GCHeapSummary`, `jdk.GCPhasePause` and the four I/O types by
+  name, so on a recording not written by the JDK the memory and I/O sections reported "Failed to
+  analyze ..." instead of no data. They now query only the types the recording declares, and with no
+  heap figures the memory section's `assessment` is `UNKNOWN` instead of `HEALTHY`. The CPU
+  section's `jdk.CPULoad` query gets the same guard in PR #292.
+- **HdumpPath `gcroots` rows of thread objects had no `threadSerial` (#302).** The parser keeps a
+  THREAD_OBJ root's serial, but behind `getThreadObjSerial()`; the row read `getThreadSerial()`,
+  which is -1 for THREAD_OBJ, so `gcroots/THREAD_OBJ[threadSerial > 0]` (doc/hdumppath.md) matched
+  nothing. THREAD_OBJ rows now carry it; HotSpot gives a thread's THREAD_OBJ and frame roots the
+  same serial, so `groupBy(threadSerial)` counts now include each thread's object, and threads with
+  no frame roots appear.
 - **HdumpPath `join(session=N)` after `groupBy` never matched the baseline (#260).** The baseline
   was evaluated without the pipeline, on the root's default key, so grouped rows were compared with
   raw objects or roots: every group had `baseline.exists=false` and `countDelta == count`, and the
@@ -190,6 +438,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compare kept the hidden-class address in the form `Handler$$Lambda.0x00007fd6a823c220`** - the
   address after a dot, as `tck-test.jfr` stores hidden lambda classes, was not removed, so the same
   lambda had a different name in each run. It is now removed like the `/0x...` form
+- **`jfr_use` and `jfr_diagnose` called a count "% of CPU time spent waiting or blocked" (#263).**
+  `cpu.saturation.value` held the sum of the `jdk.ContainerCPUThrottling` counters
+  (`"unit": "slices"`) or, without `jdk.CPULoad`, the number of samples in blocking states, and the
+  insight and the finding read it as a percentage: on `test-dd.jfr` "Investigate thread blocking:
+  16356.0% of CPU time spent waiting/blocked". The sum was wrong too: those counters are the
+  cgroup's running totals, so throttling is the change between readings. The value is now a
+  percentage (`"unit": "%"`) with `"source"` saying what it measures:
+  - `"containerThrottling"`: the share of CFS periods throttled between the throttling readings
+    nearest the window, which can cover more than the window (`measuredFromEpochNanos`/
+    `measuredToEpochNanos`); on `test-dd.jfr` 84.3%, 506 of 600 periods over 59.9 s. Intervals
+    with inconsistent counters (one decreased, more periods throttled than elapsed, or periods
+    counted between two readings at the same instant) are skipped
+    and counted in `intervalsSkipped`. The value is `"N/A"` for a window that ends before it
+    starts, with fewer than two readable readings, when no interval covers the window, when every
+    interval is skipped, or when no period elapsed.
+  - `"threadStates"`: the share of samples in blocking states.
+
+  Throttling is reported as such, with raising the container's CPU limit as the action, instead of
+  sending the agent to `jfr_tsa`, and the summary's `overallAssessment` only weighs a saturation
+  given in percent
+- **Case-insensitive matching broke under a Turkish locale (#264).** Every `toLowerCase()` and
+  `toUpperCase()` in the shipped modules used the JVM default locale, and under tr-TR `"I"`
+  lower-cases to a dotless `"ı"` and `"i"` upper-cases to a dotted `"İ"`. `jfr_list_types` with
+  `filter=initial` found no types (`jdk.InitialSystemProperty` became `jdk.ınitialsystemproperty`),
+  and `gcroots/jni_global | count` gave 0: `JNİ_GLOBAL` names no root type, and the lookup
+  swallows the error and returns no rows. All 155 calls in `*/src/main` (one of them in
+  `test-recordings`) and the two `String::toLowerCase`/`toUpperCase` method references now pass
+  `Locale.ROOT`, and arch rule (j) fails the build on a new case mapping without a locale
+  (`doc/agents/Gates.md`)
 - **Filtered JfrPath queries threw an exception per event** - a filter resolves its field path
   for every event it tests, and the path parser told a field name from an index by catching
   `NumberFormatException` from `Integer.parseInt`. `events/bench.Common[bucket=7] | count()` on a
@@ -221,6 +498,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The buffer is not unmapped at close directly: event values resolve constant-pool entries from it
   lazily, and a read after an explicit unmap could crash the JVM
+- **A closed recording could stay mapped after `jfr_close` (#279).** `CloseReleasesMappedFileTest`
+  failed on CI: the file was still mapped after the collection `jfr_close` requests. It was not
+  reproduced on demand (6 of 150 runs once, then 0 of 750), so the two changes below close the gaps
+  found rather than a confirmed cause:
+  - `StreamingChunkParser.close()` shut its chunk parsing pool down without waiting, so its worker
+    threads, whose thread-locals hold the last parse's data, could outlive the call. When a parse
+    failed, `close()` could return while another chunk's task was still running on the file.
+    `close()` now waits up to 5 seconds in all for the pool to terminate and its threads to end,
+    then interrupts the tasks still running and logs a warning for each thread still alive. An
+    interrupted `close()` stops waiting and keeps the interrupt; a `close()` called from one of the
+    parser's own threads (a listener) does not wait. The threads are now named
+    `jafar-chunk-parser-<n>`, numbered across parsers.
+  - `jfr_close`, `hdump_close` and the `--attach` server's release of disconnected clients' sessions
+    request a follow-up collection 500 ms after the last close, on a daemon thread, in case a buffer
+    was still briefly held while the first collection ran. It is requested on every close (closes
+    within 500 ms of each other share one): there is no portable way to ask the JVM whether the file
+    is still mapped
 - **Numbers in tool payloads, reports and shell output followed the JVM default locale (#224).**
   On a ru-RU or de-DE host `jfr_summary` returned `"pct": "66,6%"` and `"topMethod": "... (34,9%)"`,
   `jfr_use` `"Heap 6,3% full after GC"` and `hdump_summary` `"heapSize": "8,9 MB"`, next to JSON

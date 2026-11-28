@@ -111,7 +111,7 @@ hdump> as-query what is holding the most memory?
 ```
 # Ranks classes by retained size, which is what leak size is measured in.
 
-classes | sortBy(retained desc) | top(20)
+objects | groupBy(className, agg=sum, value=retainedSize) | top(20, by=retainedSize)
 ```
 
 Note it reached for **retained** rather than shallow size. That distinction decides most heap

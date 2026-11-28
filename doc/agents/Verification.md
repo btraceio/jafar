@@ -36,11 +36,16 @@ backend it selected reports a different version, it prints to stderr, before the
 Warning: this jfr-shell is a development build (0.0.0-SNAPSHOT) but its 'jafar' backend is version 0.29.0, not the one built with it. …
 ```
 
-That line means everything typed into that shell ran the release. The warning is a backstop, not
-a replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from
-a fresh one. `jafar-shell` bundles the backend built with it and uses that one even when a released
-plugin is installed (its `backend` command reports `Version: dev`), so its shadow jar needs no
-flags.
+That line means everything typed into that shell ran the release. The warning is a backstop, not a
+replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from a
+fresh one. Each backend reads its version from the manifest of the jar it was loaded from: the shell
+loads every plugin jar through one class loader, where a package shared by two jars (both backends
+live in `io.jafar.shell.backend.impl`) takes the manifest of whichever jar defined it first, so
+`Class.getPackage()` there names the wrong jar's version (#267). Released backend jars up to 0.29.0
+still read it that way: next to a built `jdk` jar, a released `jafar` plugin reports the `jdk` jar's
+version and the warning stays silent. `jafar-shell` bundles the backend built with it and uses that
+one even when a released plugin is installed (its `backend` command reports `Version: dev`), so its
+shadow jar needs no flags.
 
 > **Case file — verifying 0.29.0.** Fixing `crossref` in `JafarSources`, every
 > built-jar check — "works on a real recording", "a corrupted real recording still prints the clean
@@ -114,7 +119,7 @@ In this repository the recurring multiplicities are:
 | Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses when `parser-codegen` is not on the classpath, or with `-Djafar.untyped.generated=false`) and generated `EventStreamGenerated` (`parser-codegen`; what `UntypedJafarParser` uses otherwise, `UntypedJafarParserImpl.usesGeneratedReader`) — held equal by `GeneratedUntypedParityTest` |
 | Typed decode paths | build-time `HandlerFactory` (`jafar-processor`) and run-time generated handlers (`parser-codegen`). With both on the classpath a chunk the factory is not attached to is decoded by a run-time handler: right values, wrong path, no error. `:jafar-processor:test` runs without `parser-codegen`; `:jafar-processor:codegenTest` runs with it and asserts which implementation decoded each value |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
-| Chunks | one parsing task per chunk on a pool of `max(availableProcessors - 2, 1)` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
+| Chunks | one parsing task per chunk on a pool of `availableProcessors` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
 
 > **Case file — two query paths.** `CommandDispatcher` runs JfrPath two ways. The LLM host adapter
 > knew only the `JfrSelector` one; the interactive shell builds the dispatcher the other way. Fixed

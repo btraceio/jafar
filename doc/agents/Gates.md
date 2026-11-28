@@ -125,9 +125,10 @@ and one unfrozen one, in plain words:
   `io.jafar.shell.backend.impl..`, and classes in
   `io.jafar.shell.core.llm..` never depend on `io.jafar.shell.llm..` —
   backends are discovered, never hard-wired;
-- **(j)** no class formats with the JVM default locale. Forbidden, whether
-  called, used as a method reference or reached through a subtype of the
-  owner: `String.format(String, ...)`, `String.formatted(...)`,
+- **(j)** no class formats or case-maps with the JVM default locale.
+  Forbidden, whether called, used as a method reference or reached through a
+  subtype of the owner: `String.format(String, ...)`, `String.formatted(...)`,
+  `String.toLowerCase()`, `String.toUpperCase()`,
   `PrintStream`/`PrintWriter`/`Console` `printf`/`format(String, ...)`,
   `MessageFormat.format(String, ...)` and `new MessageFormat(String)`, the
   no-argument `NumberFormat` factories (`getInstance`, `getNumberInstance`,
@@ -143,14 +144,16 @@ and one unfrozen one, in plain words:
   entry to be reported from a fixture). Pass a `Locale` —
   `Locale.ROOT` for anything a program, an agent or a bug report reads. On a
   ru-RU or de-DE host those calls wrote `"47,8%"` next to the JSON number
-  `47.8` (issue #224); under ar-EG `%d` wrote Arabic-Indic digits.
-  `toLowerCase()`/`toUpperCase()` without a locale are a different bug class
-  and not covered. Rule (j) is **not frozen**: there is no grandfathered
+  `47.8` (issue #224); under ar-EG `%d` wrote Arabic-Indic digits; under
+  tr-TR `"I".toLowerCase()` is a dotless `"ı"`, so `jfr_list_types` with
+  `filter=initial` found no types and `gcroots/jni_global | count` gave 0
+  (issue #264). Rule (j) is **not frozen**: there is no grandfathered
   debt, so its test checks the rule directly and any new call fails the build.
   It covers the classified modules' main classes like the other rules; the
   `parser-core` multi-release overlays (`src/java9|13|21`), `test-*` modules
   and the separate `demo/` build are outside it, so a change there is checked
-  by hand (all of them were clean when the rule was added, except `demo/`).
+  by hand (all of them were clean when the rule was added, except `demo/`; for
+  case mapping, `test-recordings` had one call, fixed with #264).
 
 **Membership comes from class dirs.** Every covered module's *compiled*
 classes are imported from `<module>/build/classes/java/main`, and module

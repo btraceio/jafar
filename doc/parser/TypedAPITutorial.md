@@ -109,7 +109,7 @@ public interface ExecutionSample {
 
     @JfrIgnore
     default boolean isRunnable() {
-        return "RUNNABLE".equals(state());  // Helper method, not a JFR field
+        return "STATE_RUNNABLE".equals(state());  // Helper method, not a JFR field
     }
 
     @JfrIgnore
@@ -453,7 +453,7 @@ public interface ExecutionSample {
 
     @JfrIgnore
     default boolean isRunnable() {
-        return "RUNNABLE".equals(state());  // Custom logic, not a JFR field
+        return "STATE_RUNNABLE".equals(state());  // Custom logic, not a JFR field
     }
 }
 ```

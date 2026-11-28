@@ -74,6 +74,8 @@ chunk of a continuous recording, as they do in every chunk here.
 **What would move every row** is the per-event cost on the parallel path: the parser ran 2 chunk
 threads on this 4-processor machine, so neither the header walk nor decoding used half the CPUs.
 That was not measured here.
+It has since been measured: [ParserParallelism.md](ParserParallelism.md). The default became one
+thread per processor, and four aggregations stopped serializing on a lock.
 
 ## 4. Found while measuring: filters threw an exception per event
 

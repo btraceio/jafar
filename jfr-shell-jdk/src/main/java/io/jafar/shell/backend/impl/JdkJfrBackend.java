@@ -53,6 +53,8 @@ import org.slf4j.LoggerFactory;
  */
 public final class JdkJfrBackend implements JfrBackend {
 
+  private static final Logger LOG = LoggerFactory.getLogger(JdkJfrBackend.class);
+
   private static final Set<BackendCapability> CAPABILITIES =
       EnumSet.of(
           BackendCapability.EVENT_STREAMING,
@@ -70,9 +72,47 @@ public final class JdkJfrBackend implements JfrBackend {
     return "JDK JFR API";
   }
 
+  /**
+   * This backend's build version, from its jar's manifest, as the jafar backend reports its own;
+   * {@code dev} when it was not loaded from a jar (Gradle tests, an IDE). It used to be the JDK's
+   * version, which a development shell's check for a stale backend could never match, so that
+   * warning fired even for the jar built with the shell (#267). The JDK's version is {@link
+   * Runtime#version()}.
+   */
   @Override
   public String getVersion() {
-    return Runtime.version().toString();
+    return buildVersion(JdkJfrBackend.class);
+  }
+
+  /**
+   * The {@code Implementation-Version} in the manifest of the jar {@code type} was loaded from, or
+   * {@code dev}. Read from that jar itself, not from {@link Class#getPackage()}: the jafar backend
+   * has classes in this package too, and the shell loads every plugin jar through one class loader,
+   * where the package's version is whichever jar defined it first. The jafar backend has the same
+   * method: a plugin cannot rely on a shell-core helper an older shell lacks.
+   */
+  static String buildVersion(Class<?> type) {
+    try {
+      java.security.CodeSource source = type.getProtectionDomain().getCodeSource();
+      if (source == null || source.getLocation() == null) {
+        return "dev";
+      }
+      Path location = Path.of(source.getLocation().toURI());
+      if (!java.nio.file.Files.isRegularFile(location)) {
+        return "dev"; // a classes directory
+      }
+      try (java.util.jar.JarFile jar = new java.util.jar.JarFile(location.toFile())) {
+        java.util.jar.Manifest manifest = jar.getManifest();
+        String version =
+            manifest == null
+                ? null
+                : manifest.getMainAttributes().getValue("Implementation-Version");
+        return version == null || version.isBlank() ? "dev" : version;
+      }
+    } catch (java.io.IOException | java.net.URISyntaxException | RuntimeException e) {
+      LOG.debug("No build version for {}: {}", type.getName(), e.toString());
+      return "dev";
+    }
   }
 
   @Override

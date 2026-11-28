@@ -7,6 +7,7 @@ import io.jafar.shell.cli.FlameGraphRenderer;
 import io.jafar.shell.cli.ShowShape;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.FlameNode;
+import io.jafar.shell.core.JsonText;
 import io.jafar.shell.core.ModuleSessionFactory;
 import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.QueryEvaluator;
@@ -1206,7 +1207,7 @@ public final class Shell implements AutoCloseable {
 
     java.util.regex.Matcher formatMatcher = FORMAT_FLAG.matcher(cleanQuery);
     if (formatMatcher.find()) {
-      format = formatMatcher.group(1).toLowerCase();
+      format = formatMatcher.group(1).toLowerCase(Locale.ROOT);
       cleanQuery = formatMatcher.replaceFirst("").trim();
     }
 
@@ -1275,7 +1276,7 @@ public final class Shell implements AutoCloseable {
       Map<String, Object> copy = new java.util.LinkedHashMap<>(field);
       rememberResult(query, List.of(copy));
       if ("json".equalsIgnoreCase(format)) {
-        out.println(toJson(copy, 0));
+        out.println(JsonText.pretty(copy));
         flush();
       } else {
         Map<String, Object> shown = new java.util.LinkedHashMap<>(copy);
@@ -1293,9 +1294,8 @@ public final class Shell implements AutoCloseable {
     rememberResult(query, valueRows(values, projectedColumn(q)));
     if ("json".equalsIgnoreCase(format)) {
       out.println(
-          toJson(
-              ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values,
-              0));
+          JsonText.pretty(
+              ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values));
       flush();
     } else {
       // a 'value' column, as jfr-shell prints one
@@ -1567,7 +1567,7 @@ public final class Shell implements AutoCloseable {
     result = forDisplay(result, sessionType, query);
     if (result instanceof List<?> list) {
       if ("json".equalsIgnoreCase(format)) {
-        out.println(toJson(result, 0));
+        out.println(JsonText.pretty(result));
       } else if ("csv".equalsIgnoreCase(format)) {
         printCsv(list);
       } else {
@@ -1662,57 +1662,6 @@ public final class Shell implements AutoCloseable {
       return '"' + s.replace("\"", "\"\"") + '"';
     }
     return s;
-  }
-
-  private static String toJson(Object obj, int indent) {
-    String ind = "  ".repeat(indent);
-    if (obj == null) return "null";
-    if (obj instanceof String s) return '"' + escapeJson(s) + '"';
-    if (obj instanceof Number || obj instanceof Boolean) return String.valueOf(obj);
-    if (obj instanceof Map<?, ?> m) {
-      var sb = new StringBuilder("{\n");
-      boolean first = true;
-      for (var e : m.entrySet()) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind)
-            .append("  \"")
-            .append(escapeJson(String.valueOf(e.getKey())))
-            .append("\": ")
-            .append(toJson(e.getValue(), indent + 1));
-      }
-      return sb.append("\n").append(ind).append("}").toString();
-    }
-    if (obj instanceof Iterable<?> coll) {
-      var sb = new StringBuilder("[\n");
-      boolean first = true;
-      for (Object v : coll) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind).append("  ").append(toJson(v, indent + 1));
-      }
-      return sb.append("\n").append(ind).append("]").toString();
-    }
-    return '"' + escapeJson(String.valueOf(obj)) + '"';
-  }
-
-  private static String escapeJson(String s) {
-    var sb = new StringBuilder();
-    for (int i = 0; i < s.length(); i++) {
-      char c = s.charAt(i);
-      switch (c) {
-        case '"' -> sb.append("\\\"");
-        case '\\' -> sb.append("\\\\");
-        case '\n' -> sb.append("\\n");
-        case '\r' -> sb.append("\\r");
-        case '\t' -> sb.append("\\t");
-        default -> {
-          if (c < 0x20) sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
-          else sb.append(c);
-        }
-      }
-    }
-    return sb.toString();
   }
 
   private void printBanner() {

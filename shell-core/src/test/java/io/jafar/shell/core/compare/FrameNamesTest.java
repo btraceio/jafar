@@ -81,6 +81,17 @@ class FrameNamesTest {
   }
 
   @Test
+  void anAsyncProfilerFrameTypeMarkIsNotPartOfTheKey() {
+    // The agent's OTLP marks kernel frames and an allocation's class; its JFR and jfrconv do not.
+    assertEquals("byte[]", FrameNames.symbolKey("byte[]_[i]", true));
+    assertEquals("java.lang.String", FrameNames.symbolKey("java.lang.String_[k]", true));
+    assertEquals("do_syscall_64", FrameNames.symbolKey("do_syscall_64_[k]", false));
+    assertEquals(
+        "java.lang.String.repeat", FrameNames.symbolKey("java/lang/String.repeat_[j]", true));
+    assertEquals("a_[x]", FrameNames.symbolKey("a_[x]", false));
+  }
+
+  @Test
   void jvmProfilesAreRecognisedByTheirSymbolsAndSourceFiles() {
     assertEquals(true, FrameNames.isJvmSymbol("java/lang/String.<init>"));
     assertEquals(true, FrameNames.isJvmSymbol("m.Foo.<clinit>"));

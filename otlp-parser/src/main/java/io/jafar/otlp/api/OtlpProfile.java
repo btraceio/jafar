@@ -23,7 +23,8 @@ public final class OtlpProfile {
 
   /**
    * Shared lookup tables for the entire message. Index 0 in each table is always a zero/null
-   * sentinel value per the OTLP spec.
+   * sentinel value per the OTLP spec, and it is present: indices are absolute, so index {@code n}
+   * is entry {@code n} of the list.
    *
    * @param mappingTable binary mappings referenced by location.mappingIndex
    * @param locationTable code locations referenced by stack.locationIndices
@@ -63,7 +64,9 @@ public final class OtlpProfile {
    *
    * @param stackIndex index into {@link Dictionary#stackTable()}
    * @param attributeIndices indices into {@link Dictionary#attributeTable()}
-   * @param values sample values; the single element corresponds to {@link Profile#sampleType()}
+   * @param values sample values, all in {@link Profile#sampleType()}. Not necessarily one: with
+   *     timestamps there is one value per timestamp (async-profiler's {@code jfrconv -o otlp}
+   *     writes that), and with none at all each timestamp counts 1 (opentelemetry-proto v1.10.0)
    * @param timestampsUnixNano per-observation timestamps in nanoseconds (may be empty)
    */
   public record Sample(

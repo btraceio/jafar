@@ -263,7 +263,7 @@ class JsonOutputFormatTest {
         execute(
             "show",
             testJfr().toString(),
-            "events/jdk.ExecutionSample[state=\"RUNNABLE\"]",
+            "events/jdk.ExecutionSample[state=\"STATE_PARKED\"]",
             "--format",
             "json",
             "--limit",
@@ -274,6 +274,10 @@ class JsonOutputFormatTest {
 
     assertValidJsonStructure(output);
     assertTrue(output.contains("["), "Filtered result should be JSON array");
+    // The filter matches, and only what it names: test-ap.jfr names states as HotSpot does
+    // (#288), and its first rows unfiltered are STATE_RUNNABLE
+    assertTrue(output.contains("\"state\": \"STATE_PARKED\""), output);
+    assertFalse(output.contains("STATE_RUNNABLE"), output);
   }
 
   // ==================== Chunks Command JSON Tests ====================

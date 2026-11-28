@@ -5,6 +5,7 @@ import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.CompletionContextType;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -38,7 +39,7 @@ public final class HdumpFilterFieldCompleter implements ContextCompleter<HdumpMe
 
   private String getFieldDescription(String rootType, String field) {
     if (rootType == null) return null;
-    return switch (rootType.toLowerCase()) {
+    return switch (rootType.toLowerCase(Locale.ROOT)) {
       case "objects" -> getObjectFieldDescription(field);
       case "classes" -> getClassFieldDescription(field);
       case "gcroots" -> getGcRootFieldDescription(field);

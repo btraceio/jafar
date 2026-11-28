@@ -14,10 +14,10 @@ import java.util.Optional;
  *
  * <p>This is what makes cross-type joins reachable over MCP. {@code HdumpPathEvaluator} needs a
  * {@link CrossSessionContext} — not a bare {@code SessionResolver} — to run {@code
- * join(session=..., root="jdk.ObjectAllocationSample", by=class)}, because it has to evaluate a
- * JfrPath query against the *other* session. Without it the evaluator throws "Cross-type join
- * requires a CrossSessionContext", which made heap-to-JFR allocation correlation usable only from
- * the interactive shell.
+ * join(session=..., root="jdk.ObjectAllocationSample")}, because it has to evaluate a JfrPath query
+ * against the *other* session. Without it the evaluator throws "Cross-type join requires a
+ * CrossSessionContext", which made heap-to-JFR allocation correlation usable only from the
+ * interactive shell.
  *
  * <p>Resolution order is heap first, then JFR: heap-to-heap diffs are the common case and heap
  * aliases are what a caller most often names. A reference that matches neither registry resolves to
