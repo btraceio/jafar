@@ -64,7 +64,7 @@ R3 `tail [filter] [--limit N]`: stream matching events from the live session cap
     at command start until interrupted, the target closes, or N events are emitted.
     Filter is a JfrPath expression (`events/jdk.X[pred] | filter(p) | select(...)`);
     per-event-capable ops only — batch ops are rejected with a clear, testable error
-    (that is Phase 2). In script mode `tail` requires `--limit` (output is buffered to
+    (that is Phase 2; see "Phase 2: live aggregation" below for what replaced this). In script mode `tail` requires `--limit` (output is buffered to
     script end and no interrupt path exists there).
 R4 Both UX shapes: interactive commands (readline shell and TUI) and one-shot CLI
     (`jfr-shell ps`, `jfr-shell tail <pid> [filter]`).
@@ -312,6 +312,34 @@ With a live session current, file-bound commands are **guarded**, not broken:
   `SessionManager` retyping.
 - Platform verification: macOS (local), Linux + Windows via the workspace testground;
   anything not verified is stated plainly in the PR (R8).
+
+## Phase 2: live aggregation (#185)
+
+Semantics chosen on #185: **cumulative**, re-printed on an interval.
+
+- The pipeline splits at its first operator that is not per-event applicable
+  (`JfrPathEvaluator.firstRowSetOp`). The part before it runs on each event as in Phase 1 (on each
+  projected value, with a projection: `JfrPathEvaluator.projectEvent`, as `collectAllRows` makes
+  rows for a file's row operators, a null value as `{value: null}`); the rows are kept, and the part from it on runs over all of them
+  (`JfrPathEvaluator.applyToRows`), so a result covers every matching event since the tail
+  started. The row operators copy the rows they change, so running them again on every print is
+  safe. Their results are shaped as after another operator in a file query (`sum`, `timerange`).
+- A result is printed every `--every` (default 5s, at most 24h, measured from the first event
+  taken in) while new events came in, and once at the end. Each states the events it covers and
+  the live session's drop count; JSON is one `{"type":"aggregate","final":..,...}` line. A sink
+  gets each result whole (`Sink.aggregate`): the TUI keeps only the latest.
+- Memory: a kept event is fully decoded, tens of KB with a stack trace. The rows are bounded by
+  `--max-rows` (default 100000) and by the heap: when used memory passes 80% of the maximum, the
+  tail asks for a collection (at most every two seconds) and ends if it is still above, both
+  times with a final result over what was kept, rather than run out of memory with none. The
+  check runs every 64 events.
+  Incremental accumulators (count/sum/stats/groupBy without keeping rows) would lift the bound
+  and are left for later.
+- Refused up front (`requireLiveOps`), when the filter is given: operators that read the
+  recording for other events (`crossref`, `decorateByTime`, `decorateByKey`), `flamegraph` (a
+  tree with no line form), and `stats`/`sum`/`quantiles`/`sketch` as the first row-set operator
+  with neither a projection, a value path nor a `select` before it.
+- Not handled: a target killed with SIGKILL is not noticed (as in Phase 1), so the tail runs on.
 
 ## Documentation
 

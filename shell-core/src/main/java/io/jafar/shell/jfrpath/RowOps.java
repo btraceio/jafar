@@ -519,10 +519,10 @@ final class RowOps {
    * when a filter op excluded the event.
    *
    * <p>Row-set operators (aggregations, ordering, windowing) throw {@link
-   * UnsupportedPipelineOperationException} naming the operator: they need the full row set, which
-   * does not exist in a live stream. The per-event-capable subset is declared per operator via
-   * {@link JfrPath.PipelineOp#isPerEventApplicable()} — a row-set op reaching this path is rejected
-   * by that check.
+   * UnsupportedPipelineOperationException} naming the operator: they need rows, not one event (a
+   * live {@code tail} runs them over the events it has kept, #185). The per-event-capable subset is
+   * declared per operator via {@link JfrPath.PipelineOp#isPerEventApplicable()} — a row-set op
+   * reaching this path is rejected by that check.
    *
    * <p>The input map is MUTATED IN PLACE by the transform operators ({@code len}, {@code
    * uppercase}, {@code lowercase}, {@code trim}, {@code abs}, {@code round}, {@code floor}, {@code
@@ -661,6 +661,43 @@ final class RowOps {
       selected.put(columnName, value);
     }
     return selected;
+  }
+
+  /**
+   * Where the per-event part of {@code pipeline} ends: the index of its first row-set operator, or
+   * its size when every operator runs per event.
+   */
+  static int firstRowSetOp(List<JfrPath.PipelineOp> pipeline) {
+    if (pipeline == null) return 0;
+    for (int i = 0; i < pipeline.size(); i++) {
+      if (!pipeline.get(i).isPerEventApplicable()) {
+        return i;
+      }
+    }
+    return pipeline.size();
+  }
+
+  /**
+   * Rejects the first operator of {@code pipeline} that cannot run over a live stream's accumulated
+   * rows (#185): those that read the recording for more events ({@code crossref}, {@code
+   * decorateByTime}, {@code decorateByKey}) and {@code flamegraph}, whose result is a tree with no
+   * line form. Every other row-set operator runs on the rows {@code tail} has collected.
+   */
+  static void requireLiveOps(List<JfrPath.PipelineOp> pipeline) {
+    if (pipeline == null) return;
+    for (JfrPath.PipelineOp op : pipeline) {
+      String reason =
+          switch (op) {
+            case JfrPath.CrossrefOp _, JfrPath.DecorateByTimeOp _, JfrPath.DecorateByKeyOp _ ->
+                "reads the recording for other events and cannot run on a live stream";
+            case JfrPath.FlameGraphOp _ ->
+                "draws a tree that tail cannot print; use stackprofile() for a live profile";
+            default -> null;
+          };
+      if (reason != null) {
+        throw new UnsupportedPipelineOperationException(opName(op), reason);
+      }
+    }
   }
 
   private static String opName(JfrPath.PipelineOp op) {

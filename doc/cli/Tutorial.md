@@ -894,9 +894,16 @@ jfr> tail "events/jdk.FileRead | filter(bytesRead > 100000)" --limit 20
 ^C tail finished (interrupted): 2 events shown, 871 filtered, 0 dropped by the live session
 ```
 
-The filter is a JfrPath expression with **per-event** operators (`filter`, `select`, transforms).
-Aggregations need the full row set and do not exist in a live stream — that is Phase 2
-(`doc/design/jfr-event-streaming.md`).
+The filter is a JfrPath expression. With **per-event** operators only (`filter`, `select`,
+transforms) every matching event is printed. With an aggregation (`count()`, `groupBy()`,
+`top()`, ...) the tail keeps the matching events and prints the result over all of them every
+`--every` (default 5s) and once more when it ends:
+
+```bash
+jfr> tail "events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead)" --every 10s
+```
+
+See [Live aggregation](Usage.md#live-aggregation) for the details and the `--max-rows` bound.
 
 ```bash
 jfr> info                    # live statistics
