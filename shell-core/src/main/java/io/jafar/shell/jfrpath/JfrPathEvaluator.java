@@ -713,19 +713,7 @@ public final class JfrPathEvaluator {
           query.predicates,
           map -> {
             // Called from several chunk-parsing threads: extract first, then append as one
-            List<Object> vals = new ArrayList<>();
-            PathValues.extractWithIndexing(map, proj, vals);
-            List<Map<String, Object>> rows = new ArrayList<>(vals.size());
-            for (Object v : vals) {
-              Object value = collapsed(v);
-              Map<String, Object> row = new java.util.LinkedHashMap<>();
-              if (value instanceof Map<?, ?> fields) {
-                fields.forEach((k, fv) -> row.put(String.valueOf(k), fv));
-              } else {
-                row.put("value", value);
-              }
-              rows.add(row);
-            }
+            List<Map<String, Object>> rows = projectedRows(map, proj);
             synchronized (out) {
               out.addAll(rows);
             }
@@ -733,6 +721,37 @@ public final class JfrPathEvaluator {
       return out;
     }
     return evaluate(session, new Query(query.root, query.segments, query.predicates));
+  }
+
+  /** The rows one event gives for the projection {@code proj}, as {@link #collectAllRows} makes. */
+  private static List<Map<String, Object>> projectedRows(
+      Map<String, Object> event, List<String> proj) {
+    List<Object> vals = new ArrayList<>();
+    PathValues.extractWithIndexing(event, proj, vals);
+    List<Map<String, Object>> rows = new ArrayList<>(vals.size());
+    for (Object v : vals) {
+      Object value = collapsed(v);
+      Map<String, Object> row = new java.util.LinkedHashMap<>();
+      if (value instanceof Map<?, ?> fields) {
+        fields.forEach((k, fv) -> row.put(String.valueOf(k), fv));
+      } else {
+        row.put("value", value);
+      }
+      rows.add(row);
+    }
+    return rows;
+  }
+
+  /**
+   * The rows {@code event} gives for {@code query}'s projection ({@code events/T/a/b}): a scalar
+   * value as {@code {value: v}}, an object as its own fields, as a file query's row operators see
+   * them. Without a projection, the event itself. For a live {@code tail} that aggregates (#185).
+   */
+  public static List<Map<String, Object>> projectEvent(Query query, Map<String, Object> event) {
+    if (query.root != Root.EVENTS || query.segments.size() < 2) {
+      return List.of(event);
+    }
+    return projectedRows(event, query.segments.subList(1, query.segments.size()));
   }
 
   /**
@@ -1045,5 +1064,32 @@ public final class JfrPathEvaluator {
    */
   public static void requireLiveOps(List<JfrPath.PipelineOp> pipeline) {
     RowOps.requireLiveOps(pipeline);
+  }
+
+  /**
+   * As {@link #requireLiveOps(List)} for {@code query}, refusing too what a file query refuses: a
+   * value operator ({@code stats()}, {@code sum()}, {@code quantiles()}, {@code sketch()}) with no
+   * value path straight over whole events, where rows would make it read their first column.
+   */
+  public static void requireLiveOps(Query query) {
+    RowOps.requireLiveOps(query.pipeline);
+    if (query.pipeline == null || query.segments.size() >= 2) {
+      return;
+    }
+    int first = RowOps.firstRowSetOp(query.pipeline);
+    if (first >= query.pipeline.size()) {
+      return;
+    }
+    String name =
+        switch (query.pipeline.get(first)) {
+          case JfrPath.StatsOp s when s.valuePath.isEmpty() -> "stats";
+          case JfrPath.SumOp s when s.valuePath.isEmpty() -> "sum";
+          case JfrPath.QuantilesOp q when q.valuePath.isEmpty() -> "quantiles";
+          case JfrPath.SketchOp s when s.valuePath.isEmpty() -> "sketch";
+          default -> null;
+        };
+    if (name != null) {
+      throw new IllegalArgumentException(name + "() requires projection or a value path");
+    }
   }
 }

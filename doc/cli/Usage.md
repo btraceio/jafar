@@ -607,10 +607,12 @@ Notes:
 
 A `tail` filter with a row-set operator aggregates (#185). The operators before the first row-set
 operator run on each event as usual; the matching events are kept, and the operators from the
-first row-set one on run over all of them. The result therefore covers every matching event
-since the tail started, and is printed again every `--every` (default `5s`; also `500ms`, `1m`,
-or plain seconds) while new events come in, and once more when the tail ends, whatever ends it
-(Ctrl-C, the target exiting, `--limit`, `--max-rows`).
+first row-set one on run over all of them. A projection (`events/T/field`) keeps the field's
+values instead, as rows, as a query over a file does. The result therefore covers every matching
+event since the tail started, and is printed again every `--every` (default `5s`; also `500ms`,
+`1m`, or plain seconds; at most 24 hours) while new events come in, and once more when the tail
+ends: on Ctrl-C, when the target exits, at `--limit` or `--max-rows`, or when the heap is nearly
+full.
 
 For example, against a test program that commits a `test.Busy` event (field `group`: `g0`, `g1`
 or `g2` in turn) every 10 ms, stopped with Ctrl-C:
@@ -634,22 +636,35 @@ final result at 10:42:32.457 over 395 events (0 dropped by the live session):
 tail finished (interrupted): 395 events aggregated, 36 filtered, 0 dropped by the live session
 
 $ jfr-shell tail 12345 "events/test.Busy | count()" --every 1s --format json
-{"type":"aggregate","final":false,"events":100,"dropped":0,"rows":[{"count":100}]}
-{"type":"aggregate","final":false,"events":198,"dropped":0,"rows":[{"count":198}]}
+{"type":"aggregate","final":false,"events":100,"rows":100,"dropped":0,"result":[{"count":100}]}
 ...
-{"type":"aggregate","final":true,"events":493,"dropped":0,"rows":[{"count":493}]}
+{"type":"aggregate","final":true,"events":493,"rows":493,"dropped":0,"result":[{"count":493}]}
 ```
 
 - Each result says how many events it covers and how many the live session dropped: a dropped
-  event is in no result. In `--format json` each result is one line, `"final": true` on the last.
+  event is in no result. In `--format json` each result is one line, `"final": true` on the last;
+  `events` counts the events taken in and `rows` the rows kept (more than the events when a
+  projection gives several values per event).
 - `--limit N` counts the events taken in: the tail ends after N, with the final result over them.
-- The kept events are held in memory. `--max-rows N` (default `100000`) ends the tail once N are
-  kept, with a final result over those N, rather than let the memory grow without bound: narrow
-  the filter or raise the bound for a longer run.
+- The kept rows are held in memory, and a whole decoded event is large: tens of KB with a stack
+  trace (about 50 KB for 13 frames, 160 KB for a 47-frame `jdk.ExecutionSample`), around 1 KB
+  without. `--max-rows N` (default `100000`) ends the tail once N rows are kept, and so does a
+  heap more than 80% full; both print the final result over what was kept. To keep a long run
+  small, keep only the fields the aggregation needs: `select(sampledThread/javaName) |
+  groupBy(javaName)`, or a projection, `events/T/field | stats()`.
 - Every row-set operator works except those that read the recording for other events
   (`crossref()`, `decorateByTime()`, `decorateByKey()`) and `flamegraph()`, whose tree `tail`
-  cannot print (use `stackprofile()`). These are refused when `tail` is given the filter, before
-  any event is read.
+  cannot print (use `stackprofile()`). Like a file query, `stats()`, `sum()`, `quantiles()` and
+  `sketch()` need a projection or a value path when they come first. These are refused when
+  `tail` is given the filter, before any event is read.
+- The operators run on rows, as after another operator in a file query, so a few results are
+  shaped as they are there: `sum(v)` gives `{"sum(v)": ...}` without a count, `timerange()` gives
+  `minTicks`/`maxTicks` (the live values are epoch nanoseconds), and a `groupBy` over a field the
+  events do not have gives no rows rather than an error.
+- A failing aggregation (`sortBy(nosuchfield)`) is reported once and ends the tail; the one-shot
+  `jfr-shell tail` then exits 1.
+- In the TUI the latest result is shown when the tail ends; Ctrl-C there discards the output, as
+  for any TUI command.
 - `--every` and `--max-rows` apply only to a filter that aggregates; with any other they are an
   error.
 

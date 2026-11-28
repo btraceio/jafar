@@ -15,8 +15,11 @@ import java.util.Map;
  * The streaming loop behind {@code tail} (issue #92), shared by the readline shell, the TUI and the
  * one-shot CLI. Polls the session's raw-event queue, decodes via {@link LiveEventDecoder}, matches
  * the JfrPath filter per event ({@link JfrPathEvaluator#matchesEvent} plus the per-event pipeline
- * subset via {@link JfrPathEvaluator#applyEventOps}), formats, and emits through the sink. Exits
- * on: end-marker/target close, thread interrupt (Ctrl-C), {@code --limit} reached.
+ * subset via {@link JfrPathEvaluator#applyEventOps}), formats, and emits through the sink; a filter
+ * with a row-set operator aggregates instead (#185, see {@link #run(LiveStreamView,
+ * io.jafar.shell.jfrpath.JfrPath.Query, Format, long, Duration, long, Sink)}). Exits on:
+ * end-marker/target close, thread interrupt (Ctrl-C), {@code --limit} reached, and for an
+ * aggregating tail {@code --max-rows} or a nearly full heap.
  *
  * <p>Blocking by design — run it on the dispatch thread (readline: the shell's signal handler
  * covers Ctrl-C; TUI: the executor future cancel covers it; one-shot: the CLI's SIGINT handler).
@@ -34,6 +37,14 @@ public final class TailRunner {
 
     /** Final summary; after this no more output happens. */
     void end(String line);
+
+    /**
+     * One result of an aggregating tail, as lines: the header, then the table or the JSON line. By
+     * default each line is an {@link #event}.
+     */
+    default void aggregate(List<String> lines, boolean last) {
+      lines.forEach(this::event);
+    }
   }
 
   public enum Format {
@@ -57,6 +68,26 @@ public final class TailRunner {
    */
   public static final long DEFAULT_MAX_ROWS = 100_000;
 
+  /** The longest {@code --every}. */
+  static final Duration MAX_EVERY = Duration.ofHours(24);
+
+  /**
+   * Share of the maximum heap above which an aggregating tail stops taking events in: the kept
+   * events are fully decoded, tens of KB each with a stack trace, so {@code --max-rows} alone can
+   * allow more than the heap holds.
+   */
+  static final double HEAP_LIMIT = 0.8;
+
+  /** Whether the heap is nearly full; replaceable for tests. */
+  static java.util.function.BooleanSupplier heapNearlyFull =
+      () -> {
+        Runtime rt = Runtime.getRuntime();
+        return rt.totalMemory() - rt.freeMemory() > HEAP_LIMIT * rt.maxMemory();
+      };
+
+  /** How many events an aggregating tail takes in between heap checks; replaceable for tests. */
+  static int heapCheckEvery = 256;
+
   private TailRunner() {}
 
   /**
@@ -76,7 +107,7 @@ public final class TailRunner {
       throw new IllegalArgumentException(
           "tail filters must use the events root (e.g. 'events/jdk.ExecutionSample')");
     }
-    io.jafar.shell.jfrpath.JfrPathEvaluator.requireLiveOps(filter.pipeline);
+    io.jafar.shell.jfrpath.JfrPathEvaluator.requireLiveOps(filter);
     return filter;
   }
 
@@ -86,7 +117,7 @@ public final class TailRunner {
    */
   public static Duration parseEvery(String text) {
     java.util.regex.Matcher m =
-        java.util.regex.Pattern.compile("(\\d+)(ms|s|m)?").matcher(text.trim());
+        java.util.regex.Pattern.compile("(\\d{1,9})(ms|s|m)?").matcher(text.trim());
     if (!m.matches()) {
       throw new IllegalArgumentException(
           "--every takes a duration such as 5s, 500ms or 1m: " + text);
@@ -101,6 +132,9 @@ public final class TailRunner {
         };
     if (every.isZero()) {
       throw new IllegalArgumentException("--every must be more than 0: " + text);
+    }
+    if (every.compareTo(MAX_EVERY) > 0) {
+      throw new IllegalArgumentException("--every can be at most 24h: " + text);
     }
     return every;
   }
@@ -204,6 +238,7 @@ public final class TailRunner {
     long lastStatus = System.currentTimeMillis();
     long lastPrint = lastStatus;
     long printedAt = 0; // events taken in when the result was last printed
+    boolean aggregationFailed = false;
     String reason = "stream ended";
     Thread self = Thread.currentThread();
     Object signalRegistration = installSignal(self);
@@ -216,9 +251,11 @@ public final class TailRunner {
         if (aggregating && emitted > printedAt) {
           long now = System.currentTimeMillis();
           if (now - lastPrint >= every.toMillis()) {
-            String failed = printAggregate(evaluator, rows, overRows, format, false, session, sink);
+            String failed =
+                printAggregate(evaluator, emitted, rows, overRows, format, false, session, sink);
             if (failed != null) {
               reason = failed;
+              aggregationFailed = true;
               break;
             }
             lastPrint = now;
@@ -264,11 +301,49 @@ public final class TailRunner {
                 ? l
                 : raw.getStartTime().getEpochSecond() * 1_000_000_000L
                     + raw.getStartTime().getNano();
-        if (filter != null) {
-          if (!evaluator.matchesEvent(filter, typeName, map)) {
+        if (filter != null && !evaluator.matchesEvent(filter, typeName, map)) {
+          filtered++;
+          continue;
+        }
+        if (aggregating) {
+          // A projection (events/T/field) makes rows of the values, as a file query does; the
+          // per-event operators then run on each row
+          int kept = 0;
+          for (Map<String, Object> row : JfrPathEvaluator.projectEvent(filter, map)) {
+            Map<String, Object> transformed = evaluator.applyEventOps(perEvent, row);
+            if (transformed != null) {
+              rows.add(transformed);
+              kept++;
+            }
+          }
+          if (kept == 0) {
             filtered++;
             continue;
           }
+          emitted++;
+          if (emitted == 1) {
+            // The interval runs from the first event taken in, so the first result is not one
+            // over the few events that arrived just before it
+            lastPrint = System.currentTimeMillis();
+          }
+          if (limit > 0 && emitted >= limit) {
+            reason = "limit reached";
+            break;
+          }
+          if (maxRows > 0 && rows.size() >= maxRows) {
+            reason = "row cap reached: " + rows.size() + " rows kept (--max-rows)";
+            break;
+          }
+          if (emitted % heapCheckEvery == 0 && heapNearlyFull.getAsBoolean()) {
+            reason =
+                "heap nearly full: "
+                    + rows.size()
+                    + " rows kept; aggregate select(...)ed fields, or narrow the filter";
+            break;
+          }
+          continue;
+        }
+        if (filter != null) {
           try {
             Map<String, Object> transformed = evaluator.applyEventOps(perEvent, map);
             if (transformed == null) {
@@ -277,28 +352,15 @@ public final class TailRunner {
             }
             map = transformed;
           } catch (io.jafar.shell.jfrpath.UnsupportedPipelineOperationException e) {
-            // A query not built through parseFilter: the per-event part ends at the first row-set
-            // operator, so this is only reached by one that bypassed that split
+            // Unreachable through run(): the per-event part ends at the first row-set operator.
+            // Kept so that an operator wrongly marked per-event ends the tail, not the loop thread
             sink.status("error: " + e.getMessage());
             reason = "unsupported pipeline operator";
             break;
           }
         }
         emitted++;
-        if (aggregating) {
-          rows.add(map);
-          if (emitted == 1) {
-            // The interval runs from the first event taken in, so the first result is not one
-            // over the few events that arrived just before it
-            lastPrint = System.currentTimeMillis();
-          }
-          if (maxRows > 0 && rows.size() >= maxRows) {
-            reason = "row cap reached: " + maxRows + " events kept (--max-rows)";
-            break;
-          }
-        } else {
-          sink.event(format(typeName, startNanos, map, format));
-        }
+        sink.event(format(typeName, startNanos, map, format));
         if (limit > 0 && emitted >= limit) {
           reason = "limit reached";
           break;
@@ -310,9 +372,10 @@ public final class TailRunner {
     } finally {
       restoreSignal(signalRegistration);
     }
-    if (aggregating) {
+    if (aggregating && !aggregationFailed) {
       // The last result, whatever ended the tail: over every event taken in
-      String failed = printAggregate(evaluator, rows, overRows, format, true, session, sink);
+      String failed =
+          printAggregate(evaluator, emitted, rows, overRows, format, true, session, sink);
       if (failed != null) {
         reason = failed;
       }
@@ -332,13 +395,15 @@ public final class TailRunner {
   }
 
   /**
-   * Prints the aggregate over {@code rows}: in table format a header line, then the table; in JSON
-   * format one line, {@code {"type":"aggregate","final":..,"events":..,"dropped":..,"rows":[..]}}.
+   * Prints the aggregate over {@code rows}, kept from {@code events} events: in table format a
+   * header line, then the table; in JSON format one line, {@code
+   * {"type":"aggregate","final":..,"events":..,"rows":..,"dropped":..,"result":[..]}}.
    *
    * @return null, or the tail's end reason when the operators failed on these rows
    */
   private static String printAggregate(
       JfrPathEvaluator evaluator,
+      long events,
       List<Map<String, Object>> rows,
       List<io.jafar.shell.jfrpath.JfrPath.PipelineOp> overRows,
       Format format,
@@ -353,22 +418,25 @@ public final class TailRunner {
       return "aggregation failed: " + e.getMessage();
     }
     long dropped = session.getDroppedCount();
+    List<String> lines = new ArrayList<>();
     if (format == Format.JSON) {
       StringBuilder sb = new StringBuilder(256);
       sb.append("{\"type\":\"aggregate\",\"final\":").append(last);
-      sb.append(",\"events\":").append(rows.size());
+      sb.append(",\"events\":").append(events);
+      sb.append(",\"rows\":").append(rows.size());
       sb.append(",\"dropped\":").append(dropped);
-      sb.append(",\"rows\":");
+      sb.append(",\"result\":");
       JsonText.appendCompact(sb, result);
-      sink.event(sb.append('}').toString());
+      lines.add(sb.append('}').toString());
+      sink.aggregate(lines, last);
       return null;
     }
-    sink.event(
+    lines.add(
         (last ? "final result" : "result")
             + " at "
             + TIME_FMT.format(Instant.now())
             + " over "
-            + rows.size()
+            + events
             + " events ("
             + dropped
             + " dropped by the live session):");
@@ -377,12 +445,12 @@ public final class TailRunner {
         new io.jafar.shell.cli.CommandDispatcher.IO() {
           @Override
           public void println(String s) {
-            sink.event(s);
+            lines.add(s);
           }
 
           @Override
           public void printf(String fmt, Object... args) {
-            sink.event(String.format(Locale.ROOT, fmt, args));
+            lines.add(String.format(Locale.ROOT, fmt, args));
           }
 
           @Override
@@ -390,6 +458,7 @@ public final class TailRunner {
             sink.status("error: " + s);
           }
         });
+    sink.aggregate(lines, last);
     return null;
   }
 
@@ -504,6 +573,16 @@ public final class TailRunner {
         ring.pollFirst();
       }
       ring.addLast(line);
+    }
+
+    /**
+     * An aggregating tail's result replaces the ring's contents whole, whatever the capacity: only
+     * the latest result is of use, and a cut one would lose its header or rows.
+     */
+    @Override
+    public synchronized void aggregate(List<String> lines, boolean last) {
+      ring.clear();
+      ring.addAll(lines);
     }
 
     @Override

@@ -318,22 +318,26 @@ With a live session current, file-bound commands are **guarded**, not broken:
 Semantics chosen on #185: **cumulative**, re-printed on an interval.
 
 - The pipeline splits at its first operator that is not per-event applicable
-  (`JfrPathEvaluator.firstRowSetOp`). The part before it runs on each event as in Phase 1; the
-  matching events are kept, and the part from it on runs over all of them
+  (`JfrPathEvaluator.firstRowSetOp`). The part before it runs on each event as in Phase 1 (on each
+  projected value, with a projection: `JfrPathEvaluator.projectEvent`, as `collectAllRows` makes
+  rows for a file); the rows are kept, and the part from it on runs over all of them
   (`JfrPathEvaluator.applyToRows`), so a result covers every matching event since the tail
   started. The row operators copy the rows they change, so running them again on every print is
-  safe.
-- A result is printed every `--every` (default 5s, measured from the first event taken in) while
-  new events came in, and once at the end whatever ends the tail. Each states the events it covers
-  and the live session's drop count; JSON is one `{"type":"aggregate","final":..,...}` line.
-- Memory: the kept events are bounded by `--max-rows` (default 100000). Reaching it ends the tail
-  with a final result over what was kept, rather than silently covering only part of the stream.
-  Incremental accumulators (count/sum/stats/groupBy without keeping rows) would lift the bound and
-  are left for later.
+  safe. Their results are shaped as after another operator in a file query (`sum`, `timerange`).
+- A result is printed every `--every` (default 5s, at most 24h, measured from the first event
+  taken in) while new events came in, and once at the end. Each states the events it covers and
+  the live session's drop count; JSON is one `{"type":"aggregate","final":..,...}` line. A sink
+  gets each result whole (`Sink.aggregate`): the TUI keeps only the latest.
+- Memory: a kept event is fully decoded, tens of KB with a stack trace. The rows are bounded by
+  `--max-rows` (default 100000) and by the heap: above 80% of the maximum the tail ends, both
+  times with a final result over what was kept, rather than run out of memory with none.
+  Incremental accumulators (count/sum/stats/groupBy without keeping rows) would lift the bound
+  and are left for later.
 - Refused up front (`requireLiveOps`), when the filter is given: operators that read the
-  recording for other events (`crossref`, `decorateByTime`, `decorateByKey`) and `flamegraph`
-  (a tree with no line form). The Phase 1 mid-stream rejection stays only for a `Query` that
-  bypasses `TailRunner.parseFilter`.
+  recording for other events (`crossref`, `decorateByTime`, `decorateByKey`), `flamegraph` (a
+  tree with no line form), and, as for a file, `stats`/`sum`/`quantiles`/`sketch` with neither a
+  projection nor a value path.
+- Not handled: a target killed with SIGKILL is not noticed (as in Phase 1), so the tail runs on.
 
 ## Documentation
 

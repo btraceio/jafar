@@ -519,10 +519,10 @@ final class RowOps {
    * when a filter op excluded the event.
    *
    * <p>Row-set operators (aggregations, ordering, windowing) throw {@link
-   * UnsupportedPipelineOperationException} naming the operator: they need the full row set, which
-   * does not exist in a live stream. The per-event-capable subset is declared per operator via
-   * {@link JfrPath.PipelineOp#isPerEventApplicable()} — a row-set op reaching this path is rejected
-   * by that check.
+   * UnsupportedPipelineOperationException} naming the operator: they need rows, not one event (a
+   * live {@code tail} runs them over the events it has kept, #185). The per-event-capable subset is
+   * declared per operator via {@link JfrPath.PipelineOp#isPerEventApplicable()} — a row-set op
+   * reaching this path is rejected by that check.
    *
    * <p>The input map is MUTATED IN PLACE by the transform operators ({@code len}, {@code
    * uppercase}, {@code lowercase}, {@code trim}, {@code abs}, {@code round}, {@code floor}, {@code

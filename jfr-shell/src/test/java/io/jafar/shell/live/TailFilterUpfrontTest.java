@@ -41,6 +41,25 @@ class TailFilterUpfrontTest {
   }
 
   @Test
+  void aValueOperatorWithNoPathNeedsAProjection() {
+    for (String q :
+        new String[] {
+          "events/jdk.FileRead | stats()",
+          "events/jdk.FileRead | sum()",
+          "events/jdk.FileRead | quantiles(0.5)",
+          "events/jdk.FileRead | filter(bytesRead > 0) | sketch()",
+        }) {
+      var e = assertThrows(IllegalArgumentException.class, () -> TailRunner.parseFilter(q), q);
+      assertTrue(e.getMessage().contains("requires projection or a value path"), e.getMessage());
+    }
+    // With a projection or a value path they aggregate
+    assertTrue(
+        TailRunner.aggregates(TailRunner.parseFilter("events/jdk.FileRead/bytesRead | stats()")));
+    assertTrue(
+        TailRunner.aggregates(TailRunner.parseFilter("events/jdk.FileRead | stats(bytesRead)")));
+  }
+
+  @Test
   void rowSetOperatorsAggregate() {
     for (String q :
         new String[] {
@@ -64,7 +83,20 @@ class TailFilterUpfrontTest {
     assertEquals(Duration.ofSeconds(5), TailRunner.parseEvery("5s"));
     assertEquals(Duration.ofMillis(500), TailRunner.parseEvery("500ms"));
     assertEquals(Duration.ofMinutes(2), TailRunner.parseEvery("2m"));
-    for (String bad : new String[] {"0", "0s", "-1", "5h", "fast", ""}) {
+    assertEquals(Duration.ofHours(24), TailRunner.parseEvery("1440m"));
+    for (String bad :
+        new String[] {
+          "0",
+          "0s",
+          "-1",
+          "5h",
+          "fast",
+          "",
+          "1441m",
+          "999999999m",
+          "999999999999999m",
+          "999999999999999999999"
+        }) {
       assertThrows(IllegalArgumentException.class, () -> TailRunner.parseEvery(bad), bad);
     }
   }

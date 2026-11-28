@@ -1004,32 +1004,34 @@ public final class Main implements Callable<Integer> {
                         // close() is idempotent and never throws in practice
                       }
                     }));
-        TailRunner.run(
-            session,
-            filter,
-            fmt,
-            limit == null ? -1 : limit,
-            everyDuration,
-            maxRows == null ? TailRunner.DEFAULT_MAX_ROWS : maxRows,
-            new TailRunner.PrintSink(
-                new CommandDispatcher.IO() {
-                  @Override
-                  public void println(String s) {
-                    out.println(s);
-                  }
+        String summary =
+            TailRunner.run(
+                session,
+                filter,
+                fmt,
+                limit == null ? -1 : limit,
+                everyDuration,
+                maxRows == null ? TailRunner.DEFAULT_MAX_ROWS : maxRows,
+                new TailRunner.PrintSink(
+                    new CommandDispatcher.IO() {
+                      @Override
+                      public void println(String s) {
+                        out.println(s);
+                      }
 
-                  @Override
-                  public void printf(String fmt2, Object... args) {
-                    out.printf(Locale.ROOT, fmt2, args);
-                  }
+                      @Override
+                      public void printf(String fmt2, Object... args) {
+                        out.printf(Locale.ROOT, fmt2, args);
+                      }
 
-                  @Override
-                  public void error(String s) {
-                    err.println(s);
-                  }
-                },
-                fmt));
-        return 0;
+                      @Override
+                      public void error(String s) {
+                        err.println(s);
+                      }
+                    },
+                    fmt));
+        // The tail ran either way; the aggregation failing on the events it took in did not
+        return summary.startsWith("tail finished (aggregation failed") ? 1 : 0;
       } catch (Exception e) {
         err.println("Error: " + e.getMessage());
         return 1;

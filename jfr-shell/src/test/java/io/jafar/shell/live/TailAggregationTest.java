@@ -120,6 +120,7 @@ class TailAggregationTest {
 
   static final class Lines implements TailRunner.Sink {
     final List<String> events = new ArrayList<>();
+    final List<String> statuses = new ArrayList<>();
     String end;
 
     @Override
@@ -128,7 +129,9 @@ class TailAggregationTest {
     }
 
     @Override
-    public void status(String line) {}
+    public void status(String line) {
+      statuses.add(line);
+    }
 
     @Override
     public void end(String line) {
@@ -171,7 +174,8 @@ class TailAggregationTest {
     Lines out = run("events/test.AggProbe | count()", -1, Duration.ofHours(1), 0, 0);
     JsonObject last = last(out);
     assertEquals(200, last.get("events").getAsInt());
-    assertEquals(200, last.getAsJsonArray("rows").get(0).getAsJsonObject().get("count").getAsInt());
+    assertEquals(
+        200, last.getAsJsonArray("result").get(0).getAsJsonObject().get("count").getAsInt());
     assertTrue(
         out.end.startsWith("tail finished (target stream closed): 200 events aggregated"), out.end);
   }
@@ -180,7 +184,7 @@ class TailAggregationTest {
   void groupByGivesEachGroupsCount() {
     JsonArray rows =
         last(run("events/test.AggProbe | groupBy(group)", -1, Duration.ofHours(1), 0, 0))
-            .getAsJsonArray("rows");
+            .getAsJsonArray("result");
     Map<String, Integer> counts = new java.util.TreeMap<>();
     rows.forEach(
         r ->
@@ -202,7 +206,8 @@ class TailAggregationTest {
                 0));
     // seq 0, 3, ..., 99: 34 events
     assertEquals(34, last.get("events").getAsInt());
-    assertEquals(34, last.getAsJsonArray("rows").get(0).getAsJsonObject().get("count").getAsInt());
+    assertEquals(
+        34, last.getAsJsonArray("result").get(0).getAsJsonObject().get("count").getAsInt());
   }
 
   @Test
@@ -216,7 +221,7 @@ class TailAggregationTest {
   void theRowCapEndsTheTailWithAResultOverWhatItKept() {
     Lines out = run("events/test.AggProbe | count()", -1, Duration.ofHours(1), 20, 0);
     assertEquals(20, last(out).get("events").getAsInt());
-    assertTrue(out.end.contains("row cap reached: 20 events kept (--max-rows)"), out.end);
+    assertTrue(out.end.contains("row cap reached: 20 rows kept (--max-rows)"), out.end);
   }
 
   @Test
@@ -231,7 +236,7 @@ class TailAggregationTest {
       int n = o.get("events").getAsInt();
       // A result is printed only after new events came in: strictly more each time, but the last
       assertTrue(i == all.size() - 1 ? n >= previous : n > previous, all.toString());
-      assertEquals(n, o.getAsJsonArray("rows").get(0).getAsJsonObject().get("count").getAsInt());
+      assertEquals(n, o.getAsJsonArray("result").get(0).getAsJsonObject().get("count").getAsInt());
       previous = n;
     }
     assertEquals(200, previous);
@@ -267,5 +272,84 @@ class TailAggregationTest {
         out.events.get(0).endsWith(" over 200 events (0 dropped by the live session):"),
         out.events.get(0));
     assertTrue(out.events.stream().anyMatch(l -> l.contains("200")), out.events.toString());
+  }
+
+  @Test
+  void aProjectionAggregatesItsValues() {
+    // events/T/seq: the rows are the seq values, as a file query makes them
+    JsonObject last =
+        last(run("events/test.AggProbe/seq | stats()", -1, Duration.ofHours(1), 0, 0));
+    JsonObject stats = last.getAsJsonArray("result").get(0).getAsJsonObject();
+    assertEquals(200, stats.get("count").getAsInt(), stats.toString());
+    assertEquals(0, stats.get("min").getAsInt(), stats.toString());
+    assertEquals(199, stats.get("max").getAsInt(), stats.toString());
+    assertEquals(200, last.get("events").getAsInt());
+    assertEquals(200, last.get("rows").getAsInt());
+  }
+
+  @Test
+  void aFailingAggregationIsReportedOnce() {
+    Lines out = run("events/test.AggProbe | sortby(nosuchfield)", -1, Duration.ofMillis(10), 0, 1);
+    long errors = out.statuses.stream().filter(l -> l.startsWith("error: ")).count();
+    assertEquals(1, errors, out.statuses.toString());
+    assertTrue(out.end.startsWith("tail finished (aggregation failed"), out.end);
+  }
+
+  @Test
+  void theLimitWinsOverTheRowCapWhenBothAreReached() {
+    Lines out = run("events/test.AggProbe | count()", 20, Duration.ofHours(1), 20, 0);
+    assertTrue(out.end.startsWith("tail finished (limit reached)"), out.end);
+  }
+
+  @Test
+  void aNearlyFullHeapEndsTheTailWithAResult() {
+    java.util.function.BooleanSupplier saved = TailRunner.heapNearlyFull;
+    int savedEvery = TailRunner.heapCheckEvery;
+    TailRunner.heapNearlyFull = () -> true;
+    TailRunner.heapCheckEvery = 50;
+    try {
+      Lines out = run("events/test.AggProbe | count()", -1, Duration.ofHours(1), 0, 0);
+      assertEquals(50, last(out).get("events").getAsInt());
+      assertTrue(out.end.contains("heap nearly full: 50 rows kept"), out.end);
+    } finally {
+      TailRunner.heapNearlyFull = saved;
+      TailRunner.heapCheckEvery = savedEvery;
+    }
+  }
+
+  @Test
+  void theTuiShowsTheLatestResultWhole() {
+    List<String> printed = new ArrayList<>();
+    io.jafar.shell.cli.CommandDispatcher.IO io =
+        new io.jafar.shell.cli.CommandDispatcher.IO() {
+          @Override
+          public void println(String s) {
+            printed.add(s);
+          }
+
+          @Override
+          public void printf(String fmt, Object... args) {
+            printed.add(String.format(java.util.Locale.ROOT, fmt, args));
+          }
+
+          @Override
+          public void error(String s) {}
+        };
+    // A ring of 4 lines, as a --limit 4 tail gets: the result's header and table are longer
+    TailRunner.run(
+        new Replay(events, 1),
+        TailRunner.parseFilter("events/test.AggProbe | groupBy(group)"),
+        TailRunner.Format.TABLE,
+        4,
+        Duration.ofMillis(1),
+        0,
+        new TailRunner.TuiSink(io, 4));
+    assertTrue(printed.get(0).startsWith("final result at "), printed.toString());
+    assertTrue(printed.stream().anyMatch(l -> l.contains("key")), printed.toString());
+    assertEquals(
+        1, printed.stream().filter(l -> l.contains("result at")).count(), printed.toString());
+    assertTrue(
+        printed.get(printed.size() - 1).startsWith("tail finished (limit reached)"),
+        printed.toString());
   }
 }
