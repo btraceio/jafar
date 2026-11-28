@@ -20,6 +20,7 @@ import io.jafar.shell.core.compare.SampleTypeInfo;
 import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.live.TailRunner;
+import io.jafar.shell.plugin.NetworkPolicy;
 import io.jafar.shell.plugin.PluginManager;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -82,6 +83,19 @@ public final class Main implements Callable<Integer> {
       description = "Launch full-screen TUI mode instead of readline REPL")
   private boolean tui;
 
+  // Never parsed: main takes it out of the command line wherever it is (NetworkPolicy.applyFlag),
+  // so it works after a subcommand too. Declared so that --help lists it.
+  @CommandLine.Option(
+      names = {NetworkPolicy.FLAG},
+      description =
+          "Never use the network for plugins: no registry fetch, no download, no update check; a"
+              + " command needing a backend that is not installed fails (also -D"
+              + NetworkPolicy.PROPERTY
+              + "=true or "
+              + NetworkPolicy.ENV
+              + "=true)")
+  private boolean offline;
+
   @CommandLine.Option(
       names = {"--install-plugin"},
       description = "Install a backend plugin from a local JAR file and exit")
@@ -95,6 +109,7 @@ public final class Main implements Callable<Integer> {
   }
 
   public static void main(String[] args) {
+    args = NetworkPolicy.applyFlag(args);
     // Parse CLI args to extract plugin-dir and install-plugin before initialization
     Main main = new Main();
     try {
@@ -275,6 +290,12 @@ public final class Main implements Callable<Integer> {
       // If user specified a backend, verify it was selected
       if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
         // Check if plugin can be auto-installed
+        if (NetworkPolicy.offline()) {
+          System.err.println("Error: Backend not found: " + backend);
+          System.err.println(
+              "Error: " + NetworkPolicy.refusal("downloading backend '" + backend + "'"));
+          return false;
+        }
         if (PluginManager.getInstance().canInstall(backend)) {
           System.err.println("Backend not found: " + backend);
           System.err.print("Downloading from Maven repositories... ");
@@ -371,6 +392,12 @@ public final class Main implements Callable<Integer> {
    */
   static boolean autoInstallDefaultBackend() {
     String pluginId = "jafar";
+    if (NetworkPolicy.offline()) {
+      System.err.println(
+          "No backends installed; "
+              + NetworkPolicy.refusal("installing the default backend from Maven"));
+      return false;
+    }
     PluginManager pm = PluginManager.getInstance();
     if (!pm.canInstall(pluginId)) {
       return false;
@@ -443,6 +470,12 @@ public final class Main implements Callable<Integer> {
       JfrBackend current = registry.getCurrent();
       warnIfBackendNotFromThisBuild(current);
       if (backend != null && !current.getId().equalsIgnoreCase(backend)) {
+        if (NetworkPolicy.offline()) {
+          System.err.println("Error: Backend not found: " + backend);
+          System.err.println(
+              "Error: " + NetworkPolicy.refusal("downloading backend '" + backend + "'"));
+          return 1;
+        }
         if (PluginManager.getInstance().canInstall(backend)) {
           System.err.println("Backend not found: " + backend);
           System.err.print("Downloading from Maven repositories... ");

@@ -569,6 +569,10 @@ public final class PluginManager {
    * updates. Downloaded updates are available on next restart.
    */
   public void checkAndApplyUpdates() {
+    if (NetworkPolicy.offline()) {
+      log.debug("Plugin update check skipped: offline mode");
+      return;
+    }
     // Launch background thread for update checking
     java.util.concurrent.CompletableFuture<Void> updateFuture =
         java.util.concurrent.CompletableFuture.runAsync(

@@ -462,6 +462,40 @@ RUN java -jar /app/jfr-shell.jar --install-plugin /tmp/jfr-shell-jdk-1.0.0.jar &
 ENTRYPOINT ["java", "-jar", "/app/jfr-shell.jar"]
 ```
 
+### Offline mode
+
+By default, a command that finds no backend installed downloads the default one (`jafar`) from
+Maven Central, `--backend <id>` downloads a backend that is not installed, the plugin system
+fetches the plugin catalog from GitHub, and the interactive shell checks for plugin updates.
+Offline mode turns all of these off: nothing in the plugin system uses the network.
+
+```bash
+# Any one of these
+java -jar jfr-shell.jar --offline show recording.jfr 'events/jdk.ExecutionSample | count()'
+java -jar jfr-shell.jar show recording.jfr 'events/jdk.ExecutionSample | count()' --offline
+java -Djfr.shell.offline=true -jar jfr-shell.jar show recording.jfr '...'
+JFRSHELL_OFFLINE=true java -jar jfr-shell.jar show recording.jfr '...'
+```
+
+- `--offline` may stand anywhere on the command line before a `--`; `jafar-shell` takes it too.
+  The property and the variable are on for `true`, `1` or `yes`.
+- A backend already installed, or one given with `-Djfr.shell.backend.jars=<jar>`, is used as
+  usual.
+- With no backend installed the command fails before reading the recording, exit status 1:
+
+  ```
+  No backends installed; offline mode (--offline, -Djfr.shell.offline or JFRSHELL_OFFLINE) forbids installing the default backend from Maven. Install a plugin from a local jar with --install-plugin <jar>, point -Djfr.shell.backend.jars=<jar> at a backend jar, or run without offline mode to download it
+  Error: No JFR backends available
+  ```
+
+- `--backend <id>` naming a backend that is not installed fails the same way. An LLM backend
+  named in the LLM configuration but not installed is not downloaded either (see
+  [LLM setup](LlmSetup.md)). `--install-plugin <jar>` still works: it reads only the local jar.
+- Maven resolution reads only the local repository (`~/.m2/repository`).
+
+Without offline mode nothing changes. `-Djfr.shell.registry.remote=false` still turns off only
+the catalog fetch, not the download of a missing backend.
+
 ### Custom Plugin Directory
 
 Use `--plugin-dir` to specify an alternative plugin directory:

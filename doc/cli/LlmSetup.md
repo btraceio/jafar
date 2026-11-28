@@ -44,7 +44,9 @@ plugin catalog at the first explicit use:
 
 Select a backend (`set llm.backend = anthropic`) and the first `ask` installs it from Maven
 Central — the same "Downloading from Maven repositories..." step the JFR backend flow uses.
-`auto` never installs anything; it reports the remedy instead. After the one-time install, a
+`auto` never installs anything; it reports the remedy instead. Nor does
+[offline mode](Backends.md#offline-mode) (`--offline`): the `ask` says the download is refused.
+After the one-time install, a
 local model's questions and results still stay on the machine — the install only fetches the
 jar, the model runs on your own loopback or your own endpoint.
 

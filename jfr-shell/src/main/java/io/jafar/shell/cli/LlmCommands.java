@@ -202,6 +202,12 @@ public final class LlmCommands {
     if (!explicit || !PluginManager.getInstance().canInstallOffline(backendId)) {
       return result;
     }
+    if (io.jafar.shell.plugin.NetworkPolicy.offline()) {
+      System.err.println("Backend not found: " + backendId);
+      System.err.println(
+          io.jafar.shell.plugin.NetworkPolicy.refusal("downloading backend '" + backendId + "'"));
+      return result;
+    }
     System.err.println("Backend not found: " + backendId);
     System.err.print("Downloading from Maven repositories... ");
     try {

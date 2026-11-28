@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Offline mode for the shells (#235)** - `--offline` (anywhere before `--`),
+  `-Djfr.shell.offline=true` or `JFRSHELL_OFFLINE=true`: the plugin system uses no network. No
+  catalog fetch, no update check, Maven resolution from the local repository only, and no backend
+  is downloaded: with none installed, or with `--backend` naming one that is not, the command fails
+  before reading the recording (exit 1) and names the local alternatives (`--install-plugin <jar>`,
+  `-Djfr.shell.backend.jars=<jar>`). Without it nothing changes. See
+  [Backends](doc/cli/Backends.md#offline-mode).
 - **Cross-format compare: `profile_compare` and pprof sides in `compare`** - a JFR recording or a
   pprof profile can be compared against either. The MCP tool `profile_compare` takes
   `{format: jfr|pprof, sessionId}` per side (each format numbers its sessions from 1), plus
