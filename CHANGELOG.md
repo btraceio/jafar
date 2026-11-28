@@ -418,6 +418,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing. THREAD_OBJ rows now carry it; HotSpot gives a thread's THREAD_OBJ and frame roots the
   same serial, so `groupBy(threadSerial)` counts now include each thread's object, and threads with
   no frame roots appear.
+- **HdumpPath `join(session=N)` after `groupBy` never matched the baseline (#260).** The baseline
+  was evaluated without the pipeline, on the root's default key, so grouped rows were compared with
+  raw objects or roots: every group had `baseline.exists=false` and `countDelta == count`, and the
+  documented diffs `objects | groupBy(class, agg=count) | join(session=1)` and `gcroots |
+  groupBy(type, agg=count) | join(session=1)` computed nothing. The baseline now runs the steps up
+  to and including the last `groupBy` before the `join` and joins on the group fields, null group
+  values included. These are now errors: a `join` after `count`, `sum` or `stats` (it returned a
+  row joined on nothing), a heap `join` after a `groupBy` that follows an earlier `join` (the
+  baseline cannot repeat that join), and `by=` naming a field that is not a group field (it
+  matched nothing)
 - **`jafar-shell compare` was not routed to the compare command** - the unified jar printed its
   usage and exited 2; it now runs `compare` as `jfr-shell compare` does, with the pprof module on
   the class path

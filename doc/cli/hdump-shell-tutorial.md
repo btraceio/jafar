@@ -652,8 +652,9 @@ hdump> gcroots | groupBy(type, agg=count) | join(session=1) | sortBy(countDelta 
 ```
 
 The `join` operator adds `baseline.*` and `*Delta` columns for every numeric field.
-The join key is auto-inferred (`name` for classes, `className` for objects, `type` for GC roots)
-and can be overridden with `by=field`.
+The join key is auto-inferred (`name` for classes, `className` for objects, `type` for GC roots;
+after a `groupBy`, the group fields, and the baseline is grouped the same way) and can be
+overridden with `by=field`.
 
 ### JFR + Heap Dump Correlation
 
