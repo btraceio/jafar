@@ -74,9 +74,12 @@ final class IndexedRefs {
   int shallowSize(int id32) {
     byte flags = index.flagsOf(id32);
     int dataSize = index.dataSizeOf(id32);
-    if ((flags & IndexFormat.FLAG_IS_OBJECT_ARRAY) != 0) return idSize * 2 + 12 + dataSize;
-    if ((flags & IndexFormat.FLAG_IS_PRIMITIVE_ARRAY) != 0) return idSize + 12 + dataSize;
-    return idSize * 2 + 8 + dataSize;
+    // capped at Integer.MAX_VALUE like the loaded object's, not wrapped negative (#262)
+    return HeapDumpImpl.shallowSize(
+        (flags & IndexFormat.FLAG_IS_OBJECT_ARRAY) != 0,
+        (flags & IndexFormat.FLAG_IS_PRIMITIVE_ARRAY) != 0,
+        idSize,
+        dataSize);
   }
 
   /** The class of an instance or object array entry; null for primitive arrays and unknowns. */

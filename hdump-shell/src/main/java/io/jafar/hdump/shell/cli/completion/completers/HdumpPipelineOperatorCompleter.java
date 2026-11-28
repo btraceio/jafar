@@ -5,6 +5,7 @@ import io.jafar.shell.core.completion.CompletionContext;
 import io.jafar.shell.core.completion.CompletionContextType;
 import io.jafar.shell.core.completion.ContextCompleter;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.Candidate;
 
 /**
@@ -22,11 +23,11 @@ public final class HdumpPipelineOperatorCompleter
   @Override
   public void complete(
       CompletionContext ctx, HdumpMetadataService metadata, List<Candidate> candidates) {
-    String partial = ctx.partialInput().toLowerCase();
+    String partial = ctx.partialInput().toLowerCase(Locale.ROOT);
     String prefix = calculateJlinePrefix(ctx.jlineWord(), partial);
 
     for (String op : metadata.getOperators()) {
-      if (op.toLowerCase().startsWith(partial)) {
+      if (op.toLowerCase(Locale.ROOT).startsWith(partial)) {
         String template = getOperatorTemplate(op);
         String description = getOperatorDescription(op);
         // For operators with parameters, complete with "name(" to allow field completion

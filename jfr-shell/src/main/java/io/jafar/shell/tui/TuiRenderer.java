@@ -698,10 +698,10 @@ public final class TuiRenderer {
     // Apply detail search filter
     String[] detailLines;
     if (activeTab.detailSearchQuery != null && !activeTab.detailSearchQuery.isEmpty()) {
-      String lower = activeTab.detailSearchQuery.toLowerCase();
+      String lower = activeTab.detailSearchQuery.toLowerCase(Locale.ROOT);
       List<String> filtered = new ArrayList<>();
       for (String line : allLines) {
-        if (line.toLowerCase().contains(lower)) {
+        if (line.toLowerCase(Locale.ROOT).contains(lower)) {
           filtered.add(line);
         }
       }
@@ -1287,8 +1287,8 @@ public final class TuiRenderer {
     if (query == null || query.isEmpty()) {
       return baseStyle != null ? Line.from(Span.styled(text, baseStyle)) : Line.from(text);
     }
-    String lowerText = text.toLowerCase();
-    String lowerQuery = query.toLowerCase();
+    String lowerText = text.toLowerCase(Locale.ROOT);
+    String lowerQuery = query.toLowerCase(Locale.ROOT);
     int qLen = lowerQuery.length();
     List<Span> spans = new ArrayList<>();
     int pos = 0;

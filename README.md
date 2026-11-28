@@ -39,7 +39,7 @@ try (TypedJafarParser p = JafarParser.newTypedParser(Paths.get("/path/to/recordi
 
 Notes:
 - Handlers must be thread-safe. A recording's chunks are parsed in parallel on a pool of
-  `max(availableProcessors - 2, 1)` threads, so a handler is called concurrently from several
+  `availableProcessors` threads, so a handler is called concurrently from several
   parser-owned threads: a plain `HashMap` or `ArrayList` updated from a handler loses data. Events
   arrive in file order within one chunk and in no order between chunks.
   `ctl.chunkInfo().chunkId()` is unique per parsed chunk within the JVM, so it can key per-chunk

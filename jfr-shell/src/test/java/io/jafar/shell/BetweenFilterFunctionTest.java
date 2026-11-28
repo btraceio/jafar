@@ -8,6 +8,8 @@ import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -92,92 +94,95 @@ class BetweenFilterFunctionTest {
     }
   }
 
+  // test-ap.jfr's 160 jdk.GCHeapSummary events: heapUsed from 67108864 (2 events) to 786432000
+  // (1 event), 646971392 once; gcId 0-79, two events each. After GC heapUsed is a quarter of the
+  // Before GC one, below 250M. (Seeded in test-recordings Shapes.writeGc: a change there changes
+  // these numbers.) jdk.ExecutionSample, which these tests used, has no duration: every between()
+  // on it matched nothing (#299).
+
+  /** The count a {@code show ... | count()} printed. */
+  private long count(String command) throws Exception {
+    io.clearOutput();
+    dispatcher.dispatch(command);
+    String output = io.getOutput();
+    Matcher m = COUNT_ROW.matcher(output);
+    assertTrue(m.find(), command + " -> " + output + io.getError());
+    return Long.parseLong(m.group(1));
+  }
+
+  private static final Pattern COUNT_ROW = Pattern.compile("(?m)^\\|\\s*(\\d+)\\s*\\|\\s*$");
+
   // ==================== Basic Between Tests ====================
 
   @Test
   void betweenValueInRange() throws Exception {
-    // Filter events where duration is between 1000 and 10000000
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 1000, 10000000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should produce output");
-    assertTrue(output.contains("count"), "Should contain count result");
+    // Between 100M and 500M bytes used
+    assertEquals(
+        92L,
+        count("show events/jdk.GCHeapSummary[between(heapUsed, 100000000, 500000000)] | count()"));
   }
 
   @Test
   void betweenValueOutOfRange() throws Exception {
-    // Filter events where duration is between extremely large values (should match very few or
-    // none)
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 999999999999, 9999999999999)] |"
-            + " count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    // Should still produce output even if no matches
+    // Above every value
+    assertEquals(
+        0L,
+        count(
+            "show events/jdk.GCHeapSummary[between(heapUsed, 999999999999, 9999999999999)] | count()"));
   }
 
   @Test
   void betweenWithZeroRange() throws Exception {
-    // Filter events where a value equals exactly 0 (between 0 and 0)
-    dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, 0, 0)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should produce output");
+    // No value is 0
+    assertEquals(0L, count("show events/jdk.GCHeapSummary[between(heapUsed, 0, 0)] | count()"));
   }
 
   // ==================== Boundary Tests ====================
 
   @Test
   void betweenIncludesLowerBound() throws Exception {
-    // Value exactly at lower bound should be included
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 0, 10000000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should include lower bound");
+    // The 2 events at the minimum, 67108864, are in; one past it they are not
+    assertEquals(
+        23L,
+        count("show events/jdk.GCHeapSummary[between(heapUsed, 67108864, 100000000)] | count()"));
+    assertEquals(
+        21L,
+        count("show events/jdk.GCHeapSummary[between(heapUsed, 67108865, 100000000)] | count()"));
   }
 
   @Test
   void betweenIncludesUpperBound() throws Exception {
-    // Test that upper bound is inclusive
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 0, 1000000000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should include upper bound");
+    // The event at the maximum, 786432000, is in; one below it, it is not
+    assertEquals(
+        160L, count("show events/jdk.GCHeapSummary[between(heapUsed, 0, 786432000)] | count()"));
+    assertEquals(
+        159L, count("show events/jdk.GCHeapSummary[between(heapUsed, 0, 786431999)] | count()"));
   }
 
   @Test
   void betweenWithSameMinMax() throws Exception {
-    // When min == max, should match values exactly equal to that number
-    dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, 1000, 1000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    // May or may not have results, but should not error
+    // min == max matches the values equal to it
+    assertEquals(
+        1L,
+        count("show events/jdk.GCHeapSummary[between(heapUsed, 646971392, 646971392)] | count()"));
   }
 
   // ==================== Negative Number Tests ====================
+  // Still on jdk.ExecutionSample's absent duration, so they assert nothing: a negative literal
+  // does not parse, and on a field the events have [between(f, -1, 5)] fails (#304)
 
   @Test
   void betweenWithNegativeRange() throws Exception {
-    // Test with negative numbers (though duration is typically positive)
+    // Was: negative bounds on duration. See the note above: this asserts nothing until #304
     dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, -1000, 0)] | count()");
 
     String output = io.getOutput();
     assertNotNull(output);
-    // Should work even if no events match
   }
 
   @Test
   void betweenWithNegativeAndPositive() throws Exception {
-    // Test with range spanning negative to positive
+    // Was: a range spanning zero. As above, nothing asserted until #304
     dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, -100, 100)] | count()");
 
     String output = io.getOutput();
@@ -188,23 +193,17 @@ class BetweenFilterFunctionTest {
 
   @Test
   void betweenWithIntegerBounds() throws Exception {
-    // Test with integer boundaries
-    dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, 1, 1000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work with integer bounds");
+    // Integer bounds on an int field: gcId 1-10, two events each
+    assertEquals(20L, count("show events/jdk.GCHeapSummary[between(gcId, 1, 10)] | count()"));
   }
 
   @Test
   void betweenWithLargeBounds() throws Exception {
-    // Test with very large numbers
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 0, 9223372036854775807)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work with large bounds");
+    // Long.MAX_VALUE as the upper bound
+    assertEquals(
+        160L,
+        count(
+            "show events/jdk.GCHeapSummary[between(heapUsed, 0, 9223372036854775807)] | count()"));
   }
 
   // ==================== Complex Filter Combinations ====================
@@ -213,147 +212,135 @@ class BetweenFilterFunctionTest {
   void betweenCombinedWithOtherFilters() throws Exception {
     // Combine between() with other filter conditions
     dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[state=\"RUNNABLE\" and between(duration, 1000, 100000)]"
-            + " | count()");
+        "show events/jdk.ExecutionSample[state=\"STATE_RUNNABLE\""
+            + " and between(startTime, 1704067200000000000, 1704067230000000000)] | count()");
 
     String output = io.getOutput();
     assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work in combination with other filters");
+    // test-ap.jfr's samples have no duration: the window is on startTime. Of its 8000 samples
+    // 4063 fall in it, 6467 are STATE_RUNNABLE ([state="RUNNABLE"] matches none, #288), 3263 both
+    assertTrue(output.contains("3263"), output);
   }
 
   @Test
   void multipleBetweenFilters() throws Exception {
-    // Use between() multiple times in same query
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 1000, 1000000) and between(duration,"
-            + " 5000, 500000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work with multiple between() conditions");
+    // Both ranges: 200M-600M
+    assertEquals(
+        45L,
+        count(
+            "show events/jdk.GCHeapSummary[between(heapUsed, 100000000, 600000000) and between(heapUsed, 200000000, 700000000)] | count()"));
   }
 
   @Test
   void betweenWithOrCondition() throws Exception {
-    // Use between() in OR condition
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 0, 1000) or between(duration, 100000,"
-            + " 1000000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work in OR conditions");
+    // Below 100M or above 700M
+    assertEquals(
+        40L,
+        count(
+            "show events/jdk.GCHeapSummary[between(heapUsed, 0, 100000000) or between(heapUsed, 700000000, 1000000000)] | count()"));
   }
 
   @Test
   void betweenWithNotOperator() throws Exception {
-    // Negate between() condition
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[not between(duration, 1000, 10000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work with NOT operator");
+    // The 160 events less the 92 between 100M and 500M
+    assertEquals(
+        68L,
+        count(
+            "show events/jdk.GCHeapSummary[not between(heapUsed, 100000000, 500000000)] | count()"));
   }
 
   // ==================== Integration with Aggregations ====================
 
   @Test
   void betweenWithGroupBy() throws Exception {
-    // Use between() filter before groupBy
+    // Of the 92 between 100M and 500M, 57 are after a GC and 35 before
     dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 1000, 1000000)] | groupBy(state)");
+        "show events/jdk.GCHeapSummary[between(heapUsed, 100000000, 500000000)] | groupBy(when)");
 
     String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work before groupBy");
+    assertTrue(output.matches("(?s).*\\|\\s*57\\s*\\|\\s*After GC.*"), output);
+    assertTrue(output.matches("(?s).*\\|\\s*35\\s*\\|\\s*Before GC.*"), output);
   }
 
   @Test
   void betweenWithStats() throws Exception {
-    // Filter with between() then compute stats
     dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 1000, 1000000)]/duration | stats()");
+        "show events/jdk.GCHeapSummary[between(heapUsed, 100000000, 500000000)]/heapUsed | stats()");
 
     String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work before stats()");
+    // count 92; min and max within the bounds
+    assertTrue(output.contains("| 92 "), output);
+    assertTrue(output.contains("1.04333312E8"), output);
+    assertTrue(output.contains("4.88636416E8"), output);
   }
 
   // ==================== Edge Cases ====================
 
   @Test
   void betweenWithVerySmallRange() throws Exception {
-    // Test with very small range
-    dispatcher.dispatch("show events/jdk.ExecutionSample[between(duration, 100, 101)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    // Should work even if range is very narrow
+    // A range of two values holding one event
+    assertEquals(
+        1L,
+        count("show events/jdk.GCHeapSummary[between(heapUsed, 646971392, 646971393)] | count()"));
   }
 
   @Test
   void betweenWithInvertedBounds() throws Exception {
-    // Test with min > max (should match nothing logically)
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 10000, 1000)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    // Should not error, but likely no matches
+    // min > max matches nothing, though 92 events lie between them
+    assertEquals(
+        0L,
+        count("show events/jdk.GCHeapSummary[between(heapUsed, 500000000, 100000000)] | count()"));
   }
 
   // ==================== Different Field Types ====================
 
   @Test
-  void betweenOnDifferentNumericField() throws Exception {
-    // Test between() on different numeric fields if available
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 0, 10000000)] | count()");
+  void betweenOnAFieldTheEventsLackMatchesNothing() throws Exception {
+    // jdk.ExecutionSample has no duration: no event is in any range of it
+    assertEquals(
+        0L,
+        count(
+            "show events/jdk.ExecutionSample[between(duration, 0, 9223372036854775807)] | count()"));
+  }
 
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work on duration field");
+  @Test
+  void betweenOnDifferentNumericField() throws Exception {
+    // An int field: gcId 0-9, two events each
+    assertEquals(20L, count("show events/jdk.GCHeapSummary[between(gcId, 0, 9)] | count()"));
   }
 
   // ==================== Output Format Tests ====================
 
   @Test
   void betweenWithJsonOutput() throws Exception {
-    // Test between() with JSON output format
     dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 1000, 1000000)] | count() --format"
+        "show events/jdk.GCHeapSummary[between(heapUsed, 100000000, 500000000)] | count() --format"
             + " json");
 
     String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.contains("["), "Should produce JSON output");
-    assertTrue(output.contains("\"count\""), "Should contain count field");
+    assertTrue(output.matches("(?s).*\"count\": 92\\s*[,}].*"), output);
   }
 
   // ==================== Projection with Between ====================
 
   @Test
   void betweenWithProjection() throws Exception {
-    // Use between() filter with field projection
     dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 1000, 100000)]/state --limit 10");
+        "show events/jdk.GCHeapSummary[between(heapUsed, 0, 250000000)]/when --limit 10");
 
     String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.length() > 0, "Should work with projection");
+    // Below 250M only After GC summaries: the projection of what between() kept
+    assertTrue(output.contains("After GC"), output);
+    assertFalse(output.contains("Before GC"), output);
+    assertFalse(output.contains("heapUsed"), output);
   }
 
   // ==================== Performance/Scale Tests ====================
 
   @Test
   void betweenWithNoLimit() throws Exception {
-    // Test between() without limit (tests performance with large result sets)
-    dispatcher.dispatch(
-        "show events/jdk.ExecutionSample[between(duration, 0, 999999999)] | count()");
-
-    String output = io.getOutput();
-    assertNotNull(output);
-    assertTrue(output.contains("count"), "Should complete successfully");
+    // Every event
+    assertEquals(
+        160L, count("show events/jdk.GCHeapSummary[between(heapUsed, 0, 999999999)] | count()"));
   }
 }

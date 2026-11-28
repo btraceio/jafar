@@ -182,9 +182,8 @@ class EventDecodeFailureTest {
   /**
    * Matrix wiring (kb/design-concurrency item 1): this class carries pool-size-dependent tests
    * ({@link #decodeErrorHandlerIsCalledOncePerBadEventAcrossConcurrentChunks} mirrors the parser's
-   * {@code max(processors - 2, 1)} pool), so it asserts that the {@code
-   * -Pjafar.activeProcessorCount=N} flag reached its forked JVM (R9) instead of passing green on an
-   * unpinned one.
+   * one-thread-per-processor pool), so it asserts that the {@code -Pjafar.activeProcessorCount=N}
+   * flag reached its forked JVM (R9) instead of passing green on an unpinned one.
    */
   @BeforeAll
   static void assertProcessorCountMatrixReachedThisJvm() {
@@ -370,14 +369,13 @@ class EventDecodeFailureTest {
    * Several chunks, each with one bad event, decoded on the parser's thread pool. Every bad event
    * is reported exactly once, with its own chunk index, and every other event arrives complete.
    * When the pool has at least two threads the handler is also shown to run on two threads at the
-   * same time; with one thread (fewer than four cores) there is no concurrency to prove.
+   * same time; with one thread (one processor) there is no concurrency to prove.
    */
   @Test
   void decodeErrorHandlerIsCalledOncePerBadEventAcrossConcurrentChunks() throws Exception {
     int chunks = 6;
     Path jfr = multiChunk(corrupted(Corruption.EVENT_PAYLOAD), chunks);
-    // Mirrors StreamingChunkParser's pool size.
-    int threads = Math.max(Runtime.getRuntime().availableProcessors() - 2, 1);
+    int threads = io.jafar.parser.internal_api.StreamingChunkParser.defaultParallelism();
     CountDownLatch bothInside = new CountDownLatch(Math.min(threads, 2));
     AtomicInteger inside = new AtomicInteger();
     AtomicInteger peakInside = new AtomicInteger();

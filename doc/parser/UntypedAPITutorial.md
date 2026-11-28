@@ -82,9 +82,9 @@ The `Values` utility class provides safe field access:
 - `Values.as(map, Class, "field")` - get typed value with Optional
 - Handles null values gracefully
 - `Values.resolvedDeep(map)` - copy with every wrapper unwrapped; a reference to a JFR simple type
-  (e.g. `jdk.types.ThreadState`) stays a one-entry map such as `{name=RUNNABLE}`
+  (e.g. `jdk.types.ThreadState`) stays a one-entry map such as `{name=STATE_RUNNABLE}`
 - `Values.resolvedDeepCollapsed(map)` - the same, but simple-type references become their value
-  (`RUNNABLE`), as in the typed API. A genuine one-field struct keeps its map. Decided by the
+  (`STATE_RUNNABLE`), as in the typed API. A genuine one-field struct keeps its map. Decided by the
   recording's metadata via `ComplexType.isSimpleType()`
 
 `UntypedStrategy` is accepted by `newUntypedParser(path, strategy)` but is currently a hint with no

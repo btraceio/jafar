@@ -103,9 +103,9 @@ public interface Control {
   /**
    * Stops the current parse - the whole recording, not only the chunk being processed.
    *
-   * <p>Chunks are parsed in parallel, one task per chunk on a pool of {@code
-   * max(availableProcessors - 2, 1)} threads, so "stop" has to be stated per thread. For the {@code
-   * run()} during which it is called:
+   * <p>Chunks are parsed in parallel, one task per chunk on a pool of {@code availableProcessors}
+   * threads, so "stop" has to be stated per thread. For the {@code run()} during which it is
+   * called:
    *
    * <ul>
    *   <li><b>The calling thread</b> invokes no further handler once {@code abort()} returns: not
