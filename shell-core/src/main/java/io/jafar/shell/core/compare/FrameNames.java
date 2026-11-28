@@ -76,6 +76,33 @@ public final class FrameNames {
   }
 
   /**
+   * A hidden class's address in a class name read from a heap dump. HotSpot writes it after a
+   * {@code +} ({@code java.util.stream.Collectors$$Lambda+0x0000000019009048}, seen in JDK 21 and
+   * 25 dumps). {@code Class.getName()} writes a {@code /}, which reads as {@code .0x...} once a
+   * name is dotted; both are accepted in case a dump was written from that form. Either way it ends
+   * the name or comes before an array's {@code []}.
+   */
+  private static final Pattern HEAP_HIDDEN_CLASS_ADDRESS =
+      Pattern.compile("[+./]0x[0-9a-fA-F]+(?=\\[|$)");
+
+  /**
+   * {@code className} without the parts the JVM assigns per run: a hidden class's address ({@code
+   * Foo$$Lambda+0x...}, {@code LambdaForm$MH+0x...}) and a lambda class's {@code $$Lambda$<n>}
+   * number (before JDK 21). The address differs from run to run; the number follows the order in
+   * which a run created its lambdas, so it differs whenever that order does (another build, another
+   * code path). With those parts the same class can have a different name in each of two dumps.
+   * Several classes can share the result ({@code Collectors$$Lambda} for every lambda in {@code
+   * Collectors}): across two runs they cannot be told apart by name.
+   */
+  public static String stableClassName(String className) {
+    if (className == null || (className.indexOf('$') < 0 && !className.contains("0x"))) {
+      return className;
+    }
+    String name = HEAP_HIDDEN_CLASS_ADDRESS.matcher(className).replaceAll("");
+    return LAMBDA_INDEX.matcher(name).replaceAll(Matcher.quoteReplacement("$$Lambda"));
+  }
+
+  /**
    * The key of a JFR frame: {@code <class>.<method>}, or the method alone when the frame has no
    * class (a native frame), after {@link #stableName}; then the class name's {@code /} become
    * {@code .}. The slashes go after {@code stableName}, whose {@code /0x...} pattern needs them. A

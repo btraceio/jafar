@@ -10,6 +10,7 @@ import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.SessionResolver;
+import io.jafar.shell.core.compare.FrameNames;
 import io.jafar.shell.core.expr.BinaryExpr;
 import io.jafar.shell.core.expr.FieldRef;
 import io.jafar.shell.core.expr.NumberLiteral;
@@ -1655,27 +1656,97 @@ public final class HdumpPathEvaluator {
       Query query,
       HeapSession baseHeapSession,
       String joinKey) {
-    // Build baseline query: same root/typePattern/predicates, empty pipeline
+    // The baseline must have the same shape as the rows being joined (#260): run the steps up to
+    // and including the last groupBy before this join. Later steps (top, sortBy, a filter on the
+    // aggregate) are left out, or they would hide baseline groups and report them as missing.
+    List<PipelineOp> baselinePipeline = new ArrayList<>();
+    GroupByOp lastGroup = null;
+    boolean joinBeforeLastGroup = false;
+    boolean joinSeen = false;
+    for (PipelineOp op : query.pipeline()) {
+      if (op == joinOp) {
+        break;
+      }
+      if (op instanceof CountOp || op instanceof SumOp || op instanceof StatsOp) {
+        throw new IllegalArgumentException(
+            "join(session=...) after count, sum or stats has no key to join on; use"
+                + " groupBy(...) before join");
+      }
+      if (op instanceof JoinOp) {
+        joinSeen = true;
+      }
+      baselinePipeline.add(op);
+      if (op instanceof GroupByOp g) {
+        lastGroup = g;
+        joinBeforeLastGroup = joinSeen;
+      }
+    }
+    if (joinBeforeLastGroup) {
+      // The baseline would have to repeat the earlier join, which needs its own session
+      throw new IllegalArgumentException(
+          "join(session=...) after groupBy cannot follow a join that comes before that groupBy:"
+              + " the baseline cannot repeat the earlier join");
+    }
+    if (lastGroup == null) {
+      baselinePipeline.clear(); // raw rows: unchanged behaviour
+    } else {
+      // Drops the steps after the last groupBy, earlier joins among them
+      baselinePipeline
+          .subList(baselinePipeline.indexOf(lastGroup) + 1, baselinePipeline.size())
+          .clear();
+    }
+    // Grouped rows carry the group fields, not the root's default key (className, type, ...)
+    List<String> keyFields;
+    boolean grouped = lastGroup != null;
+    if (!grouped) {
+      keyFields = List.of(joinKey);
+    } else if (joinOp.byField() == null) {
+      keyFields = lastGroup.groupFields();
+    } else if (groupFieldNamed(lastGroup, joinOp.byField()) != null) {
+      // The group field's own name: a grouped row carries that column, not by='s alias of it
+      keyFields = List.of(groupFieldNamed(lastGroup, joinOp.byField()));
+    } else {
+      throw new IllegalArgumentException(
+          lastGroup.groupFields().isEmpty()
+              ? "After groupBy without group fields, join(by=...) has no field to join on"
+              : "After groupBy, join(by=...) must name a group field: "
+                  + String.join(", ", lastGroup.groupFields()));
+    }
+
     Query baselineQuery =
         new Query(
             query.root(),
             query.typePattern(),
             query.instanceof_(),
             query.predicates(),
-            List.of(),
+            baselinePipeline,
             query.rootParam());
 
     // Evaluate baseline
     List<Map<String, Object>> baselineResults = evaluate(baseHeapSession, baselineQuery);
 
-    // Index baseline results by join key (first occurrence wins for duplicate keys)
-    Map<Object, Map<String, Object>> baselineIndex = new LinkedHashMap<>();
+    // Class names are compared without their per-run parts (#261): a lambda or hidden class has a
+    // different name in each dump
+    boolean[] classNameKey = new boolean[keyFields.size()];
+    for (int i = 0; i < classNameKey.length; i++) {
+      classNameKey[i] = isClassNameField(keyFields.get(i), query.root());
+    }
+
+    // Index baseline results by join key, every row with the key in order
+    Map<Object, List<Map<String, Object>>> baselineIndex = new LinkedHashMap<>();
     for (Map<String, Object> row : baselineResults) {
-      Object key = getField(row, joinKey);
+      Object key = joinKeyOf(row, keyFields, classNameKey, grouped);
       if (key != null) {
-        baselineIndex.putIfAbsent(key, row);
+        baselineIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
       }
     }
+    // Group rows, and classes rows keyed by their name, pair in order (k-th with the baseline's
+    // k-th): such a row is one group or class, and rows that share the key are a family of classes
+    // (every Collectors lambda, or the JDK 8 LambdaForm$MH classes, which share one name). Other
+    // rows (objects, roots, classes joined by=superClass, ...) all match the first baseline row
+    // with their key.
+    boolean pairInOrder = grouped || (query.root() == Root.CLASSES && classNameKey[0]);
+    Map<Object, Integer> pairedSoFar = new HashMap<>();
 
     // Collect numeric field names from baseline for delta computation
     Set<String> numericFields = new LinkedHashSet<>();
@@ -1699,8 +1770,16 @@ public final class HdumpPathEvaluator {
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
     for (Map<String, Object> row : results) {
       Map<String, Object> out = aliasCopy(row);
-      Object key = getField(row, joinKey);
-      Map<String, Object> baseRow = key != null ? baselineIndex.get(key) : null;
+      Object key = joinKeyOf(row, keyFields, classNameKey, grouped);
+      List<Map<String, Object>> candidates = key != null ? baselineIndex.get(key) : null;
+      Map<String, Object> baseRow = null;
+      if (candidates != null && pairInOrder) {
+        // Classes a family gained have no baseline row left
+        int k = pairedSoFar.merge(key, 1, Integer::sum) - 1;
+        baseRow = k < candidates.size() ? candidates.get(k) : null;
+      } else if (candidates != null) {
+        baseRow = candidates.get(0); // first occurrence wins for duplicate keys
+      }
 
       out.put("baseline.exists", baseRow != null);
 
@@ -1730,6 +1809,48 @@ public final class HdumpPathEvaluator {
     }
 
     return joined;
+  }
+
+  /**
+   * The group field of {@code group} that {@code field} names, aliases ({@code class} for {@code
+   * className}) resolved on both sides, or {@code null}.
+   */
+  private static String groupFieldNamed(GroupByOp group, String field) {
+    String wanted = FIELD_ALIASES.getOrDefault(field, field);
+    for (String groupField : group.groupFields()) {
+      if (FIELD_ALIASES.getOrDefault(groupField, groupField).equals(wanted)) {
+        return groupField;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * A row's join key. Ungrouped: the one field's value, or null (no key, no match). Grouped: the
+   * list of the group fields' values, nulls included, so a null group (e.g. {@code arrayLength} of
+   * non-arrays) matches its baseline group as {@code groupRows} built it. A class-name field's
+   * value is {@link FrameNames#stableClassName}.
+   */
+  private static Object joinKeyOf(
+      Map<String, Object> row, List<String> keyFields, boolean[] classNameKey, boolean grouped) {
+    List<Object> values = new ArrayList<>(keyFields.size());
+    for (int i = 0; i < keyFields.size(); i++) {
+      Object value = getField(row, keyFields.get(i));
+      if (classNameKey[i] && value instanceof String name) {
+        value = FrameNames.stableClassName(name);
+      }
+      values.add(value);
+    }
+    return grouped ? values : values.get(0);
+  }
+
+  /**
+   * Whether {@code field} holds a class name: an object's class, or a {@code classes} row's name.
+   */
+  private static boolean isClassNameField(String field, Root root) {
+    String canonical = FIELD_ALIASES.getOrDefault(field, field);
+    return ObjectFields.CLASS_NAME.equals(canonical)
+        || (root == Root.CLASSES && ClassFields.NAME.equals(canonical));
   }
 
   @SuppressWarnings("unchecked")

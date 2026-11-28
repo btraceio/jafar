@@ -652,8 +652,11 @@ hdump> gcroots | groupBy(type, agg=count) | join(session=1) | sortBy(countDelta 
 ```
 
 The `join` operator adds `baseline.*` and `*Delta` columns for every numeric field.
-The join key is auto-inferred (`name` for classes, `className` for objects, `type` for GC roots)
-and can be overridden with `by=field`.
+The join key is auto-inferred (`name` for classes, `className` for objects, `type` for GC roots;
+after a `groupBy`, the group fields, and the baseline is grouped the same way) and can be
+overridden with `by=field`. Class names are compared without the per-run part of lambda and
+hidden class names (`Collectors$$Lambda+0x0000000019009048`), so the same lambda in two dumps
+from two JVM runs matches; see `doc/hdumppath.md` for how classes that share a name pair up.
 
 ### JFR + Heap Dump Correlation
 
