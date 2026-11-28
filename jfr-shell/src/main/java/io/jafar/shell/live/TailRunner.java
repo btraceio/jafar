@@ -79,14 +79,33 @@ public final class TailRunner {
   static final double HEAP_LIMIT = 0.8;
 
   /** Whether the heap is nearly full; replaceable for tests. */
-  static java.util.function.BooleanSupplier heapNearlyFull =
-      () -> {
-        Runtime rt = Runtime.getRuntime();
-        return rt.totalMemory() - rt.freeMemory() > HEAP_LIMIT * rt.maxMemory();
-      };
+  static java.util.function.BooleanSupplier heapNearlyFull = TailRunner::heapNearlyFull;
 
   /** How many events an aggregating tail takes in between heap checks; replaceable for tests. */
-  static int heapCheckEvery = 256;
+  static int heapCheckEvery = 64;
+
+  private static long lastHeapGc;
+
+  /**
+   * Whether more than {@link #HEAP_LIMIT} of the maximum heap is live. Used memory counts garbage
+   * not yet collected, so it can be over the limit with half the heap live: only then is a
+   * collection asked for (at most every two seconds; a no-op under {@code -XX:+DisableExplicitGC},
+   * and the check is then over used memory), and the heap measured again.
+   */
+  private static boolean heapNearlyFull() {
+    Runtime rt = Runtime.getRuntime();
+    double limit = HEAP_LIMIT * rt.maxMemory();
+    if (rt.totalMemory() - rt.freeMemory() <= limit) {
+      return false;
+    }
+    long now = System.currentTimeMillis();
+    if (now - lastHeapGc < 2_000) {
+      return false; // measured after a collection moments ago: check again later
+    }
+    lastHeapGc = now;
+    System.gc();
+    return rt.totalMemory() - rt.freeMemory() > limit;
+  }
 
   private TailRunner() {}
 
@@ -134,7 +153,7 @@ public final class TailRunner {
       throw new IllegalArgumentException("--every must be more than 0: " + text);
     }
     if (every.compareTo(MAX_EVERY) > 0) {
-      throw new IllegalArgumentException("--every can be at most 24h: " + text);
+      throw new IllegalArgumentException("--every can be at most 1440m (24 hours): " + text);
     }
     return every;
   }

@@ -751,7 +751,31 @@ public final class JfrPathEvaluator {
     if (query.root != Root.EVENTS || query.segments.size() < 2) {
       return List.of(event);
     }
-    return projectedRows(event, query.segments.subList(1, query.segments.size()));
+    List<String> proj = query.segments.subList(1, query.segments.size());
+    List<Map<String, Object>> rows = projectedRows(event, proj);
+    if (rows.isEmpty() && reachesNull(event, proj)) {
+      // A live event holds a plain null where a file's holds a wrapped one, which collapses to
+      // {value: null}: the same row, so that the event still counts
+      Map<String, Object> row = new java.util.LinkedHashMap<>();
+      row.put("value", null);
+      return List.of(row);
+    }
+    return rows;
+  }
+
+  /** Whether following {@code path} through nested maps from {@code event} meets a null. */
+  private static boolean reachesNull(Map<String, Object> event, List<String> path) {
+    Object cur = event;
+    for (String segment : path) {
+      if (!(cur instanceof Map<?, ?> m) || !m.containsKey(segment)) {
+        return false;
+      }
+      cur = m.get(segment);
+      if (cur == null) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -1069,7 +1093,8 @@ public final class JfrPathEvaluator {
   /**
    * As {@link #requireLiveOps(List)} for {@code query}, refusing too what a file query refuses: a
    * value operator ({@code stats()}, {@code sum()}, {@code quantiles()}, {@code sketch()}) with no
-   * value path straight over whole events, where rows would make it read their first column.
+   * value path over whole events, where rows would make it read their first column ({@code
+   * startTime}). After a {@code select()} the rows are its columns, so it is accepted.
    */
   public static void requireLiveOps(Query query) {
     RowOps.requireLiveOps(query.pipeline);
@@ -1079,6 +1104,11 @@ public final class JfrPathEvaluator {
     int first = RowOps.firstRowSetOp(query.pipeline);
     if (first >= query.pipeline.size()) {
       return;
+    }
+    for (JfrPath.PipelineOp op : query.pipeline.subList(0, first)) {
+      if (op instanceof JfrPath.SelectOp) {
+        return; // the rows are the selected columns, as after select() in a file query
+      }
     }
     String name =
         switch (query.pipeline.get(first)) {

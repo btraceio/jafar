@@ -57,6 +57,10 @@ class TailFilterUpfrontTest {
         TailRunner.aggregates(TailRunner.parseFilter("events/jdk.FileRead/bytesRead | stats()")));
     assertTrue(
         TailRunner.aggregates(TailRunner.parseFilter("events/jdk.FileRead | stats(bytesRead)")));
+    // After select() the rows are its columns, as in a file query
+    assertTrue(
+        TailRunner.aggregates(
+            TailRunner.parseFilter("events/jdk.FileRead | select(bytesRead) | stats()")));
   }
 
   @Test

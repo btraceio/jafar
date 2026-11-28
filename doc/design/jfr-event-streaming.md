@@ -320,7 +320,7 @@ Semantics chosen on #185: **cumulative**, re-printed on an interval.
 - The pipeline splits at its first operator that is not per-event applicable
   (`JfrPathEvaluator.firstRowSetOp`). The part before it runs on each event as in Phase 1 (on each
   projected value, with a projection: `JfrPathEvaluator.projectEvent`, as `collectAllRows` makes
-  rows for a file); the rows are kept, and the part from it on runs over all of them
+  rows for a file's row operators, a null value as `{value: null}`); the rows are kept, and the part from it on runs over all of them
   (`JfrPathEvaluator.applyToRows`), so a result covers every matching event since the tail
   started. The row operators copy the rows they change, so running them again on every print is
   safe. Their results are shaped as after another operator in a file query (`sum`, `timerange`).
@@ -329,14 +329,16 @@ Semantics chosen on #185: **cumulative**, re-printed on an interval.
   the live session's drop count; JSON is one `{"type":"aggregate","final":..,...}` line. A sink
   gets each result whole (`Sink.aggregate`): the TUI keeps only the latest.
 - Memory: a kept event is fully decoded, tens of KB with a stack trace. The rows are bounded by
-  `--max-rows` (default 100000) and by the heap: above 80% of the maximum the tail ends, both
-  times with a final result over what was kept, rather than run out of memory with none.
+  `--max-rows` (default 100000) and by the heap: when used memory passes 80% of the maximum, the
+  tail asks for a collection (at most every two seconds) and ends if it is still above, both
+  times with a final result over what was kept, rather than run out of memory with none. The
+  check runs every 64 events.
   Incremental accumulators (count/sum/stats/groupBy without keeping rows) would lift the bound
   and are left for later.
 - Refused up front (`requireLiveOps`), when the filter is given: operators that read the
   recording for other events (`crossref`, `decorateByTime`, `decorateByKey`), `flamegraph` (a
-  tree with no line form), and, as for a file, `stats`/`sum`/`quantiles`/`sketch` with neither a
-  projection nor a value path.
+  tree with no line form), and `stats`/`sum`/`quantiles`/`sketch` as the first row-set operator
+  with neither a projection, a value path nor a `select` before it.
 - Not handled: a target killed with SIGKILL is not noticed (as in Phase 1), so the tail runs on.
 
 ## Documentation

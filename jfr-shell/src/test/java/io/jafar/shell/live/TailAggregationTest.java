@@ -32,6 +32,7 @@ class TailAggregationTest {
   static class AggProbe extends jdk.jfr.Event {
     int seq;
     String group;
+    String nullable; // never set: recorded as null
   }
 
   /** 200 events: seq 0..199, group "g" + seq % 3 (67, 67 and 66 of them). */
@@ -351,5 +352,26 @@ class TailAggregationTest {
     assertTrue(
         printed.get(printed.size() - 1).startsWith("tail finished (limit reached)"),
         printed.toString());
+  }
+
+  @Test
+  void aProjectionToANullValueKeepsTheEvent() {
+    // A file query gives {value: null} for each event; a live event holds a plain null
+    JsonObject last =
+        last(run("events/test.AggProbe/nullable | count()", -1, Duration.ofHours(1), 0, 0));
+    assertEquals(200, last.get("events").getAsInt(), last.toString());
+    assertEquals(
+        200, last.getAsJsonArray("result").get(0).getAsJsonObject().get("count").getAsInt());
+  }
+
+  @Test
+  void aSelectBeforeAValueOperatorGivesItsColumn() {
+    JsonObject stats =
+        last(run("events/test.AggProbe | select(seq) | stats()", -1, Duration.ofHours(1), 0, 0))
+            .getAsJsonArray("result")
+            .get(0)
+            .getAsJsonObject();
+    assertEquals(0, stats.get("min").getAsInt(), stats.toString());
+    assertEquals(199, stats.get("max").getAsInt(), stats.toString());
   }
 }

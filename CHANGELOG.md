@@ -15,10 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of events it covers and the live session's drop count (`--format json`: one
   `{"type":"aggregate",...}` line each). A projection (`events/T/field | stats()`) aggregates the
   field's values. `--limit` counts the events taken in; `--max-rows` (default 100000) bounds the
-  rows kept, and a nearly full heap ends the tail too, both with a final result. `crossref()`,
-  `decorateByTime()`, `decorateByKey()`, `flamegraph()` and a path-less first `stats()`/`sum()`/
-  `quantiles()`/`sketch()` are refused when the filter is given. Row-set operators used to be rejected, and only when the first matching event
-  arrived. See [Live aggregation](doc/cli/Usage.md#live-aggregation).
+  rows kept, and a heap still 80% full after a collection ends the tail too, both with a final
+  result. Refused when the filter is given: `crossref()`, `decorateByTime()`,
+  `decorateByKey()`, `flamegraph()`, and a first `stats()`/`sum()`/`quantiles()`/`sketch()` with
+  no projection, value path or `select()`. Row-set operators used to be rejected, and only when
+  the first matching event arrived. See [Live aggregation](doc/cli/Usage.md#live-aggregation).
 - **Offline mode for the shells (#235)** - `--offline` (anywhere before `--`),
   `-Djfr.shell.offline=true` or `JFRSHELL_OFFLINE=true`: the plugin system uses no network. No
   catalog fetch, no update check, no Maven resolution, and no backend is downloaded: with none

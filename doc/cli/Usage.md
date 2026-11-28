@@ -608,7 +608,9 @@ Notes:
 A `tail` filter with a row-set operator aggregates (#185). The operators before the first row-set
 operator run on each event as usual; the matching events are kept, and the operators from the
 first row-set one on run over all of them. A projection (`events/T/field`) keeps the field's
-values instead, as rows, as a query over a file does. The result therefore covers every matching
+values instead, as rows (`{value: ...}` for a scalar), the rows a file query's operators see
+after a `filter()` or `select()`. (As the first operator of a file query, a few aggregations read
+a projection differently; live, they always see these rows.) The result therefore covers every matching
 event since the tail started, and is printed again every `--every` (default `5s`; also `500ms`,
 `1m`, or plain seconds; at most 24 hours) while new events come in, and once more when the tail
 ends: on Ctrl-C, when the target exits, at `--limit` or `--max-rows`, or when the heap is nearly
@@ -649,13 +651,15 @@ $ jfr-shell tail 12345 "events/test.Busy | count()" --every 1s --format json
 - The kept rows are held in memory, and a whole decoded event is large: tens of KB with a stack
   trace (about 50 KB for 13 frames, 160 KB for a 47-frame `jdk.ExecutionSample`), around 1 KB
   without. `--max-rows N` (default `100000`) ends the tail once N rows are kept, and so does a
-  heap more than 80% full; both print the final result over what was kept. To keep a long run
+  heap more than 80% full after a collection (the tail asks for one, at most every two seconds,
+  when used memory passes 80%); both print the final result over what was kept. To keep a long run
   small, keep only the fields the aggregation needs: `select(sampledThread/javaName) |
   groupBy(javaName)`, or a projection, `events/T/field | stats()`.
 - Every row-set operator works except those that read the recording for other events
   (`crossref()`, `decorateByTime()`, `decorateByKey()`) and `flamegraph()`, whose tree `tail`
-  cannot print (use `stackprofile()`). Like a file query, `stats()`, `sum()`, `quantiles()` and
-  `sketch()` need a projection or a value path when they come first. These are refused when
+  cannot print (use `stackprofile()`). `stats()`, `sum()`, `quantiles()` and `sketch()` as the first row-set
+  operator need a projection, a value path or a `select()` before them: over whole events they
+  would read each event's first field. These are refused when
   `tail` is given the filter, before any event is read.
 - The operators run on rows, as after another operator in a file query, so a few results are
   shaped as they are there: `sum(v)` gives `{"sum(v)": ...}` without a count, `timerange()` gives
