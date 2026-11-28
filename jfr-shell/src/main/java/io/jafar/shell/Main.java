@@ -106,7 +106,7 @@ public final class Main implements Callable<Integer> {
       if (jsonRequested(e.getCommandLine(), args)) {
         // --json promises one JSON object on stdout whatever happens (#234)
         System.out.println(
-            io.jafar.shell.core.JsonText.pretty(java.util.Map.of("error", e.getMessage())));
+            JsonOutput.usageError(e.getCommandLine().getCommandName(), e.getMessage()));
       }
       System.exit(rc);
     }
@@ -522,14 +522,17 @@ public final class Main implements Callable<Integer> {
         return execute(command, null);
       }
       JsonOutput out = JsonOutput.start();
-      int rc;
+      int rc = 1;
       try {
         rc = execute(command, out);
-      } catch (RuntimeException e) {
-        System.err.println("Error: " + e.getMessage());
-        rc = 1;
+      } catch (Throwable e) {
+        // An Error too: --json promises the one object whatever happens
+        System.err.println("Error: " + e);
+        out.error(e);
+      } finally {
+        rc = out.finishShow(rc);
       }
-      return out.finishShow(rc);
+      return rc;
     }
 
     private Integer execute(String command, JsonOutput json) {
@@ -537,6 +540,9 @@ public final class Main implements Callable<Integer> {
       try {
         rc = validateBackend(subcommandBackend(spec, parent, backend));
       } catch (CommandLine.ParameterException e) {
+        if (json != null) {
+          json.error(e.getMessage());
+        }
         return usageError(e);
       }
       if (rc != 0) {
@@ -594,16 +600,22 @@ public final class Main implements Callable<Integer> {
         // Print output; with --json stdout is the result object only, so anything else is a
         // diagnostic
         if (output.length() > 0) {
-          (json != null ? System.err : System.out).print(output.toString());
+          (json != null ? json.diagnostics() : System.out).print(output.toString());
         }
 
         if (errors.length() > 0) {
+          if (json != null) {
+            json.error(errors.toString());
+          }
           System.err.print(errors.toString());
           return 1;
         }
 
         return handled ? 0 : 1;
       } catch (Exception e) {
+        if (json != null) {
+          json.error(e);
+        }
         System.err.println("Error: " + e.getMessage());
         return 1;
       }
@@ -1264,14 +1276,17 @@ public final class Main implements Callable<Integer> {
         return run(null);
       }
       JsonOutput out = JsonOutput.start();
-      int rc;
+      int rc = 1;
       try {
         rc = run(out);
-      } catch (RuntimeException e) {
-        System.err.println("Error: " + e.getMessage());
-        rc = 1;
+      } catch (Throwable e) {
+        // An Error too: --json promises the one object whatever happens
+        System.err.println("Error: " + e);
+        out.error(e);
+      } finally {
+        rc = out.finishScript(rc);
       }
-      return out.finishScript(rc);
+      return rc;
     }
 
     private Integer run(JsonOutput json) {
@@ -1279,6 +1294,9 @@ public final class Main implements Callable<Integer> {
       try {
         rc = validateBackend(subcommandBackend(spec, parent, backend));
       } catch (CommandLine.ParameterException e) {
+        if (json != null) {
+          json.error(e.getMessage());
+        }
         return usageError(e);
       }
       if (rc != 0) {
@@ -1356,7 +1374,7 @@ public final class Main implements Callable<Integer> {
 
         // Print captured output; with --json stdout is the result object only
         if (output.length() > 0) {
-          (json != null ? System.err : System.out).print(output.toString());
+          (json != null ? json.diagnostics() : System.out).print(output.toString());
         }
 
         // Print any captured error messages (from io.error())
@@ -1366,6 +1384,14 @@ public final class Main implements Callable<Integer> {
 
         // Handle errors
         if (result.hasErrors()) {
+          if (json != null) {
+            StringBuilder failed = new StringBuilder();
+            for (ScriptRunner.ScriptError error : result.getErrors()) {
+              failed.append("Line ").append(error.getLineNumber()).append(": ");
+              failed.append(error.getMessage()).append('\n');
+            }
+            json.error(failed.toString());
+          }
           System.err.println("\nScript completed with errors:");
           for (ScriptRunner.ScriptError error : result.getErrors()) {
             System.err.println(error);
@@ -1386,6 +1412,9 @@ public final class Main implements Callable<Integer> {
 
         return 0;
       } catch (Exception e) {
+        if (json != null) {
+          json.error(e);
+        }
         System.err.println("Script execution failed: " + e.getMessage());
         return 1;
       }

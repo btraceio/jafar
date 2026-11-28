@@ -224,6 +224,77 @@ class JsonStdoutContractTest {
   }
 
   @Test
+  void theErrorIsTheFailureAloneNotTheOtherOutput() throws IOException {
+    Path s =
+        script(
+            "open " + JFR,
+            "echo step one",
+            "echo Usage: not a usage text",
+            "show events/jdk.NoSuchEvent");
+    assertEquals(1, run("script", s.toString(), "--json"));
+    String error = document().getAsJsonObject().get("error").getAsString();
+    assertEquals("Line 4: Event type 'jdk.NoSuchEvent' not found", error);
+    assertTrue(stderr().contains("step one"), stderr());
+  }
+
+  @Test
+  void aDispatcherUsageErrorIsTheMessage() throws IOException {
+    Path s = script("open " + JFR, "show --limit 3");
+    assertEquals(1, run("script", s.toString(), "--json"));
+    String error = document().getAsJsonObject().get("error").getAsString();
+    assertTrue(error.startsWith("Line 2: Usage: show <expr>"), error);
+  }
+
+  @Test
+  void verboseNotesStayOutOfTheError() throws IOException {
+    String saved = System.getProperty("jfr.shell.verbose");
+    System.setProperty("jfr.shell.verbose", "true");
+    try {
+      assertEquals(1, run("show", JFR.toString(), "events/jdk.NoSuchEvent", "--json"));
+      assertEquals(
+          "Event type 'jdk.NoSuchEvent' not found",
+          document().getAsJsonObject().get("error").getAsString());
+    } finally {
+      if (saved == null) {
+        System.clearProperty("jfr.shell.verbose");
+      } else {
+        System.setProperty("jfr.shell.verbose", saved);
+      }
+    }
+  }
+
+  @Test
+  void continueOnErrorKeepsEveryResult() throws IOException {
+    Path s =
+        script(
+            "open " + JFR,
+            "show events/jdk.ExecutionSample | count()",
+            "show events/jdk.NoSuchEvent",
+            "show events/jdk.ExecutionSample | count()");
+    assertEquals(1, run("script", s.toString(), "--json", "--continue-on-error"));
+    JsonObject doc = document().getAsJsonObject();
+    assertEquals("Line 3: Event type 'jdk.NoSuchEvent' not found", doc.get("error").getAsString());
+    assertEquals(2, doc.getAsJsonArray("results").size());
+  }
+
+  @Test
+  void usageErrorObjectsHaveOneShape() {
+    JsonObject show =
+        com.google.gson.JsonParser.parseString(
+                JsonOutput.usageError("show", "Missing required parameter: '<expression>'"))
+            .getAsJsonObject();
+    assertEquals(List.of("error"), List.copyOf(show.keySet()));
+    assertEquals("Missing required parameter: '<expression>'", show.get("error").getAsString());
+    JsonObject script =
+        com.google.gson.JsonParser.parseString(
+                JsonOutput.usageError("script", "Error: --backend is 'a'"))
+            .getAsJsonObject();
+    assertEquals(List.of("error", "results"), List.copyOf(script.keySet()));
+    assertEquals("--backend is 'a'", script.get("error").getAsString());
+    assertEquals(0, script.getAsJsonArray("results").size());
+  }
+
+  @Test
   void scriptWithoutTheFlagIsUnchanged() throws IOException {
     Path s = script("open " + JFR, "show events/jdk.ExecutionSample | count()");
     assertEquals(0, run("script", s.toString()));

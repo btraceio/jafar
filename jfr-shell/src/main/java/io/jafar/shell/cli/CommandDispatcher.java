@@ -1582,7 +1582,7 @@ public class CommandDispatcher {
     if (showSink == null) {
       return false;
     }
-    io.error("show --json: " + what + " has no JSON form; use --format table");
+    io.error("show --json: " + what + " has no JSON form; run it without --json");
     return true;
   }
 

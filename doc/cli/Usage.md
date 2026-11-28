@@ -333,9 +333,9 @@ they also print notes such as `Opened session #1: <file>` on stdout, before the 
 ### One JSON result (`--json`)
 
 For a program reading the output, `jfr-shell show ... --json` and `jfr-shell script ... --json`
-print exactly one JSON object on stdout, whatever the exit status, and nothing else; anything
-else (notes, warnings, a script's `echo` lines, the error text) goes to stderr. `jafar-shell show`
-is the same command. Output without `--json` is unchanged.
+print one JSON object on stdout and nothing else, whatever the exit status. Everything else
+(notes, warnings, log lines, a script's `echo` lines, the error text) goes to stderr. `jafar-shell
+show` is the same command. Output without `--json` is unchanged.
 
 ```bash
 $ jfr-shell show recording.jfr "events/jdk.InitialSystemProperty" --limit 2 --json
@@ -346,18 +346,24 @@ $ jfr-shell show recording.jfr "events/jdk.InitialSystemProperty" --limit 2 --js
 }
 ```
 
-- `show`: `{"result": <value>, "truncated": <bool>, "limit": <n or null>}`. `result` is what
-  `--format json` prints. `truncated` is `true` when `--limit` left rows out, and `false` when
-  there were no more (a limit of exactly the number of rows is not truncated).
+- `show`: `{"result": <value>, "truncated": <bool>, "limit": <n or null>}`. `result` is the value
+  `--format json` prints, or `null` where that prints `(no rows)` (a metadata path that names no
+  type or field). `truncated` is `true` when `--limit` left rows out, and `false` when there were
+  no more: a limit of exactly the number of rows is not truncated.
 - `script`: `{"results": [...]}`, one entry per `show` the script ran, in order, each
   `{"command": <the line>, "result", "truncated", "limit"}`. The `Script executed successfully`
   line is not printed.
-- Failure: exit status `1` (`2` for a usage error) and `{"error": <message>}`, the message being
-  what was printed on stderr. A failing script also keeps `"results"`, with those of the lines
-  before the failure (or every successful one, with `--continue-on-error`).
+- Failure: a nonzero exit status and `{"error": <message>}`; a script's object keeps `"results"`,
+  with those of the lines before the failure (or of every line that succeeded, with
+  `--continue-on-error`). The message is the failure's own text without the `Error: ` prefix:
+  the query error, the usage error, or for a script `Line <n>: <error>` for each failed line. The
+  exit status is `2` for an argument error found while reading the command line and `1`
+  otherwise.
 - A `show` whose result has no JSON form fails: a flame graph, `--tree`, the bare `metadata`
-  type list. So does `show` on something other than a JFR recording.
-- `jafar-shell script` does not take `--json`.
+  type list.
+- `jafar-shell script` runs in the unified shell, which does not take `--json` (exit status 2,
+  nothing on stdout), unless a jfr-shell option such as `--plugin-dir` comes before `script`:
+  that command line runs jfr-shell's `script`, which does.
 
 ## Metadata Field Paths (mini guide)
 

@@ -5,7 +5,6 @@ import io.jafar.shell.core.JsonText;
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,7 +23,10 @@ import java.util.Map;
  *       script, with the results of the lines before the failure.
  * </ul>
  *
- * <p>The message is what went to stderr while the command ran, which keeps getting it there too.
+ * <p>The message is the failure's own text, without the {@code Error: } prefix the stderr lines
+ * have: the dispatcher's error, the script's failed lines, the usage error or the exception. Only
+ * when nothing reported one is it what went to stderr while the command ran; the command's other
+ * output, which goes to stderr too, is never part of it.
  */
 final class JsonOutput {
 
@@ -32,13 +34,14 @@ final class JsonOutput {
   private final PrintStream stderr;
   private final ByteArrayOutputStream captured = new ByteArrayOutputStream();
   private final List<Map<String, Object>> results = new ArrayList<>();
+  private String error;
 
   private JsonOutput(PrintStream stdout, PrintStream stderr) {
     this.stdout = stdout;
     this.stderr = stderr;
   }
 
-  /** Starts capturing stderr; {@link #finish} restores it. */
+  /** Starts capturing stderr; {@code finishShow} or {@code finishScript} restores it. */
   static JsonOutput start() {
     JsonOutput out = new JsonOutput(System.out, System.err);
     OutputStream tee =
@@ -60,8 +63,35 @@ final class JsonOutput {
             out.stderr.flush();
           }
         };
-    System.setErr(new PrintStream(tee, true, StandardCharsets.UTF_8));
+    System.setErr(new PrintStream(tee, true, out.stderr.charset()));
     return out;
+  }
+
+  /** Where output that is neither the result nor the error goes: stderr, not captured. */
+  PrintStream diagnostics() {
+    return stderr;
+  }
+
+  /** Records the failure's message; the first one recorded is the one reported. */
+  void error(String message) {
+    if (error == null && message != null && !message.isBlank()) {
+      error = message;
+    }
+  }
+
+  /** The message for {@code failure}, which escaped the command. */
+  void error(Throwable failure) {
+    error(failure.getMessage() != null ? failure.getMessage() : failure.toString());
+  }
+
+  /** The one object for a usage error picocli reported before the command ran. */
+  static String usageError(String command, String message) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("error", normalize(message));
+    if ("script".equals(command)) {
+      result.put("results", List.of());
+    }
+    return JsonText.pretty(result);
   }
 
   /** Where the dispatcher sends {@code show} results. */
@@ -84,8 +114,7 @@ final class JsonOutput {
     if (rc == 0 && results.size() == 1) {
       Map<String, Object> result = new LinkedHashMap<>(results.get(0));
       result.remove("command");
-      print(result);
-      return 0;
+      return print(result) ? 0 : 1;
     }
     if (rc == 0) {
       // Nothing failed, yet there is no one result to give: say so rather than print nothing
@@ -109,22 +138,19 @@ final class JsonOutput {
       result.put("error", message());
     }
     result.put("results", results);
-    print(result);
-    return rc;
+    return print(result) ? rc : 1;
   }
 
-  /** What went to stderr, up to a usage text, trimmed; a placeholder when nothing did. */
+  /** The recorded message, else what went to stderr; a placeholder when there is neither. */
   private String message() {
-    String text = captured.toString(StandardCharsets.UTF_8);
-    int usage = text.indexOf("\nUsage:");
-    if (usage < 0 && text.startsWith("Usage:")) {
-      usage = 0;
-    }
-    if (usage >= 0) {
-      text = text.substring(0, usage);
-    }
-    text = text.strip();
+    String text = error != null ? error : captured.toString(stderr.charset());
+    text = normalize(text);
     return text.isEmpty() ? "failed (no message)" : text;
+  }
+
+  /** {@code text} trimmed, without the {@code Error: } that starts stderr lines. */
+  static String normalize(String text) {
+    return text.replaceAll("(?m)^Error: ", "").strip();
   }
 
   private void restore() {
@@ -132,8 +158,24 @@ final class JsonOutput {
     System.setErr(stderr);
   }
 
-  private void print(Object value) {
-    stdout.println(JsonText.pretty(value));
+  /**
+   * Prints {@code value} as JSON; when that fails (a result too large to write, say), prints an
+   * error object instead and returns false.
+   */
+  private boolean print(Object value) {
+    String text;
+    boolean printed = true;
+    try {
+      text = JsonText.pretty(value);
+    } catch (Throwable e) {
+      // The text being built is garbage by now, so the small error object fits again
+      printed = false;
+      String message = "could not write the result as JSON: " + e;
+      stderr.println("Error: " + message);
+      text = JsonText.pretty(Map.of("error", message));
+    }
+    stdout.println(text);
     stdout.flush();
+    return printed;
   }
 }
