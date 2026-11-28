@@ -102,7 +102,13 @@ public final class Main implements Callable<Integer> {
     } catch (CommandLine.ParameterException e) {
       // A usage error (missing or malformed arguments): say what is wrong and how the command is
       // used, as picocli's own handler would, instead of escaping with a stack trace.
-      System.exit(usageError(e));
+      int rc = usageError(e);
+      if (jsonRequested(e.getCommandLine(), args)) {
+        // --json promises one JSON object on stdout whatever happens (#234)
+        System.out.println(
+            io.jafar.shell.core.JsonText.pretty(java.util.Map.of("error", e.getMessage())));
+      }
+      System.exit(rc);
     }
 
     // Set plugin directory if specified
@@ -129,6 +135,26 @@ public final class Main implements Callable<Integer> {
 
     int exitCode = new CommandLine(new Main()).execute(args);
     System.exit(exitCode);
+  }
+
+  /**
+   * Whether a command line that picocli refused asked {@code show} or {@code script} for {@code
+   * --json}: then the error goes to stdout as JSON as well.
+   */
+  static boolean jsonRequested(CommandLine failed, String[] args) {
+    String name = failed == null ? "" : failed.getCommandName();
+    if (!"show".equals(name) && !"script".equals(name)) {
+      return false;
+    }
+    for (String arg : args) {
+      if ("--".equals(arg)) {
+        return false;
+      }
+      if ("--json".equals(arg)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Exit code for a usage error, as picocli's {@code execute} returns for invalid input. */
@@ -486,7 +512,27 @@ public final class Main implements Callable<Integer> {
 
     @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
 
+    /** Whether this command gives its result as one JSON object (#234); see {@link JsonOutput}. */
+    protected boolean json() {
+      return false;
+    }
+
     protected Integer executeNonInteractive(String command) {
+      if (!json()) {
+        return execute(command, null);
+      }
+      JsonOutput out = JsonOutput.start();
+      int rc;
+      try {
+        rc = execute(command, out);
+      } catch (RuntimeException e) {
+        System.err.println("Error: " + e.getMessage());
+        rc = 1;
+      }
+      return out.finishShow(rc);
+    }
+
+    private Integer execute(String command, JsonOutput json) {
       Integer rc;
       try {
         rc = validateBackend(subcommandBackend(spec, parent, backend));
@@ -535,6 +581,9 @@ public final class Main implements Callable<Integer> {
                 // a JSON parser without an "Opened session" line before it (#266).
                 // -Djfr.shell.verbose / JFR_SHELL_VERBOSE still turn the notes on.
                 false);
+        if (json != null) {
+          dispatcher.setShowSink(json.sink());
+        }
 
         // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233)
         dispatcher.open(path, null);
@@ -542,9 +591,10 @@ public final class Main implements Callable<Integer> {
         // Execute command
         boolean handled = dispatcher.dispatch(command);
 
-        // Print output
+        // Print output; with --json stdout is the result object only, so anything else is a
+        // diagnostic
         if (output.length() > 0) {
-          System.out.print(output.toString());
+          (json != null ? System.err : System.out).print(output.toString());
         }
 
         if (errors.length() > 0) {
@@ -581,6 +631,18 @@ public final class Main implements Callable<Integer> {
         names = {"--list-match"},
         description = "List matching mode: any, all, none")
     private String listMatch;
+
+    @CommandLine.Option(
+        names = {"--json"},
+        description =
+            "Print one JSON object and nothing else on stdout: {\"result\", \"truncated\","
+                + " \"limit\"}, or {\"error\"} when the command fails; diagnostics go to stderr")
+    private boolean json;
+
+    @Override
+    protected boolean json() {
+      return json;
+    }
 
     @Override
     public Integer call() {
@@ -1181,6 +1243,13 @@ public final class Main implements Callable<Integer> {
     private boolean continueOnError;
 
     @CommandLine.Option(
+        names = {"--json"},
+        description =
+            "Print one JSON object and nothing else on stdout: {\"results\": [one per show]},"
+                + " with \"error\" when the script fails; other output goes to stderr")
+    private boolean json;
+
+    @CommandLine.Option(
         names = {"-b", "--backend"},
         description = "JFR backend to use")
     private String backend;
@@ -1191,6 +1260,21 @@ public final class Main implements Callable<Integer> {
 
     @Override
     public Integer call() {
+      if (!json) {
+        return run(null);
+      }
+      JsonOutput out = JsonOutput.start();
+      int rc;
+      try {
+        rc = run(out);
+      } catch (RuntimeException e) {
+        System.err.println("Error: " + e.getMessage());
+        rc = 1;
+      }
+      return out.finishScript(rc);
+    }
+
+    private Integer run(JsonOutput json) {
       Integer rc;
       try {
         rc = validateBackend(subcommandBackend(spec, parent, backend));
@@ -1250,6 +1334,9 @@ public final class Main implements Callable<Integer> {
                 null,
                 null,
                 false); // Suppress informational messages in script mode
+        if (json != null) {
+          dispatcher.setShowSink(json.sink());
+        }
 
         List<String> lines;
         if (fromStdin) {
@@ -1267,9 +1354,9 @@ public final class Main implements Callable<Integer> {
         ScriptRunner.ExecutionResult result =
             dispatcher.runScript(lines, arguments, continueOnError);
 
-        // Print captured output
+        // Print captured output; with --json stdout is the result object only
         if (output.length() > 0) {
-          System.out.print(output.toString());
+          (json != null ? System.err : System.out).print(output.toString());
         }
 
         // Print any captured error messages (from io.error())
@@ -1292,7 +1379,7 @@ public final class Main implements Callable<Integer> {
           return 1;
         }
 
-        if (result.getSuccessCount() > 0) {
+        if (result.getSuccessCount() > 0 && json == null) {
           System.out.println(
               "\nScript executed successfully: " + result.getSuccessCount() + " commands");
         }
