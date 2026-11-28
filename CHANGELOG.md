@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-Djfr.shell.backend.jars=<jar>`). An installed LLM backend still uses its endpoint. Without it
   nothing changes. See
   [Backends](doc/cli/Backends.md#offline-mode).
+- **`--json` for `show` and `script`: one JSON result on stdout (#234)** - `jfr-shell show ...
+  --json` (and `jafar-shell show`) prints `{"result", "truncated", "limit"}` and nothing else on
+  stdout; `truncated` says whether `--limit` left rows out. `jfr-shell script ... --json` prints
+  `{"results": [...]}`, one entry per `show`, without the success footer. A failure is
+  `{"error": ...}` on stdout with a nonzero exit status; diagnostics go to stderr. Output without
+  `--json` is unchanged, except that the `jafar-shell` jar's error log lines now go to stderr
+  rather than stdout. See [Usage](doc/cli/Usage.md#one-json-result---json).
 - **Cross-format compare: `profile_compare` and pprof sides in `compare`** - a JFR recording or a
   pprof profile can be compared against either. The MCP tool `profile_compare` takes
   `{format: jfr|pprof, sessionId}` per side (each format numbers its sessions from 1), plus

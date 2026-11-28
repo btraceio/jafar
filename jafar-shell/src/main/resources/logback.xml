@@ -2,6 +2,8 @@
 <configuration>
     <!-- Console appender - only show ERROR to avoid polluting interactive shell / TUI -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <!-- stderr, not stdout: stdout carries the command's result only, which the JSON mode of show and script relies on (#234) -->
+        <target>System.err</target>
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>ERROR</level>
         </filter>
