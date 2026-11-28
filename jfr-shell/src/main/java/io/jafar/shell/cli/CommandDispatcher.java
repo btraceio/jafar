@@ -1019,6 +1019,10 @@ public class CommandDispatcher {
           }
           // Delegate to module evaluator for non-JFR sessions
           if (moduleEvaluator != null) {
+            if (showSink != null) {
+              io.error("show --json: only a JFR recording's results can be given as JSON");
+              return true;
+            }
             cmdShowModule(args, line, moduleEvaluator);
             return true;
           }
@@ -1525,6 +1529,63 @@ public class CommandDispatcher {
     io.error("Usage: backend | backend list");
   }
 
+  /**
+   * Receives what {@code show} would print as JSON, for the CLIs' {@code --json} mode (#234): the
+   * command line, the value, whether {@code --limit} cut rows from it, and the limit.
+   */
+  public interface ShowSink {
+    void accept(String command, Object value, boolean truncated, Integer limit);
+  }
+
+  private ShowSink showSink;
+  private boolean showTruncated;
+
+  /**
+   * Sends every {@code show} result to {@code sink} instead of printing it; {@code null} prints
+   * again. A result with no JSON form (a flame graph, a tree, the type list) is then an error, and
+   * so is {@code show} on a session that is not a JFR recording.
+   */
+  public void setShowSink(ShowSink sink) {
+    this.showSink = sink;
+  }
+
+  /** The first {@code limit} rows, noting when that leaves some out. */
+  private <T> List<T> cut(List<T> rows, Integer limit) {
+    if (limit != null && limit < rows.size()) {
+      showTruncated = true;
+      return rows.subList(0, limit);
+    }
+    return rows;
+  }
+
+  /**
+   * The limit to evaluate with: one more than asked for a sink, so that {@link #cut} can tell a
+   * result of exactly {@code limit} rows from one that had more.
+   */
+  private Integer probe(Integer limit) {
+    if (showSink == null || limit == null || limit == Integer.MAX_VALUE) {
+      return limit;
+    }
+    return limit + 1;
+  }
+
+  private void emitJson(String command, Object value, Integer limit) {
+    if (showSink != null) {
+      showSink.accept(command, value, showTruncated, limit);
+    } else {
+      printJson(value, io);
+    }
+  }
+
+  /** With a sink, reports that {@code what} has no JSON form and returns true. */
+  private boolean noJsonForm(String what) {
+    if (showSink == null) {
+      return false;
+    }
+    io.error("show --json: " + what + " has no JSON form; run it without --json");
+    return true;
+  }
+
   private void cmdShow(List<String> args, String fullLine) throws Exception {
     var cur = sessions.current();
     if (cur.isEmpty()) {
@@ -1534,6 +1595,7 @@ public class CommandDispatcher {
     // parse options: support --limit N, --format json, and metadata-only: --tree [--depth N]
     Integer limit = null;
     String format = cur.get().outputFormat;
+    showTruncated = false;
     boolean tree = false;
     Integer depth = null;
     JfrPath.MatchMode listMatchMode = JfrPath.MatchMode.ANY;
@@ -1594,6 +1656,10 @@ public class CommandDispatcher {
         continue;
       }
     }
+    if (showSink != null) {
+      // --json: the result goes to the sink, whatever --format says
+      format = "json";
+    }
     if (tokens.isEmpty()) {
       io.error(
           "Usage: show <expr> [--limit N] [--format table|json|csv|tui] [--tree] [--depth N]"
@@ -1647,11 +1713,12 @@ public class CommandDispatcher {
             if (dummyQuery.pipeline != null && !dummyQuery.pipeline.isEmpty()) {
               var eval = new JfrPathEvaluator(listMatchMode);
               rows = eval.applyToRows(rows, dummyQuery.pipeline);
-              if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+              rows = cut(rows, limit);
               if (isFlameGraph(rows)) {
-                FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
+                if (!noJsonForm("a flame graph"))
+                  FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
               } else if ("json".equalsIgnoreCase(format)) {
-                printJson(forOutput(rows, lqv.getQueryString()), io);
+                emitJson(fullLine, forOutput(rows, lqv.getQueryString()), limit);
               } else if ("csv".equalsIgnoreCase(format)) {
                 CsvRenderer.render(forOutput(rows, lqv.getQueryString()), io);
               } else if ("tui".equalsIgnoreCase(format)) {
@@ -1678,12 +1745,13 @@ public class CommandDispatcher {
     // Evaluate
     if (selector != null && cur.get().session instanceof JFRSession jfrSession) {
       List<Map<String, Object>> rows = selector.select(jfrSession, expr);
-      if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      rows = cut(rows, limit);
       rememberResult(expr, rows);
       if (isFlameGraph(rows)) {
-        FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
+        if (!noJsonForm("a flame graph"))
+          FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
-        printJson(forOutput(rows, expr), io);
+        emitJson(fullLine, forOutput(rows, expr), limit);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(forOutput(rows, expr), io);
       } else if ("tui".equalsIgnoreCase(format)) {
@@ -1698,13 +1766,14 @@ public class CommandDispatcher {
     // If aggregation pipeline present, always evaluate as rows (preempts other handlers)
     if (q.pipeline != null && !q.pipeline.isEmpty()) {
       var rows = eval.evaluate((JFRSession) cur.get().session, q);
-      if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      rows = cut(rows, limit);
       rememberResult(expr, rows);
       boolean unwrap = ConstantValues.holdsRecordingValues(q);
       if (isFlameGraph(rows)) {
-        FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
+        if (!noJsonForm("a flame graph"))
+          FlameGraphRenderer.render((FlameNode) rows.get(0).get("__flamegraph"), io);
       } else if ("json".equalsIgnoreCase(format)) {
-        printJson(forOutput(rows, unwrap), io);
+        emitJson(fullLine, forOutput(rows, unwrap), limit);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.render(forOutput(rows, unwrap), io);
       } else if ("tui".equalsIgnoreCase(format)) {
@@ -1717,6 +1786,9 @@ public class CommandDispatcher {
 
     // metadata tree rendering via --tree
     if (tree && q.root == JfrPath.Root.METADATA) {
+      if (noJsonForm("a --tree rendering")) {
+        return;
+      }
       if (q.segments.isEmpty()) {
         io.error("--tree requires 'metadata/<type>' expression");
         return;
@@ -1759,7 +1831,7 @@ public class CommandDispatcher {
     }
     if (q.root == JfrPath.Root.METADATA && q.segments.isEmpty() && q.predicates.isEmpty()) {
       // Equivalent of 'types' - but only if no filters
-      cmdTypes(List.of());
+      if (!noJsonForm("the type list")) cmdTypes(List.of());
       return;
     }
     // events/<type>/<path>, metadata/<type>/fields, metadata/<type>/<field>, ... — the same
@@ -1768,10 +1840,14 @@ public class CommandDispatcher {
     if (shape == ShowShape.FIELD_METADATA) {
       Map<String, Object> fm = ShowShape.fieldMetadata(eval, (JFRSession) cur.get().session, q);
       if (fm == null) {
-        io.println("(no rows)");
+        if (showSink != null) {
+          emitJson(fullLine, null, limit);
+        } else {
+          io.println("(no rows)");
+        }
       } else {
         if ("json".equalsIgnoreCase(format)) {
-          printJson(fm, io);
+          emitJson(fullLine, fm, limit);
         } else if ("csv".equalsIgnoreCase(format)) {
           Map<String, Object> copy = new LinkedHashMap<>(fm);
           copy.remove("annotationsFull");
@@ -1790,12 +1866,12 @@ public class CommandDispatcher {
       return;
     }
     if (shape == ShowShape.VALUES) {
-      var values = ShowShape.values(eval, (JFRSession) cur.get().session, q, limit);
-      if (limit != null && limit < values.size()) values = values.subList(0, limit);
+      var values = ShowShape.values(eval, (JFRSession) cur.get().session, q, probe(limit));
+      values = cut(values, limit);
       List<?> shaped =
           ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values;
       if ("json".equalsIgnoreCase(format)) {
-        printJson(shaped, io);
+        emitJson(fullLine, shaped, limit);
       } else if ("csv".equalsIgnoreCase(format)) {
         CsvRenderer.renderValues(shaped, io);
       } else if ("tui".equalsIgnoreCase(format)) {
@@ -1806,11 +1882,11 @@ public class CommandDispatcher {
     } else {
       var rows =
           (q.root == JfrPath.Root.EVENTS)
-              ? eval.evaluateWithLimit((JFRSession) cur.get().session, q, limit)
+              ? eval.evaluateWithLimit((JFRSession) cur.get().session, q, probe(limit))
               : eval.evaluate((JFRSession) cur.get().session, q);
-      if (limit != null && limit < rows.size()) rows = rows.subList(0, limit);
+      rows = cut(rows, limit);
       if ("json".equalsIgnoreCase(format)) {
-        printJson(forOutput(rows, ConstantValues.holdsRecordingValues(q)), io);
+        emitJson(fullLine, forOutput(rows, ConstantValues.holdsRecordingValues(q)), limit);
       } else if ("csv".equalsIgnoreCase(format)) {
         // Hide internal columns for metadata tables (CSV view)
         if (q.root == JfrPath.Root.METADATA && !rows.isEmpty()) {
