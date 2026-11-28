@@ -342,4 +342,32 @@ class JfrPathStackProfileTest {
     assertEquals(3L, threadCounts.get("main"));
     assertEquals(1L, threadCounts.get("worker-1"));
   }
+
+  /**
+   * A sample's thread is its {@code sampledThread}, named by its Java name first, as {@code
+   * jfr_tsa} names it. The profile read {@code eventThread} first and the OS name first, so the
+   * same sample could carry a different thread, or another thread's name, in the two (#222).
+   */
+  @SuppressWarnings("unchecked")
+  @Test
+  void aSampleIsCountedUnderItsSampledThreadsJavaName() throws Exception {
+    JFRSession session = mockSession();
+    Map<String, Object> event = new LinkedHashMap<>(sampleEvent(100, "A.leaf", "B.entry"));
+    event.put("sampledThread", Map.of("javaName", "worker-0", "osName", "os-42"));
+    event.put("eventThread", Map.of("javaName", "other", "osName", "os-7"));
+    var src =
+        (JfrPathEvaluator.EventSource)
+            (recording, consumer) ->
+                consumer.accept(new JfrPathEvaluator.Event("jdk.ExecutionSample", event));
+
+    var eval = new JfrPathEvaluator(src);
+    List<Map<String, Object>> rows =
+        eval.evaluate(
+            session,
+            JfrPathParser.parse(
+                "events/jdk.ExecutionSample | stackprofile(direction=top-down, minPct=0)"));
+
+    Map<String, String> threads = (Map<String, String>) rows.get(0).get("threads");
+    assertEquals(List.of("worker-0"), List.copyOf(threads.keySet()));
+  }
 }

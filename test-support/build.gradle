@@ -21,6 +21,23 @@ java {
     }
 }
 
+// --- Work-budget agent (doc/plans/work-budgets.md) -----------------------------------------
+// A test-only java.lang.instrument agent, in its own source set so that ASM stays off the main
+// classpath of the modules that use test-support. It counts entries into the parser methods that
+// io.jafar.testsupport.work.WorkProbes names; the workTest tasks of parser-core and parser-codegen
+// start their JVM with -javaagent:<the jar below>. The jar holds the agent, WorkProbes (the agent
+// reads the probe list) and ASM, unrelocated. It does not hold WorkCounters: the inserted calls
+// resolve it through the instrumented parser class's own loader, from test-support on the test
+// classpath, which is also where the tests read it.
+sourceSets {
+    agent {
+        java {
+            srcDirs = ['src/agent/java']
+        }
+        compileClasspath += sourceSets.main.output
+    }
+}
+
 dependencies {
     // `api`, not `testImplementation`: the budget/golden tests in the consuming modules use
     // Assertions/Assumptions (AllocationBudgets, GoldenFile) through this artifact, so a plain
@@ -44,6 +61,15 @@ dependencies {
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:9.1.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    // The work-budget agent (src/agent): ASM rewrites the parser classes the probes name. The
+    // same 9.7.1 parser-codegen uses, so the copy the agent jar bundles is the one parser-codegen
+    // tests already have on their classpath.
+    agentImplementation 'org.ow2.asm:asm:9.7.1'
+    // WorkAgentTest drives the agent's transformation directly; WorkProbesTest resolves every probe
+    // against the compiled parser classes, parser-codegen's included.
+    testImplementation sourceSets.agent.output
+    testImplementation 'org.ow2.asm:asm:9.7.1'
+    testImplementation project(':parser-codegen')
 }
 
 // The dump test's JMC writer needs a newer JVM than main's Java 8 floor (see the dependency
@@ -57,4 +83,32 @@ tasks.named('compileTestJava') {
 tasks.named('test') {
     useJUnitPlatform()
     javaLauncher = javaToolchains.launcherFor { languageVersion = dumpTestJdk }
+}
+
+def workAgentJar = tasks.register('workAgentJar', Jar) {
+    description = 'Builds the work-budget java agent (Premain-Class, bundling ASM).'
+    archiveBaseName.set('jafar-work-agent')
+    destinationDirectory.set(layout.buildDirectory.dir('work-agent'))
+    from sourceSets.agent.output
+    from(sourceSets.main.output) {
+        include 'io/jafar/testsupport/work/WorkProbes*'
+    }
+    def asm = configurations.agentRuntimeClasspath
+    from({ asm.collect { zipTree(it) } }) {
+        exclude 'module-info.class', 'META-INF/**'
+    }
+    manifest {
+        attributes('Premain-Class': 'io.jafar.testsupport.work.agent.WorkAgent')
+    }
+}
+
+// What the workTest tasks resolve: `workAgent project(path: ':test-support', configuration: 'workAgentElements')`
+configurations {
+    workAgentElements {
+        canBeConsumed = true
+        canBeResolved = false
+    }
+}
+artifacts {
+    workAgentElements(workAgentJar)
 }

@@ -5,6 +5,7 @@ import io.jafar.mcp.query.QueryEvaluator;
 import io.jafar.mcp.query.QueryParser;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
+import io.jafar.mcp.session.MappedFileRelease;
 import io.jafar.mcp.session.SessionRegistry;
 import io.jafar.mcp.validation.FileValidator;
 import io.jafar.shell.jfrpath.JfrPath;
@@ -19,6 +20,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -279,7 +281,7 @@ public final class JfrSessionTools {
       List<String> filteredTypes = new ArrayList<>();
       for (String eventType : eventTypes) {
         if (filter != null && !filter.isBlank()) {
-          if (!eventType.toLowerCase().contains(filter.toLowerCase())) {
+          if (!eventType.toLowerCase(Locale.ROOT).contains(filter.toLowerCase(Locale.ROOT))) {
             continue;
           }
         }
@@ -389,6 +391,9 @@ public final class JfrSessionTools {
       if (closeAll != null && closeAll) {
         int count = sessionRegistry.closeAll();
         LOG.info("Closed all {} sessions of the caller", count);
+        if (count > 0) {
+          MappedFileRelease.afterClose();
+        }
         return successResult(
             Map.of(
                 "success",
@@ -410,6 +415,7 @@ public final class JfrSessionTools {
       boolean closed = sessionRegistry.close(sessionId);
       if (closed) {
         LOG.info("Closed session: {}", sessionId);
+        MappedFileRelease.afterClose();
         return successResult(
             Map.of(
                 "success",
@@ -464,7 +470,7 @@ public final class JfrSessionTools {
     }
 
     String content =
-        switch (topic.toLowerCase()) {
+        switch (topic.toLowerCase(Locale.ROOT)) {
           case "overview" -> getOverviewHelp();
           case "filters" -> getFiltersHelp();
           case "pipeline" -> getPipelineHelp();

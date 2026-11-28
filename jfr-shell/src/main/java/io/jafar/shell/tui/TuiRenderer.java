@@ -29,6 +29,7 @@ import io.jafar.shell.tui.TuiContext.Focus;
 import io.jafar.shell.tui.TuiContext.ResultTab;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.jline.reader.Candidate;
@@ -146,6 +147,7 @@ public final class TuiRenderer {
     try {
       backendName = " | [" + BackendRegistry.getInstance().getCurrent().getId() + "]";
     } catch (Exception ignore) {
+      // no backend selected: leave the name out of the status bar
     }
 
     String altMod = (TuiContext.PLATFORM == TuiContext.Platform.MACOS) ? "Opt" : "Alt";
@@ -310,7 +312,9 @@ public final class TuiRenderer {
       String progressMsg = ctx.asyncProgressMessage;
       long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
       String elapsed =
-          elapsedSec > 0 ? String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60) : "";
+          elapsedSec > 0
+              ? String.format(Locale.ROOT, " (%02d:%02d)", elapsedSec / 60, elapsedSec % 60)
+              : "";
       String status = (progressMsg != null ? progressMsg : "Running...") + elapsed;
 
       // Split: one line for the spinner, the rest for live progress lines
@@ -694,10 +698,10 @@ public final class TuiRenderer {
     // Apply detail search filter
     String[] detailLines;
     if (activeTab.detailSearchQuery != null && !activeTab.detailSearchQuery.isEmpty()) {
-      String lower = activeTab.detailSearchQuery.toLowerCase();
+      String lower = activeTab.detailSearchQuery.toLowerCase(Locale.ROOT);
       List<String> filtered = new ArrayList<>();
       for (String line : allLines) {
-        if (line.toLowerCase().contains(lower)) {
+        if (line.toLowerCase(Locale.ROOT).contains(lower)) {
           filtered.add(line);
         }
       }
@@ -1283,8 +1287,8 @@ public final class TuiRenderer {
     if (query == null || query.isEmpty()) {
       return baseStyle != null ? Line.from(Span.styled(text, baseStyle)) : Line.from(text);
     }
-    String lowerText = text.toLowerCase();
-    String lowerQuery = query.toLowerCase();
+    String lowerText = text.toLowerCase(Locale.ROOT);
+    String lowerQuery = query.toLowerCase(Locale.ROOT);
     int qLen = lowerQuery.length();
     List<Span> spans = new ArrayList<>();
     int pos = 0;

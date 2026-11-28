@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -65,6 +66,33 @@ public final class JfrPathEvaluator {
         Path recording, Collection<String> types, TimeRange startTime, Consumer<Event> consumer)
         throws Exception {
       streamEvents(recording, types, consumer);
+    }
+
+    /**
+     * The number of events of each type in {@code types}, or of every type when {@code types} is
+     * {@code null}. A type with no event may be absent from the map.
+     *
+     * <p>The default streams the events and counts them, which decodes each one. A source that can
+     * count events without decoding them should override this: {@code count()} without a filter,
+     * and every analysis that looks for an event type, calls it.
+     */
+    default Map<String, Long> countEvents(Path recording, Collection<String> types)
+        throws Exception {
+      java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> counts =
+          new java.util.concurrent.ConcurrentHashMap<>();
+      Consumer<Event> counter =
+          ev ->
+              counts
+                  .computeIfAbsent(ev.typeName(), k -> new java.util.concurrent.atomic.LongAdder())
+                  .increment();
+      if (types == null) {
+        streamEvents(recording, counter);
+      } else {
+        streamEvents(recording, types, counter);
+      }
+      Map<String, Long> result = new java.util.HashMap<>();
+      counts.forEach((type, n) -> result.put(type, n.sum()));
+      return result;
     }
   }
 
@@ -146,11 +174,7 @@ public final class JfrPathEvaluator {
   public Map<String, Long> countAllEventTypes(JFRSession session) throws Exception {
     // ConcurrentHashMap: StreamingChunkParser processes chunks in parallel, so the consumer
     // lambda is called from multiple threads concurrently.
-    java.util.concurrent.ConcurrentHashMap<String, Long> counts =
-        new java.util.concurrent.ConcurrentHashMap<>();
-    source.streamEvents(
-        session.getRecordingPath(), ev -> counts.merge(ev.typeName(), 1L, Long::sum));
-    return counts;
+    return source.countEvents(session.getRecordingPath(), null);
   }
 
   /**
@@ -568,7 +592,7 @@ public final class JfrPathEvaluator {
     JfrPath.PipelineOp op = query.pipeline.get(0);
     List<Map<String, Object>> result =
         switch (op) {
-          case JfrPath.CountOp c -> aggregations.aggregateCount(session, query);
+          case JfrPath.CountOp _ -> aggregations.aggregateCount(session, query);
           case JfrPath.StatsOp s -> aggregations.aggregateStats(session, query, s.valuePath);
           case JfrPath.QuantilesOp q ->
               aggregations.aggregateQuantiles(session, query, q.valuePath, q.qs);
@@ -639,7 +663,7 @@ public final class JfrPathEvaluator {
               profiles.aggregateFlameGraph(session, query, fg.direction);
           case JfrPath.AsDateTimeOp ft ->
               aggregations.aggregateAsDateTime(session, query, ft.valuePath, ft.format);
-          case JfrPath.CrossrefOp cr -> aggregations.aggregateCrossref(session, query);
+          case JfrPath.CrossrefOp _ -> aggregations.aggregateCrossref(session, query);
         };
 
     // Apply remaining operators in sequence
@@ -651,7 +675,63 @@ public final class JfrPathEvaluator {
     return result;
   }
 
+  /**
+   * {@code v} without its wrappers: a ComplexType's value, and a one-entry map's single value,
+   * repeatedly. The untyped parser gives string constants as one-entry maps ({@code {string=...}},
+   * a ThreadState's {@code {name=...}}); spread as fields they made a {@code string} column, and
+   * {@code filter(value = ...)} matched nothing.
+   */
+  private static Object collapsed(Object v) {
+    Object value = v;
+    while (true) {
+      if (value instanceof io.jafar.parser.api.ComplexType ct) {
+        value = ct.getValue();
+      } else if (value instanceof Map<?, ?> m && m.size() == 1) {
+        value = m.values().iterator().next();
+      } else {
+        return value;
+      }
+    }
+  }
+
+  /**
+   * The rows a row operator (head, tail, filter, distinct) starts from. With a projection ({@code
+   * events/T/heapUsed}) each projected value is a row: a scalar as {@code {value: v}}, the column a
+   * plain projection and the transforms show; an object (a map) as its own fields. A string
+   * constant ({@code {string=...}}, {@code {name=...}}) is a scalar. Whole events came back, so
+   * {@code /heapUsed | head(2)} showed whole events and a later {@code stats()} read the events'
+   * first column (#305).
+   */
   List<Map<String, Object>> collectAllRows(JFRSession session, Query query) throws Exception {
+    if (query.root == Root.EVENTS && query.segments.size() >= 2) {
+      validateEventTypes(session, query.eventTypes);
+      List<String> proj = query.segments.subList(1, query.segments.size());
+      List<Map<String, Object>> out = new ArrayList<>();
+      forEachMatching(
+          session.getRecordingPath(),
+          query.eventTypes,
+          query.predicates,
+          map -> {
+            // Called from several chunk-parsing threads: extract first, then append as one
+            List<Object> vals = new ArrayList<>();
+            PathValues.extractWithIndexing(map, proj, vals);
+            List<Map<String, Object>> rows = new ArrayList<>(vals.size());
+            for (Object v : vals) {
+              Object value = collapsed(v);
+              Map<String, Object> row = new java.util.LinkedHashMap<>();
+              if (value instanceof Map<?, ?> fields) {
+                fields.forEach((k, fv) -> row.put(String.valueOf(k), fv));
+              } else {
+                row.put("value", value);
+              }
+              rows.add(row);
+            }
+            synchronized (out) {
+              out.addAll(rows);
+            }
+          });
+      return out;
+    }
     return evaluate(session, new Query(query.root, query.segments, query.predicates));
   }
 
@@ -802,6 +882,23 @@ public final class JfrPathEvaluator {
       streamEvents(recording, types, TimeRange.all(), consumer);
     }
 
+    /**
+     * Counts from the event headers, without decoding an event ({@link
+     * UntypedJafarParser#countEvents}). An event whose payload would fail to decode is counted all
+     * the same, where streaming it would have failed the query.
+     */
+    @Override
+    public Map<String, Long> countEvents(Path recording, Collection<String> types)
+        throws Exception {
+      if (!pushdownEnabled()) {
+        return EventSource.super.countEvents(recording, types);
+      }
+      try (UntypedJafarParser p =
+          io.jafar.parser.api.ParsingContext.create().newUntypedParser(recording)) {
+        return types == null ? p.countEvents() : p.countEvents(TypeFilter.named(types));
+      }
+    }
+
     @Override
     public void streamEvents(
         Path recording, Collection<String> types, TimeRange startTime, Consumer<Event> consumer)
@@ -846,9 +943,11 @@ public final class JfrPathEvaluator {
       List<Map<String, Object>> rows, JfrPath.PipelineOp op) {
     return switch (op) {
       case JfrPath.TopOp top -> RowOps.applyTop(rows, top.n, top.byPath, top.ascending);
-      case JfrPath.CountOp c -> RowOps.applyCount(rows);
+      case JfrPath.CountOp _ -> RowOps.applyCount(rows);
       case JfrPath.SumOp sum -> RowOps.applySum(rows, sum.valuePath);
       case JfrPath.StatsOp stats -> RowOps.applyStats(rows, stats.valuePath);
+      // Was ignored here: head(n) | sketch() printed the rows (#305)
+      case JfrPath.SketchOp sk -> RowOps.applySketch(rows, sk.valuePath);
       case JfrPath.SelectOp sel -> RowOps.applySelect(rows, sel);
       case JfrPath.GroupByOp gb ->
           RowOps.applyGroupBy(
@@ -864,9 +963,9 @@ public final class JfrPathEvaluator {
       case JfrPath.QuantilesOp q -> RowOps.applyQuantiles(rows, q.valuePath, q.qs);
       case JfrPath.LenOp len -> RowOps.applyLen(rows, len.valuePath);
       case JfrPath.UppercaseOp up ->
-          RowOps.applyStringTransform(rows, up.valuePath, String::toUpperCase);
+          RowOps.applyStringTransform(rows, up.valuePath, s -> s.toUpperCase(Locale.ROOT));
       case JfrPath.LowercaseOp lo ->
-          RowOps.applyStringTransform(rows, lo.valuePath, String::toLowerCase);
+          RowOps.applyStringTransform(rows, lo.valuePath, s -> s.toLowerCase(Locale.ROOT));
       case JfrPath.TrimOp tr -> RowOps.applyStringTransform(rows, tr.valuePath, String::trim);
       case JfrPath.AbsOp ab -> RowOps.applyNumberTransform(rows, ab.valuePath, Math::abs);
       case JfrPath.RoundOp ro -> RowOps.applyNumberTransform(rows, ro.valuePath, Math::round);
@@ -889,8 +988,13 @@ public final class JfrPathEvaluator {
       case JfrPath.AsDateTimeOp ft -> RowOps.applyAsDateTime(rows, ft.valuePath, ft.format);
       // Not a row transform: it re-reads the whole recording, so on rows it would silently
       // ignore what came before it.
-      case JfrPath.CrossrefOp cr -> throw new IllegalArgumentException(Aggregations.CROSSREF_USAGE);
-      default -> rows; // DecorateByTime/DecorateByKey not supported for cached rows
+      case JfrPath.CrossrefOp _ -> throw new IllegalArgumentException(Aggregations.CROSSREF_USAGE);
+      // They read the recording for their partner events: on rows they were silently skipped
+      case JfrPath.DecorateByTimeOp _, JfrPath.DecorateByKeyOp _ ->
+          throw new IllegalArgumentException(
+              "decorateByTime()/decorateByKey() read the recording: they must be the first"
+                  + " operator of an events/ query, not follow another operator or run on rows"
+                  + " (a variable's)");
     };
   }
 

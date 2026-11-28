@@ -159,6 +159,28 @@ that matched no event rather than returning nothing. The general point stands fo
 **a path that resolves to null must be distinguishable from a value that is null.** Validate against
 the first row, as `applySortBy` does, or count what you consumed, as `aggregateGroupBy` does.
 
+### An event's thread is not always `eventThread`
+
+`jdk.ExecutionSample` and `jdk.NativeMethodSample` carry the sampled thread in `sampledThread` and
+have no `eventThread`; `jdk.JavaMonitorEnter` and `datadog.ExecutionSample` carry `eventThread`.
+`JfrAnalyses.extractThreadId` read only `eventThread`, got `null` for every sample and returned
+`"unknown"`, so `jfr_tsa` counted one thread for any recording of JDK samples and called it healthy
+(#222). The test recording it ran on was a Datadog one, whose samples do have `eventThread`, so it
+passed. The thread now comes from `sampledThread` when present, else `eventThread`.
+
+The same assumption sat in two more places. `decorateByTime` defaulted to `eventThread/javaThreadId`
+on both sides, so the documented "samples during monitor waits" query decorated nothing - and its
+test built `jdk.ExecutionSample` maps with an `eventThread`, a shape the real event never has.
+Stack profiles read `eventThread` first, so the same sample got another thread's name there than in
+`jfr_tsa`. All three now ask `EventThreads` (`shell-core`, `io.jafar.shell.jfrpath`); attribute an
+event to a thread through it, not by naming a field.
+
+The default made it silent: a literal `"unknown"` is a valid thread name to everything downstream.
+When code reads a field of more than one event type, check each type's metadata
+(`jfr metadata --events <type>`), build synthetic events in the real shape, and test on a recording
+of the type users have, not the one at hand. `JfrAnalysesThreadAttributionTest` records its own
+`jdk.ExecutionSample` for this reason.
+
 ### A type id is not a type
 
 A metadata class id names a type **within one chunk**. Chunks written by different producers — a
@@ -175,7 +197,12 @@ won varied between runs: `Code generation failed for datadog.ProfilerCounter` ap
 and in none of the next five. It looked flaky and was deterministic per ordering.
 
 The cache is now keyed by `UntypedCodeGenerator.cacheKey` — name, id and full reachable layout —
-and each chunk keeps its own id → deserializer map. The typed path was already safe: it chooses its
+and each chunk keeps its own id → deserializer map. Since then the cache has outgrown the parse: a
+`ParsingContext` hands one cache to every untyped parse made from it, so the same key now has to
+hold between *recordings*. It does, for the reason it holds between chunks — a chunk is
+self-contained, so two chunks of one file are no more related than two files — and
+`SharedUntypedDeserializerCacheTest` pins it with recordings that reuse an id, rename a field, or
+differ only in a `@Timestamp` annotation. The typed path was already safe: it chooses its
 cache by `MetadataFingerprint`. Anything else that outlives a chunk must not be keyed by a class id
 either.
 
@@ -188,6 +215,13 @@ decided for both, and the other got raw ticks as epoch nanos or the reverse, on 
 the generated one (`TemporalAnnotationPerChunkTest`). The table now lives on the `MetadataClass`
 instance, which is per chunk. The generated path's structural key spells names out, length-prefixed,
 so a field name cannot pass for key syntax.
+
+The same equality made `CodeGenerator`'s set of the fields an interface reads count
+`jdk.ExecutionSample.eventThread` as read when the interface declared only `sampledThread` (both
+pooled `java.lang.Thread` references): the constructor stored it into an `eventThread_ref` no
+accessor had declared, and an interface reading only raw pool indices failed with
+`NoSuchFieldError` (`TypedRawAccessorOnlyTest`). A set meaning "these fields of this class" is an
+identity set.
 
 ### A build-time handler is not a runtime handler
 
@@ -206,7 +240,13 @@ reader.
   inside array elements an array instruction was run as a no-op and its element count as an
   instruction, so an array of an inline type with an array field was misskipped - and constant pool
   entries after such an entry were indexed at the wrong offset, resolving to `null`
-  (`NestedArraySkipTest`).
+  (`NestedArraySkipTest`). A pooled field is one varint, the entry's index, whatever the entry's
+  type, and the skipper now decides on the pool flag first, as go-parser's `skipFieldValue` does.
+  It used to skip a pooled field of a primitive type as that primitive (4 bytes for a `float`)
+  where the value reader reads the varint, misframing every entry after it
+  (`PooledSimpleTypeSkipTest`). Unwrapping simple types before that check would have done the same
+  to a pooled simple type wrapping a `byte`; it never happened only because `unwrappable` compared
+  a scalar's dimension with `0` (it is `-1`) and never unwrapped.
 - **A storage guessed from the Java type.** A complex accessor was read as a pool reference and a
   `String` accessor as an inline value, but in JVM recordings `StackTrace.frames` is inline and
   `ExecutionSample.state` is a pooled `ThreadState`. Both were misread silently. The read is now
@@ -231,9 +271,25 @@ Watch the comparison, not the values: each value looked right. The comparison th
 record with `java -XX:StartFlightRecording=filename=rec.jfr,settings=profile` running a small
 workload, read every `jdk.ExecutionSample`'s thread, state and frames (method and class names,
 line numbers) through the same interfaces with build-time and with runtime handlers, and diff the
-output. Delete the generated `META-INF/services/io.jafar.parser.api.HandlerFactory` for the
-runtime run, or the parser discovers the factories and both runs are build-time; print the class
-of one event to be sure which ran.
+output. Call `ignoreDiscoveredFactories()` on the parser of the runtime run, or it uses the
+factories it discovers and both runs are build-time; print the class of one event to be sure which
+ran.
+
+### Two interfaces for one JFR type in one parser
+
+The typed parser decodes each JFR type into one interface: `MetadataClass` holds one deserializer
+and one factory, and a constant pool caches each entry decoded once for every field that refers to
+it. `TypedJafarParserImpl` kept the first interface it saw for a type in `globalHandlerMap` and
+ignored later ones, and a registered factory put its own interface there when the parser was
+created. A handler for a second interface was registered under a class no event is dispatched to:
+on `parser-codegen`'s JMH classpath, where `jafar-processor` builds factories for
+`io.jafar.parser.benchmark.events.*`, a handler for the test interface
+`io.jafar.parser.types.JFRExecutionSample` received 0 of 8000 events, with no error. Now a factory
+is bound to a chunk's metadata class only when `globalHandlerMap` names its interface for that type
+(handlers decide), and `handle` throws when an interface, or one its accessors return, would
+decode a type the parser already decodes as another interface (`HandlerInterfaceConflictTest`,
+`DiscoveredHandlerFactoryTest`). A map that keeps the first writer and drops the rest needs the
+dropped writer told, or it is this bug again.
 
 ### A chunk's time span is not its events' time span
 
@@ -280,13 +336,79 @@ in `evaluateValues` (`0` is a field of every chunk), so the projection found no 
 returned an empty list — in jfr-shell too, where it had always printed `(no values)`. When two
 methods interpret one path, check that they agree segment by segment.
 
+### A fact about one chunk is not a fact about the recording
+
+Metadata is per chunk: two chunks of one recording need not declare the same types, and the ids of
+the types they share are chunk-local. Anything derived from metadata and kept "once per session" is
+therefore one chunk's answer applied to all of them, and chunks are parsed in parallel, so which
+chunk's answer it is depends on timing.
+
+`TypedJafarParserImpl` kept the set of types reachable from the registered handlers in one field
+of the chunk listener, computed by whichever chunk read its metadata first, and each chunk's
+constant-pool filter was a lambda that read that field. In `tck-test.jfr` only the first of the two
+chunks declares `jdk.GCHeapSummary`. When both chunks reached `onMetadata` together, the second
+could store its set (no `jdk.types.GCWhen`) after the first had stored its own, and the first chunk
+then skipped its `GCWhen` pool: `JFRGCHeapSummary.when()` returned `null` for all 1,892 events, with
+no error. It showed up as `SharedParsingContextStressTest` failing on CI and passing on the re-run
+of the same commit (`expected ... when=After GC ... but was ... when=null`, or the reverse when the
+reference parse was the one hit). Locally it failed once in 78 runs on an idle machine, 4 times in
+40 with the cores oversubscribed, and 5 times in 150 cold single parses under the same load. Even without the race only one chunk ever got a
+filter. The set is now a local of each chunk's `onMetadata`, and `TypedChunkTypeFilterTest` pins
+that every chunk has a filter answering from its own metadata.
+
+Two things to take from it. A lambda that reads a field is not a snapshot: capture a local. And
+when a test fails rarely, load the machine before concluding anything from a run of passes.
+
+The block next to it had the same shape twice over, for build-time handlers. Registered
+`HandlerFactory` instances were attached to metadata classes "once per recording", so only to the
+chunk that read its metadata first; and the handlers `jafar-processor` generates kept the id of
+each referenced type's constant pool in a static field, bound once from that same chunk. On a
+two-chunk recording whose chunks give `test.Label` different ids, the second chunk's three events
+reached the handler as `null` (no runtime handler to stand in: `jafar-processor`'s tests run
+without `parser-codegen`). With the factories attached to every chunk, the chunk that had not
+bound the statics read `label()` as `null` and `labels()` as an empty array. In both cases which
+chunk came out right changed from run to run (the first chunk in 6 of 8 runs, the second in 2),
+so one chunk's events were always correct. Factories are now attached to each chunk's metadata
+classes, and a generated handler takes the pool's type id from its `Plan`, which is built per
+metadata class and so per chunk (`GeneratedFactoryMultiChunkTest`). A handler generated before
+this still reads its static ids, bound once per run: it is right on recordings whose chunks agree
+on those ids, and wrong on the others until it is regenerated.
+
+Two more nets hold this on a real recording (`tck-test.jfr`: `jdk.ActiveSetting` in both chunks,
+`java.lang.Thread` id 176 in one and 22 in the other). `GeneratedFactoryChunkBindingTest` adds the
+cases a single parse does not reach: a second `run()` of the same parser, which delivered 402
+`null` events while the "once" was per parser, and a parse of another recording started from a
+handler, which rebound the static ids for the whole JVM and left `eventThread()` `null` for 380
+events of the outer parse. `BuildTimeFactoryWithRuntimeCodegenTest`, in a `codegenTest` source set
+of its own, runs the same cases with `parser-codegen` on the classpath, where a chunk without a
+factory is decoded by a run-time generated handler: the values are right and only the
+implementation class says the build-time handlers are not in use, so the test records it.
+
+### A pprof period is not the sampling rate, and a sample type's name is not its sampler
+
+pprof's `period` and `period_type` read like "one sample every `period` units", so `value / period`
+looks like a sample count. Go's mutex and block profiles write `contentions/count` with period
+**1 whatever the sampling rate** (`runtime/pprof.printCountCycleProfile`), and each sampled
+contention is already multiplied by the rate (`runtime.saveBlockEventStack`): at
+`SetMutexProfileFraction(5)` the real fixture `go-mutex.pb.gz` holds 1,430 contentions for 286
+sampled events. Read as counts, the compare called moves significant on five times the evidence
+it had. Go's heap profile has the same trap with a byte period (`space/bytes` 524288) and scaled
+`alloc_objects`.
+
+The name is no more reliable: async-profiler's `jfrconv --wall` names its column `cpu/count`, the
+same as `--cpu`, so a wall-clock profile reads as CPU, and its allocation column is `allocations`,
+which a list of Go names (`alloc_objects`, `alloc_space`) does not recognise. Both were found only
+by reading files the producers wrote; files built in a test say what the test's author believed.
+The real profiles and how they were made are in `pprof-shell/src/test/resources/real/`.
+
 ---
 
 ## Before you trust a shape
 
 - Print the value once, in the real path, with a real recording. Not the type — the value.
 - If it comes from metadata, ask whether it means *declared* or *present*.
-- If it is a count, ask what populated it and when.
+- If it is a count, ask what populated it and when. If it is a profile's value, ask whether the
+  producer scaled it, and check with a file the producer wrote.
 - If it is a string from a recording, assume it is wrapped until you have seen otherwise — and if
   it is a single-entry map from metadata, assume it is data.
 - If a structure has a display form and a data form, you want the data form, and the display form

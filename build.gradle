@@ -14,6 +14,9 @@ apply from: rootProject.file('gradle/version-from-tag.gradle')
 // Not part of check: it needs the baseline script and the network.
 apply from: rootProject.file('gradle/api-compat.gradle')
 
+// One slot for the test tasks that fork an 8 GB JVM, so two of them never run at the same time.
+apply from: rootProject.file('gradle/large-heap-tests.gradle')
+
 repositories {
     mavenLocal()
     mavenCentral()
@@ -145,6 +148,47 @@ subprojects { p ->
     }
 }
 
+// Clean-code static analysis on every Java module's main sources. Runs as part of `check`,
+// so `./gradlew build` runs it locally and in CI. The ruleset is curated (must be green
+// on the tree; see config/pmd/ruleset.xml).
+//
+// Deliberately NOT the `pmd` plugin: it registers a pmd<SourceSet> task for *every* source
+// set and wires them into `check`, and those tasks depend on their source set's compile
+// tasks. parser-core's MR-JAR source sets (java9/java13/java21) have auto-created compile
+// tasks with no `--release` option — nothing in the tree ever executed them, and PMD would
+// have dragged them into every build (they fail on a JDK 8 toolchain). One manual task per
+// module, main sources only, keeps the graph exactly as it was.
+def pmdToolVersion = '7.25.0'
+
+subprojects { p ->
+    p.plugins.withId('java') {
+        def pmdTools = p.configurations.maybeCreate('pmdTools')
+        p.dependencies.add('pmdTools', "net.sourceforge.pmd:pmd:${pmdToolVersion}")
+        p.dependencies.add('pmdTools', "net.sourceforge.pmd:pmd-java:${pmdToolVersion}")
+        p.dependencies.add('pmdTools', "net.sourceforge.pmd:pmd-ant:${pmdToolVersion}")
+
+        p.tasks.register('pmdMain', Pmd) {
+            description = 'Clean-code analysis of main sources (config/pmd/ruleset.xml).'
+            group = 'verification'
+            ruleSetFiles = rootProject.files('config/pmd/ruleset.xml')
+            ruleSets = []
+            source = p.sourceSets.main.allJava
+            classpath = p.sourceSets.main.output + p.sourceSets.main.compileClasspath
+            pmdClasspath = pmdTools
+            maxFailures = 0
+            ignoreFailures = false
+            rulesMinimumPriority = 5
+            targetJdk = org.gradle.api.plugins.quality.TargetJdk.VERSION_1_7 // legacy enum; ignored by the PMD 7 worker
+            threads = 1
+            incrementalAnalysis = false
+            consoleOutput = true
+        }
+        p.tasks.named('check') {
+            dependsOn p.tasks.named('pmdMain')
+        }
+    }
+}
+
 // Ensure formatting is checked during all builds
 allprojects {
     tasks.matching { it.name == 'check' }.configureEach {
@@ -152,14 +196,14 @@ allprojects {
     }
 
     // Processor-count matrix (safety harness step 5, kb/design-concurrency item 1): chunk
-    // callbacks run on StreamingChunkParser's pool of max(processors - 2, 1) threads, so a
+    // callbacks run on StreamingChunkParser's pool of one thread per processor, so a
     // single-count CI runner cannot reproduce a race that needs more cores. With
     // -Pjafar.activeProcessorCount=N every Test JVM below forks with -XX:ActiveProcessorCount=N
     // and is told so via jafar.expectedProcessors, which the covered test classes assert in-JVM
     // through test-support's ProcessorCount.assertExpected() — a run proves the flag reached the
     // forked JVM instead of silently running unpinned (R9/R3).
     //
-    // allocationTest* tasks are deliberately skipped: they pin -XX:ActiveProcessorCount=4
+    // allocationTest* tasks are deliberately skipped: they pin -XX:ActiveProcessorCount=2
     // themselves (D9) because the allocation budgets assume a chunk pool of exactly 2 threads;
     // the matrix flag must not vary their pool size or thread-to-chunk mapping.
     def matrixProcessorCount = null
@@ -184,12 +228,12 @@ allprojects {
     // compares and never silently rewrites the committed goldens.
     tasks.withType(Test).configureEach { testTask ->
         if (matrixProcessorCount != null && testTask.name.startsWith('allocationTest')) {
-            // D9 pin: allocationTest/allocationTest8 keep their own -XX:ActiveProcessorCount=4;
+            // D9 pin: allocationTest/allocationTest8 keep their own -XX:ActiveProcessorCount=2;
             // say so at execution time so a matrix run's log shows why the flag did not apply
             // here (R3: report where a value came from).
             testTask.doFirst {
                 testTask.logger.lifecycle(
-                    "jafar: {} keeps its -XX:ActiveProcessorCount=4 pin; " +
+                    "jafar: {} keeps its -XX:ActiveProcessorCount=2 pin; " +
                     "-Pjafar.activeProcessorCount={} does not apply (D9)",
                     testTask.name, matrixProcessorCount)
             }

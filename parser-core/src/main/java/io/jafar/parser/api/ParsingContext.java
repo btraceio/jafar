@@ -17,6 +17,15 @@ import java.nio.file.Path;
  *
  * <p>Handler classes accumulate JIT optimizations with each use, typically achieving 2-3x
  * throughput improvement after warm-up when parsing recordings with compatible metadata.
+ *
+ * <p>Untyped parsers share too. When the generated reader is in use ({@code parser-codegen} on the
+ * classpath), every untyped parser made from one context, every {@code run()} of each, and every
+ * {@link #withParallelism(int)} view of the context use one cache of generated event deserializers:
+ * an event type is generated once per context and strategy, and reused whenever a later chunk or
+ * recording declares it with the same ids and layout. The number of cached deserializers is
+ * bounded; a context that has met more distinct layouts than the bound starts its cache afresh.
+ * Parsers opened without a context ({@code UntypedJafarParser.open(path)}) share nothing between
+ * parses.
  */
 public interface ParsingContext {
   /**
@@ -68,7 +77,7 @@ public interface ParsingContext {
 
   /**
    * Returns a context that shares this context's cached resources but whose parsers read chunks on
-   * {@code parallelism} threads instead of the default {@code max(availableProcessors - 2, 1)}.
+   * {@code parallelism} threads instead of the default {@code availableProcessors}.
    *
    * <p>With {@code withParallelism(1)} a parser delivers events strictly one at a time, in the
    * order they appear in the file, chunk after chunk, and every handler call is complete before
@@ -100,7 +109,7 @@ public interface ParsingContext {
    * this to size its own chunk pool.
    *
    * @return the requested number of chunk parsing threads, or {@code 0} when none was requested and
-   *     the default, {@code max(availableProcessors - 2, 1)}, applies
+   *     the default, {@code availableProcessors}, applies
    */
   default int parallelism() {
     return 0;

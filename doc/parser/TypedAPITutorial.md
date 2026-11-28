@@ -109,7 +109,7 @@ public interface ExecutionSample {
 
     @JfrIgnore
     default boolean isRunnable() {
-        return "RUNNABLE".equals(state());  // Helper method, not a JFR field
+        return "STATE_RUNNABLE".equals(state());  // Helper method, not a JFR field
     }
 
     @JfrIgnore
@@ -120,7 +120,10 @@ public interface ExecutionSample {
 }
 ```
 
-Without `@JfrIgnore`, the code generator would try to bind these methods to JFR fields, causing errors.
+A default method is the interface's own code: neither the runtime generator nor `jafar-processor`
+binds it to a JFR field, even when its name matches one, so it always runs as written. `@JfrIgnore`
+on it is optional and marks it as a helper. On an abstract method, `@JfrIgnore` keeps it from being
+bound to a field: the generated class returns `0`, `false` or `null` for it.
 
 **Note**: To skip deserializing fields you don't need, simply don't declare them in the interface. The parser automatically skips fields that aren't declared.
 
@@ -191,6 +194,28 @@ try (TypedJafarParser parser = JafarParser.newTypedParser(Paths.get("recording.j
     parser.run();  // All handlers execute as events are parsed
 }
 ```
+
+### One Interface per JFR Type
+
+A parser decodes each JFR type into one interface: the type of every interface passed to `handle`,
+and of every interface their accessors return. Events and constant pool entries are decoded once and
+shared by all handlers, so several handlers can use the same interface, but two interfaces with the
+same `@JfrType` cannot both be used in one parser. The second `handle` call throws an
+`IllegalArgumentException` naming the JFR type and both interfaces, and registers nothing:
+
+```java
+parser.handle(ExecutionSample.class, (event, ctl) -> {});      // jdk.ExecutionSample
+parser.handle(MyExecutionSample.class, (event, ctl) -> {});    // also jdk.ExecutionSample: throws
+```
+
+The same applies to referenced types: if `ExecutionSample.eventThread()` returns `JFRJavaLangThread`
+and another handled interface returns its own `java.lang.Thread` interface, the second `handle` call
+throws. Use one interface per JFR type in a parser, or a separate parser.
+
+Build-time generated factories (see the README) follow the handlers: a factory decodes its type only
+when the handlers use the interface it was generated for, and a handler for another interface of
+that type gets it decoded at runtime. `parser.ignoreDiscoveredFactories()`, called before any `handle()`, makes a
+parser ignore the factories found on the classpath.
 
 ### Early Termination
 
@@ -428,7 +453,7 @@ public interface ExecutionSample {
 
     @JfrIgnore
     default boolean isRunnable() {
-        return "RUNNABLE".equals(state());  // Custom logic, not a JFR field
+        return "STATE_RUNNABLE".equals(state());  // Custom logic, not a JFR field
     }
 }
 ```

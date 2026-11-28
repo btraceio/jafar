@@ -9,6 +9,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.function.Consumer;
@@ -73,11 +74,6 @@ public final class PluginManager {
       }
     }
     return r;
-  }
-
-  private MavenResolver resolver() {
-    registry();
-    return resolver;
   }
 
   private PluginInstaller installer() {
@@ -263,13 +259,14 @@ public final class PluginManager {
     try {
       Map<String, PluginMetadata> installed = storageManager.loadInstalled();
 
-      if (!installed.containsKey(pluginId.toLowerCase())) {
+      if (!installed.containsKey(pluginId.toLowerCase(Locale.ROOT))) {
         throw new PluginInstallException("Plugin not installed: " + pluginId);
       }
 
       // Check for dependents
       DependencyResolver dependencyResolver = new DependencyResolver(registry(), installed);
-      List<String> dependents = dependencyResolver.findDependents(pluginId.toLowerCase());
+      List<String> dependents =
+          dependencyResolver.findDependents(pluginId.toLowerCase(Locale.ROOT));
 
       if (!dependents.isEmpty() && !force) {
         throw new PluginInstallException(
@@ -288,7 +285,7 @@ public final class PluginManager {
       }
 
       // Remove from installed.json
-      PluginMetadata metadata = installed.remove(pluginId.toLowerCase());
+      PluginMetadata metadata = installed.remove(pluginId.toLowerCase(Locale.ROOT));
       storageManager.saveInstalled(installed);
 
       // Delete plugin files
@@ -410,7 +407,7 @@ public final class PluginManager {
       if (artifactId.startsWith("jfr-shell-")) {
         pluginId = artifactId.substring("jfr-shell-".length());
       }
-      pluginId = pluginId.toLowerCase();
+      pluginId = pluginId.toLowerCase(Locale.ROOT);
 
       // Create metadata for storage operations
       PluginMetadata metadata =
@@ -506,7 +503,8 @@ public final class PluginManager {
           .forEach(
               artifactDir -> {
                 String artifactId = artifactDir.getFileName().toString();
-                String pluginId = artifactId.substring("jfr-shell-".length()).toLowerCase();
+                String pluginId =
+                    artifactId.substring("jfr-shell-".length()).toLowerCase(Locale.ROOT);
                 // Find the highest SNAPSHOT version that is newer than the installed version
                 try (var versions = Files.list(artifactDir)) {
                   String bestVersion =

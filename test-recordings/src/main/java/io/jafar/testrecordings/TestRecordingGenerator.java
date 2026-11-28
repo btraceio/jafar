@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
+import java.util.Locale;
 
 /**
  * Generates the JFR recordings the test suites and benchmarks read, so that neither depends on
@@ -58,12 +59,17 @@ public final class TestRecordingGenerator {
       Path out = Paths.get(args[1]);
       int chunks = Integer.parseInt(args[2]);
       int samples = args.length > 3 ? Integer.parseInt(args[3]) : 200_000;
-      Shape shape = args.length > 4 ? Shape.valueOf(args[4].toUpperCase()) : Shape.AP;
+      Shape shape = args.length > 4 ? Shape.valueOf(args[4].toUpperCase(Locale.ROOT)) : Shape.AP;
       long t0 = System.nanoTime();
       write(out, shape, chunks, samples);
       System.out.printf(
+          Locale.ROOT,
           "Generated %s: %d chunk(s) of %s, %d bytes, %.1f s%n",
-          out, chunks, shape, Files.size(out), (System.nanoTime() - t0) / 1e9);
+          out,
+          chunks,
+          shape,
+          Files.size(out),
+          (System.nanoTime() - t0) / 1e9);
     } else if (args.length >= 2 && args[0].equals("adversarial")) {
       adversarial(Paths.get(args[1]));
     } else {

@@ -685,7 +685,17 @@ public final class JfrPath {
   public static final class DecorateByTimeOp implements PipelineOp {
     public final String decoratorEventType;
     public final List<String> decoratorFields;
+
+    /**
+     * The thread id's path in the primary and decorator events; never {@code null}, and empty when
+     * not given: then each event's own thread is used ({@link EventThreads#id}, {@code
+     * sampledThread} for samples, else {@code eventThread}). The default used to be {@code
+     * eventThread/javaThreadId}, which found no thread on {@code jdk.ExecutionSample} and decorated
+     * nothing.
+     */
     public final List<String> threadPathPrimary;
+
+    /** See {@link #threadPathPrimary}. */
     public final List<String> threadPathDecorator;
 
     public DecorateByTimeOp(
@@ -696,13 +706,9 @@ public final class JfrPath {
       this.decoratorEventType = decoratorEventType;
       this.decoratorFields = decoratorFields == null ? List.of() : List.copyOf(decoratorFields);
       this.threadPathPrimary =
-          threadPathPrimary == null
-              ? List.of("eventThread", "javaThreadId")
-              : List.copyOf(threadPathPrimary);
+          threadPathPrimary == null ? List.of() : List.copyOf(threadPathPrimary);
       this.threadPathDecorator =
-          threadPathDecorator == null
-              ? List.of("eventThread", "javaThreadId")
-              : List.copyOf(threadPathDecorator);
+          threadPathDecorator == null ? List.of() : List.copyOf(threadPathDecorator);
     }
   }
 

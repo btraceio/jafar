@@ -11,6 +11,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Queue;
 import java.util.Set;
 
@@ -166,7 +167,7 @@ public final class MetadataFingerprint {
   public String toString() {
     StringBuilder sb = new StringBuilder("MetadataFingerprint[");
     for (byte b : hash) {
-      sb.append(String.format("%02x", b));
+      sb.append(String.format(Locale.ROOT, "%02x", b));
     }
     sb.append("]");
     return sb.toString();

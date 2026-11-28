@@ -298,7 +298,6 @@ public final class ParsingUtils {
     while (digits-- > 0) {
       int d = s.charAt(i++) - '0';
       if ((d | (9 - d)) < 0) throw nfe(s); // branchless 0..9 check
-      long lim = neg ? Long.MIN_VALUE : Long.MAX_VALUE;
       // overflow check before acc*10 + d
       if (!neg) {
         if (acc > (Long.MAX_VALUE - d) / 10) throw nfe(s);

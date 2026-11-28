@@ -32,6 +32,19 @@ java -Djfr.shell.backend=jdk -jar jfr-shell.jar
 java -jar jfr-shell.jar --backend jdk
 ```
 
+`--backend` (`-b`) can go before a subcommand or after it: `jfr-shell -b jdk script q.jfrs` and
+`jfr-shell script -b jdk q.jfrs` both run the script on the JDK backend, and so do the same two
+command lines with `jafar-shell`, where the script runs in the unified shell either way (unless
+another jfr-shell option, `--plugin-dir` or `--install-plugin`, comes before `script`: then
+jfr-shell runs it, for recordings only). Given on
+both sides, the two must name the same backend, or the command stops with a usage error (exit 2).
+Before `tail` or `ps`, which use no backend, it is a usage error too. `compare` checks a `-b` it
+is given even when neither side is a recording.
+
+`JFRSHELL_BACKEND` takes precedence over `--backend` when it names an installed backend: when the
+two then differ, the command stops with an error that names the variable. A `JFRSHELL_BACKEND`
+that names no installed backend is passed over, and `--backend` applies.
+
 ## Backend Capabilities
 
 Each backend declares a set of capabilities. JFR Shell adapts its features based on what the current backend supports.
@@ -61,6 +74,18 @@ Array fields such as stack-trace frames retain their array dimension. Names foll
 API: symbol-backed strings appear as `java.lang.String`, rather than separate raw symbol types.
 Types unreachable from event field descriptors, raw constant pools, and chunk headers are not
 exposed by this backend. A type's presence in metadata does not mean it emitted events.
+
+Shell event queries (`events/...`) always read through the Jafar parser, whichever backend is
+selected. The JDK API's event values matter in live `tail` and in this backend's `EventSource`:
+there a struct is a field map, an array of structs (such as `stackTrace.frames`) is an `Object[]`
+of field maps, and a primitive array stays a primitive array, the same containers as the Jafar
+backend's resolved values. Leaf values follow the JDK API: symbols are plain strings, simple types
+are collapsed (`type="Native"`) and ints are `Integer`, so a `tail` filter written against the Jafar
+wrapped form (`method/name/string`, `type/description`) matches nothing; write
+`method/name="..."` and `type="Native"`, which the Jafar-side filter matcher also accepts, so
+the same filter works on both backends. Before #196 these paths passed the JDK's raw
+`RecordedFrame` objects through, and `tail --format json` printed
+`"frames":"[Ljava.lang.Object;@…"`.
 
 In the TUI metadata sidebar, `/` filters type names. Clearing or dismissing a filter keeps the
 selected type visible; canceling a search with no matches restores a selection in the full list.
@@ -386,6 +411,22 @@ jfr-shell-jafar/                    # Jafar backend plugin
 jfr-shell-jdk/                      # JDK API backend plugin
 jfr-shell-tck/                      # Technology Compatibility Kit
 ```
+
+## When a provider jar is broken
+
+A backend jar that fails to load — missing class, failing static initializer, unreadable services
+file — is skipped at discovery time and does not take down the shell or the other backends. Such
+providers are reported, not silently dropped:
+
+- `backend list` shows a **Failed to load** section naming each skipped provider and the reason
+  (the same output appears when startup fails with "No JFR backends available").
+- A provider whose `getId()` or `getPriority()` throws is dropped the same way — those calls are
+  needed to register the backend at all.
+- `jfr-shell` logs one `WARN` line per discovery pass, summarizing the skipped providers (up to 5
+  named, then a count).
+
+Fix: reinstall or delete the jar. Plugin jars live in `~/.jfr-shell/plugins` (override with
+`JFRSHELL_PLUGIN_DIR`), then restart the shell.
 
 ## Offline/Airgapped Installation
 

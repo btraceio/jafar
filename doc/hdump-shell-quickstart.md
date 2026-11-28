@@ -62,7 +62,7 @@ hdump> objects | top(10, shallow)
 hdump> objects/java.lang.String | stats(shallow)
 
 # Map implementations
-hdump> objects/instanceof/java.util.Map | groupBy(class) | top(5, count)
+hdump> objects/instanceof/java.util.AbstractMap | groupBy(class) | top(5, count)
 
 # Your application classes
 hdump> classes/com.myapp.* | top(10, instanceCount)
@@ -91,7 +91,7 @@ hdump> gcroots/THREAD_OBJ | head(10)
 ```
 objects/java.lang.String              # Exact class
 objects/java.util.*                   # Glob pattern
-objects/instanceof/java.util.Map      # Include subclasses
+objects/instanceof/java.util.AbstractMap  # Include subclasses (superclasses only, not interfaces)
 ```
 
 ### Predicates
@@ -139,7 +139,7 @@ hdump> checkLeaks(detector="growing-collections")
 # Manual investigation
 hdump> classes | top(20, instanceCount)
 hdump> classes/com.myapp.* | top(10, instanceCount)
-hdump> objects/instanceof/java.util.Collection | groupBy(class) | top(10, count)
+hdump> objects/instanceof/java.util.AbstractCollection | groupBy(class) | top(10, count)  # most JDK collections; see hdumppath.md
 ```
 
 ### Retained Size Analysis
@@ -154,6 +154,16 @@ hdump> objects[id = 0x12345] | pathToRoot
 # Dominator tree (what dominates memory)
 hdump> objects[id = 0x12345] | dominators
 ```
+
+`retained` is an approximate (minimum) retained size until a dominator tree is computed. For heap
+dumps over 2 GB (parsed in indexed mode) it uses `strongrefs.idx` and `strongrefs-offsets.idx`
+next to the other index files (about 8 bytes per object plus 4 per reference; written by the first
+retained-size or path query and reused afterwards) and picks how to compute by free heap:
+everything at once when it fits, otherwise a per-object search with long chains of
+once-referenced objects handled together in batches. To cap the heap it uses, pass the JVM option
+`-Djafar.hdump.retained.strategy=BUDGETED`, e.g.
+`java -Djafar.hdump.retained.strategy=BUDGETED -jar jafar-shell-<version>-all.jar`
+(or set it in `JAVA_TOOL_OPTIONS`).
 
 ### Heap Size Analysis
 

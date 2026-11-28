@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -40,7 +41,8 @@ import org.jline.reader.Candidate;
  * filtering, completion, cell picker, session picker, and CSV export.
  */
 public final class TuiCommandExecutor {
-  private static final DateTimeFormatter EXPORT_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+  private static final DateTimeFormatter EXPORT_TS =
+      DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT);
   private static final Set<String> SCRIPTING_KEYWORDS = Set.of("if", "elif", "else", "endif");
 
   private final TuiContext ctx;
@@ -149,7 +151,7 @@ public final class TuiCommandExecutor {
     }
 
     // pin [name]
-    if (command.equalsIgnoreCase("pin") || command.toLowerCase().startsWith("pin ")) {
+    if (command.equalsIgnoreCase("pin") || command.toLowerCase(Locale.ROOT).startsWith("pin ")) {
       ResultTab tab = ctx.activeTab();
       if (!tab.pinned) {
         String name = command.length() > 4 ? command.substring(4).trim() : "";
@@ -163,7 +165,8 @@ public final class TuiCommandExecutor {
     }
 
     // closetab [name]
-    if (command.equalsIgnoreCase("closetab") || command.toLowerCase().startsWith("closetab ")) {
+    if (command.equalsIgnoreCase("closetab")
+        || command.toLowerCase(Locale.ROOT).startsWith("closetab ")) {
       String name = command.length() > 9 ? command.substring(9).trim() : "";
       int targetIndex = -1;
       if (name.isEmpty()) {
@@ -329,7 +332,7 @@ public final class TuiCommandExecutor {
     }
 
     // If the adapter exclusively owns this command, route directly to it
-    String cmdWord = command.trim().split("\\s+")[0].toLowerCase();
+    String cmdWord = command.trim().split("\\s+")[0].toLowerCase(Locale.ROOT);
     CommandDescriptor desc = tuiAdapter != null ? tuiAdapter.describeCommand(cmdWord) : null;
     if (desc != null) {
       submitAdapterCommand(command, desc);
@@ -369,7 +372,7 @@ public final class TuiCommandExecutor {
 
                           @Override
                           public void printf(String fmt, Object... args) {
-                            addOutputLine(String.format(fmt, args));
+                            addOutputLine(String.format(Locale.ROOT, fmt, args));
                           }
 
                           @Override
@@ -436,7 +439,7 @@ public final class TuiCommandExecutor {
 
                       @Override
                       public void printf(String fmt, Object... args) {
-                        addOutputLine(String.format(fmt, args));
+                        addOutputLine(String.format(Locale.ROOT, fmt, args));
                       }
 
                       @Override
@@ -458,7 +461,7 @@ public final class TuiCommandExecutor {
 
                                     @Override
                                     public void printf(String fmt, Object... args) {
-                                      addOutputLine(String.format(fmt, args));
+                                      addOutputLine(String.format(Locale.ROOT, fmt, args));
                                     }
 
                                     @Override
@@ -611,7 +614,9 @@ public final class TuiCommandExecutor {
       StringBuilder sb = new StringBuilder("  ");
       for (int c = 0; c < tab.cpColumnHeaders.size(); c++) {
         if (c > 0) sb.append("  ");
-        sb.append(String.format("%-" + tab.cpColumnWidths[c] + "s", tab.cpColumnHeaders.get(c)));
+        sb.append(
+            String.format(
+                Locale.ROOT, "%-" + tab.cpColumnWidths[c] + "s", tab.cpColumnHeaders.get(c)));
       }
       String headerLine = sb.toString();
       tab.lines.add(headerLine);
@@ -677,7 +682,7 @@ public final class TuiCommandExecutor {
 
           @Override
           public void printf(String fmt, Object... args) {
-            println(String.format(fmt, args));
+            println(String.format(Locale.ROOT, fmt, args));
           }
 
           @Override
@@ -703,6 +708,7 @@ public final class TuiCommandExecutor {
       double db = Double.parseDouble(b);
       return Double.compare(da, db);
     } catch (NumberFormatException ignore) {
+      // not numeric: fall back to natural string comparison
     }
     return a.compareToIgnoreCase(b);
   }
@@ -779,6 +785,7 @@ public final class TuiCommandExecutor {
         }
       }
     } catch (IOException ignore) {
+      // unreadable or corrupt history: start fresh
     }
   }
 
@@ -796,6 +803,7 @@ public final class TuiCommandExecutor {
       }
       Files.write(TuiContext.HISTORY_PATH, formatted);
     } catch (IOException ignore) {
+      // history is best-effort: never fail shutdown over it
     }
   }
 
@@ -826,9 +834,9 @@ public final class TuiCommandExecutor {
 
   int findHistoryMatch(String query, int fromIndex) {
     if (query.isEmpty() || ctx.commandHistory.isEmpty()) return -1;
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     for (int i = Math.min(fromIndex, ctx.commandHistory.size() - 1); i >= 0; i--) {
-      if (ctx.commandHistory.get(i).toLowerCase().contains(lower)) {
+      if (ctx.commandHistory.get(i).toLowerCase(Locale.ROOT).contains(lower)) {
         return i;
       }
     }
@@ -837,10 +845,10 @@ public final class TuiCommandExecutor {
 
   int findDistinctHistoryMatch(String query, int fromIndex, String skipValue) {
     if (query.isEmpty() || ctx.commandHistory.isEmpty()) return -1;
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     for (int i = Math.min(fromIndex, ctx.commandHistory.size() - 1); i >= 0; i--) {
       String entry = ctx.commandHistory.get(i);
-      if (entry.toLowerCase().contains(lower) && !entry.equals(skipValue)) {
+      if (entry.toLowerCase(Locale.ROOT).contains(lower) && !entry.equals(skipValue)) {
         return i;
       }
     }
@@ -915,12 +923,12 @@ public final class TuiCommandExecutor {
       tab.scrollOffset = 0;
       return;
     }
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     List<Integer> indices = new ArrayList<>();
     int maxWidth = 0;
     for (int i = 0; i < tab.lines.size(); i++) {
       String line = tab.lines.get(i);
-      if (line.toLowerCase().contains(lower)) {
+      if (line.toLowerCase(Locale.ROOT).contains(lower)) {
         indices.add(i);
         maxWidth = Math.max(maxWidth, line.length());
       }
@@ -1006,11 +1014,11 @@ public final class TuiCommandExecutor {
       normalizeSidebarSelection();
       return;
     }
-    String lower = query.toLowerCase();
+    String lower = query.toLowerCase(Locale.ROOT);
     List<Integer> indices = new ArrayList<>();
     for (int i = 0; i < ctx.sidebarTypes.size(); i++) {
       String name = String.valueOf(ctx.sidebarTypes.get(i).getOrDefault("name", ""));
-      if (name.toLowerCase().contains(lower)) {
+      if (name.toLowerCase(Locale.ROOT).contains(lower)) {
         indices.add(i);
       }
     }
@@ -1170,10 +1178,10 @@ public final class TuiCommandExecutor {
       closeCompletionPopup(false);
       return;
     }
-    String lower = currentWord.toLowerCase();
+    String lower = currentWord.toLowerCase(Locale.ROOT);
     List<Candidate> filtered = new ArrayList<>();
     for (Candidate c : ctx.completionAllCandidates) {
-      if (c.value().toLowerCase().startsWith(lower)) {
+      if (c.value().toLowerCase(Locale.ROOT).startsWith(lower)) {
         filtered.add(c);
       }
     }
@@ -1331,6 +1339,7 @@ public final class TuiCommandExecutor {
       p.getOutputStream().close();
       p.waitFor(2, TimeUnit.SECONDS);
     } catch (Exception ignore) {
+      // clipboard helpers are optional; copy already reported its own errors
     }
   }
 
@@ -1579,7 +1588,7 @@ public final class TuiCommandExecutor {
     private String elapsedSuffix() {
       long elapsedSec = (System.currentTimeMillis() - ctx.commandStartTimeMs) / 1000;
       if (elapsedSec <= 0) return "";
-      return String.format(" (%02d:%02d)", elapsedSec / 60, elapsedSec % 60);
+      return String.format(Locale.ROOT, " (%02d:%02d)", elapsedSec / 60, elapsedSec % 60);
     }
 
     @Override

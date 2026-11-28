@@ -101,6 +101,282 @@ class SyntheticHeapEvaluatorTest {
     assertEquals(2L, ((Number) result.get(1).get("count")).longValue());
   }
 
+  // --- #226: aggregates over the wrong or a missing column ---
+
+  @Test
+  void groupBySumWithoutValueAggregatesShallowSizeNotId() {
+    double fooShallow =
+        ((Number)
+                HdumpPathEvaluator.evaluate(
+                        session, HdumpPathParser.parse("objects/com.example.Foo | sum(shallow)"))
+                    .get(0)
+                    .get("shallow"))
+            .doubleValue();
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session, HdumpPathParser.parse("objects/com.example.Foo | groupBy(class, agg=sum)"));
+    assertEquals(1, result.size());
+    // Was 3003.0: the sum of the object ids 1000 + 1001 + 1002
+    assertEquals(fooShallow, ((Number) result.get(0).get("sum")).doubleValue());
+  }
+
+  @Test
+  void groupByMaxWithoutValueIsShallowSize() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session, HdumpPathParser.parse("objects/com.example.Foo | groupBy(class, agg=max)"));
+    // Was 1002.0, the largest id
+    assertTrue(((Number) result.get(0).get("max")).doubleValue() < 1000);
+  }
+
+  @Test
+  void statsOnEmptyInputHasNullMinMaxNotInfinity() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session, HdumpPathParser.parse("objects/com.example.Absent | stats(shallow)"));
+    Map<String, Object> row = result.get(0);
+    assertEquals(0L, ((Number) row.get("count")).longValue());
+    assertTrue(row.containsKey("shallow_min"));
+    assertNull(row.get("shallow_min"));
+    assertNull(row.get("shallow_max"));
+  }
+
+  @Test
+  void statsAfterGroupByFailsNamingAvailableColumns() {
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                HdumpPathEvaluator.evaluate(
+                    session,
+                    HdumpPathParser.parse(
+                        "objects/com.example.Foo | groupBy(class) | stats(shallow)")));
+    assertTrue(e.getMessage().contains("'shallow'"), e.getMessage());
+    assertTrue(e.getMessage().contains("available: class, count"), e.getMessage());
+  }
+
+  @Test
+  void topAndSortByOnMissingFieldFail() {
+    // Not "retained": that computes dominators on the shared session
+    // (see objectsCountDoesNotTriggerRetainedSizeComputation)
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            HdumpPathEvaluator.evaluate(
+                session, HdumpPathParser.parse("objects | groupBy(class) | top(10, shallow)")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            HdumpPathEvaluator.evaluate(
+                session, HdumpPathParser.parse("objects | groupBy(class) | sortBy(shallow desc)")));
+  }
+
+  // --- #295: filter() on a field no row has failed silently (no rows) ---
+
+  private static IllegalArgumentException filterFails(String query) {
+    return assertThrows(
+        IllegalArgumentException.class,
+        () -> HdumpPathEvaluator.evaluate(session, HdumpPathParser.parse(query)),
+        query);
+  }
+
+  @Test
+  void filterOnAFieldThatIsNoColumnFailsNamingTheColumns() {
+    // classes have no retained column: the leak-hunt prompt's filter(retained > 10MB) (#289). The
+    // message is top()'s and sortBy()'s for the same mistake
+    IllegalArgumentException e = filterFails("classes | filter(retained > 10MB)");
+    assertTrue(
+        e.getMessage().startsWith("Field 'retained' is not available on classes"), e.getMessage());
+    assertTrue(filterFails("classes[retained > 10MB]").getMessage().contains("'retained'"));
+    IllegalArgumentException typo = filterFails("classes | filter(nmae ~ \"Foo\")");
+    assertTrue(typo.getMessage().startsWith("filter: field 'nmae'"), typo.getMessage());
+    assertTrue(typo.getMessage().contains("available: id, name"), typo.getMessage());
+    // Rows a stage built have the columns they carry
+    IllegalArgumentException grouped =
+        filterFails("objects | groupBy(class) | filter(shallow > 0)");
+    assertTrue(grouped.getMessage().contains("'shallow'"), grouped.getMessage());
+    assertTrue(grouped.getMessage().contains("available: class, count"), grouped.getMessage());
+    // Inside not, in a function's argument, and on every root's predicates
+    assertTrue(
+        filterFails("objects | filter(not (nosuch != 1))").getMessage().contains("'nosuch'"));
+    // A selected column named error, null on every row, is no operator's error row
+    assertTrue(
+        filterFails("objects | select(error) | filter(nosuch > 1)")
+            .getMessage()
+            .contains("'nosuch'"));
+    assertTrue(
+        filterFails("classes | filter(contains(nmae, \"Foo\"))").getMessage().contains("'nmae'"));
+    for (String query : List.of("objects[nosuch > 1]", "gcroots[nosuch > 1]", "ages[nosuch > 1]")) {
+      assertTrue(filterFails(query).getMessage().contains("'nosuch'"), query);
+    }
+  }
+
+  @Test
+  void filterOnAColumnTheseRowsLackStillReturnsNoRows() {
+    for (String query :
+        List.of(
+            // Present field, no match
+            "objects | filter(className = \"com.example.Absent\")",
+            "classes | filter(instanceCount > 1000)",
+            // A column of the root these rows do not carry: no arrays, no frame roots, no
+            // retained sizes computed
+            "objects/com.example.Foo[arrayLength > 0]",
+            "objects | filter(className = \"com.example.Foo\" and arrayLength > 1)",
+            "gcroots[frameNumber > 0]",
+            "gcroots[retained > 1KB]",
+            // A column every row carries with a null value
+            "objects | groupBy(class, agg=sum, value=nosuch) | filter(sum > 0)",
+            // A stage's column named by an alias, as the query named it
+            "objects | groupBy(class) | filter(class = \"nosuch\")",
+            "objects | select(class, shallow) | filter(class = \"nosuch\")",
+            // Ops that keep the rows keep the root's columns
+            "objects | waste() | filter(arrayLength > 0)",
+            "objects | top(5, shallow) | filter(arrayLength > 0)",
+            // No input rows at all
+            "objects/com.example.Absent | filter(nosuch > 1)",
+            // Asking about absence is what exists()/empty() are for
+            "objects | filter(exists(nosuch))")) {
+      assertEquals(
+          List.of(), HdumpPathEvaluator.evaluate(session, HdumpPathParser.parse(query)), query);
+    }
+  }
+
+  @Test
+  void filterThatMatchesRowsWithoutTheFieldIsNotAnError() {
+    // An or branch matched: the absent field did not decide the result
+    assertEquals(
+        3,
+        HdumpPathEvaluator.evaluate(
+                session,
+                HdumpPathParser.parse(
+                    "objects | filter(nosuch > 1 or className = \"com.example.Foo\")"))
+            .size());
+  }
+
+  /** A session of its own: duplicates and retainedBreakdown() compute on the heap they read. */
+  private static <T> T onFreshSession(java.util.function.Function<HeapSession, T> body)
+      throws Exception {
+    Path hprof =
+        new MinimalHprofBuilder()
+            .addClass(100, "com/example/Foo")
+            .addInstance(1000, 100)
+            .addInstance(1001, 100)
+            .addGcRoot(1000)
+            .write(java.nio.file.Files.createTempDirectory(tempDir, "fresh"));
+    try (HeapSession fresh = HeapSession.open(hprof)) {
+      return body.apply(fresh);
+    }
+  }
+
+  @Test
+  void filterOnDuplicatesChecksItsColumns() throws Exception {
+    onFreshSession(
+        s -> {
+          List<Map<String, Object>> groups =
+              HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse("duplicates"));
+          assertFalse(groups.isEmpty(), "the two field-less Foo instances are duplicates");
+          IllegalArgumentException e =
+              assertThrows(
+                  IllegalArgumentException.class,
+                  () ->
+                      HdumpPathEvaluator.evaluate(
+                          s, HdumpPathParser.parse("duplicates[nosuch > 1]")));
+          assertTrue(e.getMessage().contains("'nosuch'"), e.getMessage());
+          return null;
+        });
+  }
+
+  @Test
+  void dominatedSizeColumnsAreColumnsOfItsRows() throws Exception {
+    // dominatedSize() adds its columns to thread objects alone: this heap's root is no thread
+    onFreshSession(
+        s -> {
+          for (String query :
+              List.of(
+                  "gcroots | dominatedSize() | filter(dominated > 1000000000)",
+                  "gcroots | dominatedSize() | filter(frameNumber > 0)")) {
+            assertEquals(
+                List.of(), HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse(query)), query);
+          }
+          // Objects rows never get them: there they are no column
+          IllegalArgumentException e =
+              assertThrows(
+                  IllegalArgumentException.class,
+                  () ->
+                      HdumpPathEvaluator.evaluate(
+                          s,
+                          HdumpPathParser.parse(
+                              "objects | dominatedSize() | filter(dominated > 0)")));
+          assertTrue(e.getMessage().contains("'dominated'"), e.getMessage());
+          return null;
+        });
+  }
+
+  @Test
+  void filterOverAnErrorRowWithAHintReportsBoth() throws Exception {
+    onFreshSession(
+        s -> {
+          IllegalArgumentException e =
+              assertThrows(
+                  IllegalArgumentException.class,
+                  () ->
+                      HdumpPathEvaluator.evaluate(
+                          s,
+                          HdumpPathParser.parse(
+                              "objects | checkLeaks(detector=\"nope\") | filter(severity ="
+                                  + " \"HIGH\")")));
+          assertFalse(e.getMessage().contains("severity"), e.getMessage());
+          assertTrue(e.getMessage().contains("checkLeaks(detector=\"help\")"), e.getMessage());
+          return null;
+        });
+  }
+
+  @Test
+  void filterOverAnOperatorsErrorRowReportsThatError() throws Exception {
+    // retainedBreakdown() without a dominator tree gives one {"error": ...} row; "depth is not
+    // present (available: error)" would hide it
+    onFreshSession(
+        s -> {
+          IllegalArgumentException e =
+              assertThrows(
+                  IllegalArgumentException.class,
+                  () ->
+                      HdumpPathEvaluator.evaluate(
+                          s,
+                          HdumpPathParser.parse(
+                              "objects | retainedBreakdown(depth=3) | filter(depth = 2)")));
+          assertTrue(e.getMessage().startsWith("retainedBreakdown requires"), e.getMessage());
+          return null;
+        });
+  }
+
+  @Test
+  void agesPredicatesSeeTheAgeColumns() {
+    // Ran before the age columns were added: ages[estimatedAge >= 0] matched nothing
+    assertEquals(
+        5,
+        HdumpPathEvaluator.evaluate(session, HdumpPathParser.parse("ages[estimatedAge >= 0]"))
+            .size());
+    assertEquals(
+        3,
+        HdumpPathEvaluator.evaluate(
+                session,
+                HdumpPathParser.parse(
+                    "ages[estimatedAge >= 0 and className = \"com.example.Foo\"]"))
+            .size());
+  }
+
+  @Test
+  void groupByMemoryValueColumnIsSortableByItsName() {
+    List<Map<String, Object>> result =
+        HdumpPathEvaluator.evaluate(
+            session,
+            HdumpPathParser.parse(
+                "objects | groupBy(class, agg=sum, value=shallow) | sortBy(shallow desc)"));
+    assertEquals(2, result.size());
+    assertEquals("com.example.Foo", result.get(0).get("class"));
+  }
+
   @Test
   void classesQuery() {
     List<Map<String, Object>> result =
@@ -285,6 +561,21 @@ class SyntheticHeapEvaluatorTest {
       try (HeapSession s = reportSession()) {
         List<HeapReportGenerator.Finding> findings = HeapReportGenerator.generate(s, null);
         assertFalse(findings.isEmpty(), "report must return at least one finding");
+      }
+    }
+
+    @Test
+    void histogramSuggestedQueryReturnsTheInstances() throws IOException {
+      try (HeapSession s = reportSession()) {
+        HeapReportGenerator.Finding top =
+            HeapReportGenerator.generate(s, null).stream()
+                .filter(f -> f.title().startsWith("Top class by instance count"))
+                .findFirst()
+                .orElseThrow();
+        List<Map<String, Object>> rows =
+            HdumpPathEvaluator.evaluate(s, HdumpPathParser.parse(top.query()));
+        // #226: the suggestion used to be "... | groupBy(class) | stats(shallow)", count 0
+        assertEquals((long) top.affectedObjects(), ((Number) rows.get(0).get("count")).longValue());
       }
     }
 

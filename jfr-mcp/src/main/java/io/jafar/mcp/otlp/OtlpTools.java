@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -619,7 +620,7 @@ public final class OtlpTools {
       List<Map<String, Object>> suspects = new ArrayList<>();
       for (Map<String, Object> row : topFns) {
         String name = row.get("stackTrace/0/name") instanceof String s ? s : "";
-        String nameLower = name.toLowerCase();
+        String nameLower = name.toLowerCase(Locale.ROOT);
         for (String kw : errorKeywords) {
           if (nameLower.contains(kw)) {
             suspects.add(row);

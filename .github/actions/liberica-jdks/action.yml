@@ -1,0 +1,46 @@
+name: Liberica JDKs for Gradle toolchains
+description: >
+  Installs the Liberica JDKs the build's toolchains need (8, 25, and 21 as the default JDK) and
+  points Gradle at exactly these: no auto-detection of other JDKs on the runner, no download.
+# The build compiles against toolchains 8, 21 and 25 (languageVersion in the module build
+# files) and resolves them at configuration time. Gradle does not detect the JDKs
+# actions/setup-java installs, other than the one in JAVA_HOME (toolchains docs, "Auto-detection
+# of installed toolchains" lists JAVA_HOME, OS locations and package managers; not
+# /opt/hostedtoolcache or JAVA_HOME_<n>_X64), so without the properties below the foojay
+# resolver in settings.gradle downloads 8 and 25 from a vendor of its choosing. With
+# auto-download off, a missing JDK fails the build instead.
+inputs:
+  java21:
+    description: The JDK 21 to install and make the default (JAVA_HOME); '21' is the newest 21 update.
+    required: false
+    default: '21'
+runs:
+  using: composite
+  steps:
+    - name: Install Liberica JDK 8, 25 and ${{ inputs.java21 }}
+      uses: actions/setup-java@v5
+      with:
+        distribution: liberica
+        # the last one is the default JDK (JAVA_HOME); each gets JAVA_HOME_<major>_X64
+        java-version: |
+          8
+          25
+          ${{ inputs.java21 }}
+
+    - name: Point Gradle at these JDKs only
+      shell: bash
+      run: |
+        set -euo pipefail
+        props="${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+        mkdir -p "$(dirname "$props")"
+        {
+          echo 'org.gradle.java.installations.fromEnv=JAVA_HOME_8_X64,JAVA_HOME_25_X64,JAVA_HOME_21_X64'
+          echo 'org.gradle.java.installations.auto-detect=false'
+          echo 'org.gradle.java.installations.auto-download=false'
+        } >> "$props"
+        echo "$props:"; cat "$props"
+        for v in 8 25 21; do
+          var="JAVA_HOME_${v}_X64"
+          echo "$var=${!var}"
+          "${!var}/bin/java" -version 2>&1 | head -2
+        done

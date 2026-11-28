@@ -9,6 +9,7 @@ import io.jafar.mcp.config.McpServerConfig;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
 import io.jafar.mcp.session.HeapSessionRegistry;
+import io.jafar.mcp.session.MappedFileRelease;
 import io.jafar.mcp.validation.FileValidator;
 import io.jafar.shell.core.SessionResolver;
 import io.jafar.shell.core.findings.Findings;
@@ -22,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -171,6 +173,9 @@ public final class HdumpTools {
     try {
       if (closeAll) {
         int count = heapSessionRegistry.closeAll();
+        if (count > 0) {
+          MappedFileRelease.afterClose();
+        }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("message", "Closed " + count + " session(s)");
@@ -179,7 +184,9 @@ public final class HdumpTools {
       }
 
       HeapSessionRegistry.SessionInfo info = heapSessionRegistry.getOrCurrent(sessionId);
-      heapSessionRegistry.close(String.valueOf(info.id()));
+      if (heapSessionRegistry.close(String.valueOf(info.id()))) {
+        MappedFileRelease.afterClose();
+      }
 
       Map<String, Object> result = new LinkedHashMap<>();
       result.put("success", true);
@@ -244,7 +251,7 @@ public final class HdumpTools {
             + "TYPE SPECIFIERS (after /)\n"
             + "  objects/java.lang.String\n"
             + "  objects/java.util.*                        (glob)\n"
-            + "  objects/instanceof/java.util.Map           (subtypes)\n"
+            + "  objects/instanceof/java.util.AbstractMap   (subclasses; superclasses only, no interfaces)\n"
             + "  objects/int[]  or  objects/[I              (arrays)\n\n"
             + "PREDICATES   [field op value]\n"
             + "  ops: =  !=  >  >=  <  <=  ~(regex)\n"
@@ -545,7 +552,7 @@ public final class HdumpTools {
     }
 
     String content =
-        switch (topic.toLowerCase()) {
+        switch (topic.toLowerCase(Locale.ROOT)) {
           case "overview" -> getHdumpOverviewHelp();
           case "roots" -> getHdumpRootsHelp();
           case "filters" -> getHdumpFiltersHelp();
@@ -588,7 +595,7 @@ public final class HdumpTools {
         objects | top(10, retained)
         classes | top(20, instanceCount)
         objects/java.lang.String | count
-        objects/instanceof/java.util.Map | waste() | top(10, wastedBytes)
+        objects/instanceof/java.util.HashMap | waste() | top(10, wastedBytes)
         duplicates | sortBy(wastedBytes desc) | top(20)
         gcroots/THREAD_OBJ | dominatedSize() | sortBy(dominated desc)
         checkLeaks(detector="duplicate-strings")
@@ -619,7 +626,8 @@ public final class HdumpTools {
         Type specifiers:
         - `objects/java.lang.String`                — exact class
         - `objects/java.util.*`                     — glob pattern
-        - `objects/instanceof/java.util.Map`        — subtypes (polymorphic)
+        - `objects/instanceof/java.util.AbstractMap` — subclasses. Superclasses only: a heap dump records no
+          implemented interfaces, so `instanceof/java.util.Map` fails with an explanation
         - `objects/int[]` or `objects/[I`           — array types
 
         ## classes
@@ -709,7 +717,7 @@ public final class HdumpTools {
         Apply predicates after type expansion:
         ```
         objects | filter(shallow > 1MB)
-        objects/instanceof/java.util.Map | filter(shallow > 100K and class ~ "HashMap")
+        objects/instanceof/java.util.AbstractMap | filter(shallow > 100K and class ~ "HashMap")
         ```
 
         ## Examples
@@ -838,7 +846,7 @@ public final class HdumpTools {
         objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)
 
         # High fill ratio caches
-        objects/instanceof/java.util.Map | cacheStats() | sortBy(costPerEntry desc) | top(10)
+        objects/instanceof/java.util.AbstractMap | cacheStats() | sortBy(costPerEntry desc) | top(10)
         ```
 
         ## Thread Memory Attribution
@@ -932,9 +940,9 @@ public final class HdumpTools {
         1. Find LRU caches:
            `objects/java.util.LinkedHashMap | cacheStats() | filter(isLruMode = true)`
         2. Expensive caches (high cost per entry):
-           `objects/instanceof/java.util.Map | cacheStats() | sortBy(costPerEntry desc) | top(10)`
+           `objects/instanceof/java.util.AbstractMap | cacheStats() | sortBy(costPerEntry desc) | top(10)`
         3. Overfilled caches:
-           `objects/instanceof/java.util.Map | cacheStats() | filter(fillRatio > 0.9)`
+           `objects/instanceof/java.util.AbstractMap | cacheStats() | filter(fillRatio > 0.9)`
 
         ## Workflow 6: Quick Health Check
         Run `hdump_report` — it executes all analyses and returns severity-ranked findings.

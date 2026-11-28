@@ -6,6 +6,7 @@ import io.jafar.parser.api.UntypedJafarParser;
 import io.jafar.parser.api.UntypedStrategy;
 import io.jafar.parser.internal_api.DeserializerFactory;
 import io.jafar.parser.internal_api.ParserContextFactory;
+import io.jafar.parser.internal_api.UntypedDeserializerCache;
 import io.jafar.parser.internal_api.UntypedEventStreamFactory;
 import java.nio.file.Path;
 import java.util.Iterator;
@@ -17,10 +18,28 @@ import java.util.ServiceLoader;
  *
  * <p>This class manages typed and untyped parser context factories and tracks the uptime of parsing
  * operations.
+ *
+ * <p>What parses made from one context share: typed parses share the {@link
+ * TypedParserContextFactory}; untyped parses share one {@link UntypedDeserializerCache}, so a
+ * deserializer generated for an event type is reused by every later parse that meets a type with
+ * the same structural key. {@link #withParallelism} views share both. {@link #EMPTY} shares neither
+ * between untyped parses.
  */
 public final class ParsingContextImpl implements ParsingContext {
-  /** An empty parsing context instance. */
-  public static final ParsingContext EMPTY = new ParsingContextImpl();
+  /**
+   * Most entries {@link #untypedDeserializers} may hold when a parse starts; over it, the cache is
+   * emptied first. Keys embed chunk-scoped type ids, so a context that keeps reading recordings of
+   * different producers keeps meeting new keys, and each entry pins a generated class. A recording
+   * has one entry per event type it delivers and strategy (78 for {@code tck-test.jfr}), so the
+   * limit only matters to a context that has seen dozens of distinct metadata layouts.
+   */
+  static final int MAX_UNTYPED_DESERIALIZERS = 4096;
+
+  /**
+   * Generated untyped deserializers of every parse made from this context, for all strategies (the
+   * strategy is part of the key); {@code null} for {@link #EMPTY}.
+   */
+  private final UntypedDeserializerCache untypedDeserializers;
 
   /** Factory for creating typed parser contexts. */
   private final TypedParserContextFactory typedFactory;
@@ -59,6 +78,16 @@ public final class ParsingContextImpl implements ParsingContext {
   }
 
   /**
+   * The context of parsers opened without one ({@code UntypedJafarParser.open(path)}). It lives as
+   * long as the JVM, so it keeps no untyped deserializers: each of its parses has its own cache.
+   *
+   * <p>Declared after {@link #DESERIALIZER_FACTORY} on purpose: static initializers run in textual
+   * order, and declared above it this context's typed factory was built with {@code null} and a
+   * typed parse through it handed every handler a {@code null} event.
+   */
+  public static final ParsingContext EMPTY = new ParsingContextImpl(null);
+
+  /**
    * The generated untyped reader's factory.
    *
    * @return the factory, or {@code null} when {@code parser-codegen} is not on the classpath
@@ -69,6 +98,11 @@ public final class ParsingContextImpl implements ParsingContext {
 
   /** Constructs a new ParsingContextImpl. */
   public ParsingContextImpl() {
+    this(new UntypedDeserializerCache.Impl());
+  }
+
+  private ParsingContextImpl(UntypedDeserializerCache untypedDeserializers) {
+    this.untypedDeserializers = untypedDeserializers;
     this.typedFactory = new TypedParserContextFactory(DESERIALIZER_FACTORY);
     this.startTs = System.nanoTime();
     this.parallelism = 0;
@@ -77,6 +111,7 @@ public final class ParsingContextImpl implements ParsingContext {
   /** A view of {@code other} that shares its caches and clock, with its own parallelism. */
   private ParsingContextImpl(ParsingContextImpl other, int parallelism) {
     this.typedFactory = other.typedFactory;
+    this.untypedDeserializers = other.untypedDeserializers;
     this.startTs = other.startTs;
     this.parallelism = parallelism;
   }
@@ -115,11 +150,23 @@ public final class ParsingContextImpl implements ParsingContext {
   /**
    * Gets the untyped context factory with specified strategy.
    *
+   * <p>Every factory this context returns hands its chunk contexts the context's one {@link
+   * UntypedDeserializerCache}, whatever the strategy. The exception is {@link #EMPTY}, whose
+   * factories each own a new cache.
+   *
    * @param strategy the optimization strategy for event deserialization
    * @return the untyped context factory
    */
   public ParserContextFactory untypedContextFactory(UntypedStrategy strategy) {
-    return new UntypedParserContextFactory(strategy);
+    if (untypedDeserializers == null) {
+      return new UntypedParserContextFactory(strategy);
+    }
+    if (untypedDeserializers.size() > MAX_UNTYPED_DESERIALIZERS) {
+      // Safe while other parses run: a chunk keeps the deserializers it already resolved, and a
+      // key that is asked for again is generated again.
+      untypedDeserializers.clear();
+    }
+    return new UntypedParserContextFactory(strategy, untypedDeserializers);
   }
 
   @Override

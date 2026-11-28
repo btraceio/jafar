@@ -5,6 +5,7 @@ import io.jafar.mcp.jfr.JfrAnalysisTools;
 import io.jafar.mcp.jfr.JfrCompareTools;
 import io.jafar.mcp.jfr.JfrHelpProvider;
 import io.jafar.mcp.jfr.JfrSessionTools;
+import io.jafar.mcp.jfr.ProfileCompareTools;
 import io.jafar.mcp.lifecycle.BearerAuthFilter;
 import io.jafar.mcp.lifecycle.HealthServlet;
 import io.jafar.mcp.lifecycle.IdleExitWatchdog;
@@ -22,6 +23,7 @@ import io.jafar.mcp.resource.JafarResources;
 import io.jafar.mcp.result.McpResultFactory;
 import io.jafar.mcp.result.ResultLimiter;
 import io.jafar.mcp.session.HeapSessionRegistry;
+import io.jafar.mcp.session.MappedFileRelease;
 import io.jafar.mcp.session.McpCrossSessionContext;
 import io.jafar.mcp.session.OtlpSessionRegistry;
 import io.jafar.mcp.session.PprofSessionRegistry;
@@ -127,6 +129,7 @@ import tools.jackson.databind.ObjectMapper;
  *   <li>{@code otlp_help} - OtlpPath query language documentation
  * </ul>
  */
+@SuppressWarnings("PMD.UnusedPrivateMethod") // legacy handlers are invoked reflectively by tests
 public final class JafarMcpServer {
 
   private static final Logger LOG = LoggerFactory.getLogger(JafarMcpServer.class);
@@ -177,6 +180,7 @@ public final class JafarMcpServer {
   private final JfrSessionTools jfrSessionTools;
   private final JfrAnalysisTools jfrAnalysisTools;
   private final JfrCompareTools jfrCompareTools;
+  private final ProfileCompareTools profileCompareTools;
   private final JafarPrompts jafarPrompts;
   private final JafarResources jafarResources;
   private final HdumpTools hdumpTools;
@@ -240,6 +244,9 @@ public final class JafarMcpServer {
     this.jfrCompareTools =
         new JfrCompareTools(
             sessionRegistry, evaluator, queryParser, resultFactory, this.jfrAnalysisTools);
+    this.profileCompareTools =
+        new ProfileCompareTools(
+            sessionRegistry, pprofSessionRegistry, otlpSessionRegistry, evaluator, resultFactory);
     this.hdumpTools =
         new HdumpTools(
             heapSessionRegistry,
@@ -380,10 +387,14 @@ public final class JafarMcpServer {
   }
 
   void retainClientScopes(Set<String> liveScopes) {
+    int mapped = sessionRegistry.size() + heapSessionRegistry.size();
     sessionRegistry.retainScopes(liveScopes);
     heapSessionRegistry.retainScopes(liveScopes);
     pprofSessionRegistry.retainScopes(liveScopes);
     otlpSessionRegistry.retainScopes(liveScopes);
+    if (sessionRegistry.size() + heapSessionRegistry.size() < mapped) {
+      MappedFileRelease.afterClose();
+    }
   }
 
   /** Run server with HTTP/SSE transport (for web clients). */
@@ -754,7 +765,8 @@ public final class JafarMcpServer {
    *
    * <p>JFR tools: jfr_open, jfr_query, jfr_list_types, jfr_close, jfr_help, jfr_flamegraph,
    * jfr_callgraph, jfr_exceptions, jfr_summary, jfr_hotmethods, jfr_use, jfr_tsa, jfr_diagnose,
-   * jfr_stackprofile.
+   * jfr_stackprofile, jfr_compare; and profile_compare, which compares a JFR recording, a pprof or
+   * an OTLP profile against any of them.
    *
    * <p>Heap dump tools: hdump_open, hdump_close, hdump_query, hdump_summary, hdump_report,
    * hdump_help.
@@ -782,6 +794,7 @@ public final class JafarMcpServer {
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrDiagnoseTool()));
     tools.add(withActivityTracking(jfrAnalysisTools.createJfrStackprofileTool()));
     tools.add(withActivityTracking(jfrCompareTools.createJfrCompareTool()));
+    tools.add(withActivityTracking(profileCompareTools.createProfileCompareTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpOpenTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpCloseTool()));
     tools.add(withActivityTracking(hdumpTools.createHdumpQueryTool()));
@@ -808,7 +821,9 @@ public final class JafarMcpServer {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Legacy handler delegation — kept for test backward-compatibility (Phase 9)
+  // Legacy handler delegation — kept for test backward-compatibility (Phase 9).
+  // Invoked reflectively by the test suite (getDeclaredMethod), so no call sites are
+  // visible here; deleting them breaks the tests that assert through them.
   // ─────────────────────────────────────────────────────────────────────────────
 
   private CallToolResult handleJfrOpen(Map<String, Object> args) {

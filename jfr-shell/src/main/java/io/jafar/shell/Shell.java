@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
@@ -44,6 +45,7 @@ public final class Shell implements AutoCloseable {
     try {
       java.nio.file.Files.createDirectories(histPath.getParent());
     } catch (Exception ignore) {
+      // history dir may be unwritable; history is best-effort
     }
     this.history = new io.jafar.shell.core.SecretFilteringHistory();
     // Create dispatcher first so it can be passed to ShellCompleter
@@ -59,7 +61,7 @@ public final class Shell implements AutoCloseable {
 
               @Override
               public void printf(String fmt, Object... args) {
-                terminal.writer().printf(fmt, args);
+                terminal.writer().printf(Locale.ROOT, fmt, args);
                 terminal.flush();
               }
 
@@ -195,10 +197,9 @@ public final class Shell implements AutoCloseable {
       terminal.flush();
       return;
     }
-    try {
-      dispatcher.dispatch("open " + jfrPath.toString());
-    } catch (Exception ignore) {
-    }
+    // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233).
+    // A failure is reported by open itself.
+    dispatcher.open(jfrPath, null);
   }
 
   private void printBanner() {
@@ -219,7 +220,7 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    String subCommand = parts[1].toLowerCase();
+    String subCommand = parts[1].toLowerCase(Locale.ROOT);
     try {
       switch (subCommand) {
         case "start":
@@ -255,7 +256,7 @@ public final class Shell implements AutoCloseable {
       return;
     }
 
-    String subCommand = parts[1].toLowerCase();
+    String subCommand = parts[1].toLowerCase(Locale.ROOT);
 
     switch (subCommand) {
       case "list":
@@ -313,7 +314,7 @@ public final class Shell implements AutoCloseable {
         String baseName = name.substring(0, name.length() - 5); // Remove .jfrs
         String description = getScriptDescription(script);
         if (description != null) {
-          terminal.writer().printf("  %-25s %s%n", baseName, description);
+          terminal.writer().printf(Locale.ROOT, "  %-25s %s%n", baseName, description);
         } else {
           terminal.writer().println("  " + baseName);
         }
@@ -337,7 +338,7 @@ public final class Shell implements AutoCloseable {
         if (line.startsWith("#")) {
           // First comment line is the description
           String desc = line.substring(1).trim();
-          if (!desc.isEmpty() && !desc.toLowerCase().startsWith("arguments:")) {
+          if (!desc.isEmpty() && !desc.toLowerCase(Locale.ROOT).startsWith("arguments:")) {
             return desc;
           }
         } else {
@@ -345,6 +346,7 @@ public final class Shell implements AutoCloseable {
         }
       }
     } catch (IOException ignore) {
+      // unreadable script file; no description
     }
     return null;
   }
@@ -420,6 +422,7 @@ public final class Shell implements AutoCloseable {
             .writer()
             .println(
                 String.format(
+                    Locale.ROOT,
                     "\nExecuted %d/%d commands successfully.",
                     result.getSuccessCount(),
                     result.getSuccessCount() + result.getErrors().size()));
@@ -445,7 +448,9 @@ public final class Shell implements AutoCloseable {
     w.println("JFR Shell Commands:");
     w.println();
     w.println("Session Management:");
-    w.println("  open <path> [--alias NAME]     Open a recording as a new session");
+    w.println(
+        "  open <path> [--alias NAME]     Open a recording as a new session (\"quote\" a path");
+    w.println("                                 if it contains ' --alias')");
     w.println("  connect [<pid>] [--alias NAME]  List local JVMs / attach a live JFR session");
     w.println("  tail [filter] [--limit N]      Stream events from a live session");
     w.println("  sessions                       List all sessions");
@@ -519,14 +524,17 @@ public final class Shell implements AutoCloseable {
     try {
       dispatcher.getGlobalStore().clear(); // Release global variables
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     try {
       sessions.closeAll();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     try {
       history.save();
     } catch (Exception ignore) {
+      // best-effort history save; shutdown continues
     }
     terminal.close();
   }

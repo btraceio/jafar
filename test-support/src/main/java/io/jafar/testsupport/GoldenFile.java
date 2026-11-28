@@ -29,9 +29,9 @@ import java.util.function.Supplier;
  * }</pre>
  *
  * <p>Golden files store the digest and per-type counts only, never dump lines, so they stay small
- * even for the ~480 MB tck-test.jfr deep-resolved dump (Risk 4). The full dump is produced by the
- * caller's supplier and written to the build dir only when a golden mismatches, for the review diff
- * — a green run never materializes it.
+ * even for the ~454 MB (453,889,122 bytes measured) tck-test.jfr deep-resolved dump (Risk 4). The
+ * full dump is produced by the caller's supplier and written to the build dir only when a golden
+ * mismatches, for the review diff — a green run never materializes it.
  *
  * <p>No outcome is silent (R9: assert payloads, not exit statuses): a missing, empty or stale
  * golden fails loudly, naming both digests and the per-type counts that differ; a changed fixture

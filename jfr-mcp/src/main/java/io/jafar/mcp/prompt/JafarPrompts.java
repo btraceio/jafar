@@ -6,6 +6,7 @@ import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -22,13 +23,7 @@ import java.util.Map;
  */
 public final class JafarPrompts {
 
-  private final SessionRegistry jfrSessions;
-  private final HeapSessionRegistry heapSessions;
-
-  public JafarPrompts(SessionRegistry jfrSessions, HeapSessionRegistry heapSessions) {
-    this.jfrSessions = jfrSessions;
-    this.heapSessions = heapSessions;
-  }
+  public JafarPrompts(SessionRegistry jfrSessions, HeapSessionRegistry heapSessions) {}
 
   /** All prompt specifications offered by the server. */
   public List<McpServerFeatures.SyncPromptSpecification> createPromptSpecifications() {
@@ -56,7 +51,9 @@ public final class JafarPrompts {
         (exchange, request) -> {
           String path = argument(request, "path");
           String text =
-              """
+              String.format(
+                  Locale.ROOT,
+                  """
               Triage %s.
 
               1. Open it with the tool matching its type: jfr_open for .jfr, hdump_open for \
@@ -75,8 +72,8 @@ public final class JafarPrompts {
               Report findings ranked by impact. For each one give the tool call that produced it, \
               the numbers, your interpretation, and a confidence level. Do not quote a number you \
               did not measure in this session, and label sampled data as sampled.
-              """
-                  .formatted(path == null ? "the recording" : path);
+              """,
+                  path == null ? "the recording" : path);
           return new McpSchema.GetPromptResult(
               "Triage playbook",
               List.of(
@@ -103,11 +100,15 @@ public final class JafarPrompts {
           String baseline = argument(request, "baseline");
           String candidate = argument(request, "candidate");
           String text =
-              """
+              String.format(
+                  Locale.ROOT,
+                  """
               Compare %s (baseline) against %s (candidate).
 
               1. jfr_open both, giving each a clear alias.
-              2. Call jfr_compare with baselineSessionId and candidateSessionId.
+              2. Call jfr_compare with baselineSessionId and candidateSessionId. If either side \
+              is a pprof or OTLP profile, open it with pprof_open or otlp_open instead and call \
+              profile_compare with {format, sessionId} for each side.
               3. Read the `comparability` block before anything else. If it reports different \
               execution-sample event types, very different durations, or low sample counts, say \
               so in your answer and temper every conclusion accordingly.
@@ -120,10 +121,9 @@ public final class JafarPrompts {
               Conclude with either a named regression and the frame or metric that carries it, or \
               an explicit "no regression above the noise floor". Never claim an improvement \
               without the measurement that shows it.
-              """
-                  .formatted(
-                      baseline == null ? "the baseline" : baseline,
-                      candidate == null ? "the candidate" : candidate);
+              """,
+                  baseline == null ? "the baseline" : baseline,
+                  candidate == null ? "the candidate" : candidate);
           return new McpSchema.GetPromptResult(
               "Regression comparison playbook",
               List.of(
@@ -151,35 +151,40 @@ public final class JafarPrompts {
           String recording = argument(request, "recording");
           StringBuilder text = new StringBuilder();
           text.append(
-              """
+              String.format(
+                  Locale.ROOT,
+                  """
               Hunt for a memory leak in %s.
 
               1. hdump_open, then hdump_summary to orient.
               2. hdump_report focus=leaks. Work the findings from highest severity with the \
               largest retainedSize.
-              3. Rank by retained size, not shallow size: hdump_query "classes | \
-              sortBy(retained desc) | top(20)". A large char[] or byte[] population is normal; \
-              its dominator is the finding.
+              3. Rank by retained size, not shallow size: hdump_query "objects | \
+              groupBy(className, agg=sum, value=retainedSize) | top(20, by=retainedSize)". A \
+              large char[] or byte[] population is normal; its dominator is the finding.
               4. Try the named detectors for known patterns (threadlocal-leak, classloader-leak, \
               growing-collections, listener-leak, duplicate-strings, finalizer-queue), then \
               `clusters` for patterns nobody wrote a detector for.
               5. Prove retention with a path to a GC root — pathToRoot() per object, or \
               retentionPaths() merged at class level. A leak claim without a root path is a \
               guess. The field named in that path is the fix.
-              """
-                  .formatted(dump == null ? "the heap dump" : dump));
+              """,
+                  dump == null ? "the heap dump" : dump));
           if (recording != null) {
             text.append(
-                """
+                String.format(
+                    Locale.ROOT,
+                    """
 
                 6. Open %s with jfr_open and correlate retention with allocation:
-                   hdump_query "classes | join(session=<jfr alias>, \
-                root=\\"jdk.ObjectAllocationSample\\", by=class) | filter(retained > 10MB) | \
-                select(name, retained, allocCount, topAllocSite)"
+                   hdump_query "objects | groupBy(className, agg=sum, value=retainedSize) | \
+                join(session=<jfr alias>, root=\\"jdk.ObjectAllocationSample\\", by=className) | \
+                filter(allocCount > 0) | top(20, by=retainedSize) | \
+                select(className, retainedSize, allocCount, topAllocSite)"
                    topAllocSite names the code that created the retained objects. High \
                 allocCount with low retained is churn, not a leak.
-                """
-                    .formatted(recording));
+                """,
+                    recording));
           }
           text.append(
               """
@@ -209,7 +214,9 @@ public final class JafarPrompts {
         (exchange, request) -> {
           String path = argument(request, "path");
           String text =
-              """
+              String.format(
+                  Locale.ROOT,
+                  """
               Investigate latency in %s.
 
               Latency is usually waiting, and waiting produces no execution samples — so a healthy
@@ -232,8 +239,8 @@ public final class JafarPrompts {
               Remember JFR's monitor events have a duration threshold, so absence of events is \
               not absence of contention. Report time-overlap correlations as "concurrent with", \
               never as proof of cause.
-              """
-                  .formatted(path == null ? "the recording" : path);
+              """,
+                  path == null ? "the recording" : path);
           return new McpSchema.GetPromptResult(
               "Latency playbook",
               List.of(

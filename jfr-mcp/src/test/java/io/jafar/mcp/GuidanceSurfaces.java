@@ -69,6 +69,8 @@ final class GuidanceSurfaces {
       if (toolName.startsWith("hdump_")) return HDUMPPATH;
       if (toolName.startsWith("pprof_")) return PPROFPATH;
       if (toolName.startsWith("otlp_")) return OTLPPATH;
+      // Compares sessions of two formats and takes no query, so it documents no query language.
+      if (toolName.equals("profile_compare")) return null;
       throw new IllegalArgumentException("no family for tool: " + toolName);
     }
   }

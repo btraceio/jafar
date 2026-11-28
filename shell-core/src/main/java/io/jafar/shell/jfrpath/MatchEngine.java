@@ -218,6 +218,9 @@ final class MatchEngine {
                 + (current != null ? current.getClass().getName() : "null")
                 + ")");
       }
+      // The any:/all:/none: forms keep their rule: a missing or null value matches nothing, not
+      // even = null (#309 widened only the expression form)
+      if (current == null) return false;
       return compare(current, op, lit);
     }
     String seg = path.get(idx);
@@ -238,11 +241,13 @@ final class MatchEngine {
           sliceFrom = a.isEmpty() ? 0 : Integer.parseInt(a);
           sliceTo = bb.isEmpty() ? Integer.MAX_VALUE : Integer.parseInt(bb);
         } catch (Exception ignore) {
+          // unparseable slice bounds; leave defaults
         }
       } else {
         try {
           segIndex = Integer.parseInt(inside.trim());
         } catch (Exception ignore) {
+          // unparseable segment index; leave default
         }
       }
     }
@@ -300,7 +305,82 @@ final class MatchEngine {
     };
   }
 
+  /**
+   * EQ for {@link #compare}. A number against a numeric literal is equal by decimal value, whatever
+   * the two classes: len() is an Integer and the literal a Long, and Objects.equals said 7 != 7
+   * (#303). Integral values compare exactly (no double rounding above 2^53); a double or float by
+   * its shortest decimal form, as written ({@code 0.1}, not its binary expansion); a string only
+   * when it is an ASCII decimal number. Anything else as before.
+   */
+  private static boolean equalsCoerced(Object actual, Object lit) {
+    // Allocation-free for the common cases: one class, or two integral ones
+    if (actual != null && lit != null && actual.getClass() == lit.getClass()) {
+      return Objects.equals(actual, lit);
+    }
+    if (isIntegral(actual) && isIntegral(lit)) {
+      return ((Number) actual).longValue() == ((Number) lit).longValue();
+    }
+    if (lit instanceof Number nl) {
+      java.math.BigDecimal l = exact(nl);
+      java.math.BigDecimal a =
+          actual instanceof Number na
+              ? exact(na)
+              : actual instanceof CharSequence cs ? parseExact(cs.toString()) : null;
+      if (a != null && l != null) {
+        return a.compareTo(l) == 0;
+      }
+    }
+    return Objects.equals(Coerce.coerceForEquality(actual, lit), lit);
+  }
+
+  private static boolean isIntegral(Object n) {
+    return n instanceof Long || n instanceof Integer || n instanceof Short || n instanceof Byte;
+  }
+
+  /**
+   * {@code n}'s value as a decimal: integral ones exactly, a double or float by its shortest
+   * decimal form; null for NaN, infinities and unknown Number classes.
+   */
+  private static java.math.BigDecimal exact(Number n) {
+    if (isIntegral(n)) {
+      return java.math.BigDecimal.valueOf(n.longValue());
+    }
+    if (n instanceof java.math.BigDecimal bd) {
+      return bd;
+    }
+    if (n instanceof java.math.BigInteger bi) {
+      return new java.math.BigDecimal(bi);
+    }
+    if (n instanceof Double d) {
+      return Double.isFinite(d) ? new java.math.BigDecimal(Double.toString(d)) : null;
+    }
+    if (n instanceof Float f) {
+      return Float.isFinite(f) ? new java.math.BigDecimal(Float.toString(f)) : null;
+    }
+    return null;
+  }
+
+  /** An ASCII decimal number with optional spaces around it; not Unicode digits or controls. */
+  private static final Pattern DECIMAL =
+      Pattern.compile(" *[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)? *");
+
+  private static java.math.BigDecimal parseExact(String s) {
+    if (!DECIMAL.matcher(s).matches()) {
+      return null;
+    }
+    return new java.math.BigDecimal(s.strip());
+  }
+
   static boolean compare(Object actual, Op op, Object lit) {
+    if (lit == null) {
+      // A presence check, as in filter(...) (matchOp): [x == null] matches a missing or null x,
+      // [x != null] a present one; it matched nothing for a missing x (#309)
+      return switch (op) {
+        case EQ -> actual == null;
+        case NE -> actual != null;
+        default -> false;
+      };
+    }
     if (actual == null) return false;
 
     if (System.getProperty("jfr.shell.query.debug") != null) {
@@ -313,8 +393,8 @@ final class MatchEngine {
 
     boolean result =
         switch (op) {
-          case EQ -> Objects.equals(Coerce.coerceForEquality(actual, lit), lit);
-          case NE -> !Objects.equals(Coerce.coerceForEquality(actual, lit), lit);
+          case EQ -> equalsCoerced(actual, lit);
+          case NE -> !equalsCoerced(actual, lit);
           case GT -> Coerce.compareNumeric(actual, lit) > 0;
           case GE -> Coerce.compareNumeric(actual, lit) >= 0;
           case LT -> Coerce.compareNumeric(actual, lit) < 0;
@@ -349,7 +429,7 @@ final class MatchEngine {
   static boolean matchesPredicate(Map<String, Object> row, JfrPath.Predicate predicate) {
     if (predicate instanceof JfrPath.FieldPredicate fp) {
       // For pipeline filter, field path is typically a single column name
-      Object val = Values.get(row, fp.fieldPath.toArray());
+      Object val = rowValue(row, fp.fieldPath);
       return matchOp(val, fp.op, fp.literal);
     } else if (predicate instanceof JfrPath.ExprPredicate ep) {
       return matchBoolExpr(row, ep.expr);
@@ -357,30 +437,42 @@ final class MatchEngine {
     return false;
   }
 
+  /**
+   * A pipeline row's value at {@code path}: as a column or nested map, or else through array
+   * indexes ({@code frames/0/lineNumber}), as {@code [...]} predicates read it. Read by map keys
+   * only, frames/0 found nothing (#309).
+   */
+  private static Object rowValue(Map<String, Object> row, List<String> path) {
+    Object v = Values.get(row, path.toArray());
+    return v != null ? v : PathValues.resolveSingle(row, path);
+  }
+
   static boolean matchBoolExpr(Map<String, Object> row, JfrPath.BoolExpr expr) {
     if (expr instanceof JfrPath.CompExpr ce) {
       Object val;
       if (ce.lhs instanceof JfrPath.PathRef pr) {
-        val = Values.get(row, pr.path.toArray());
+        val = rowValue(row, pr.path);
       } else if (ce.lhs instanceof JfrPath.FuncValueExpr fve) {
-        // Evaluate function on row - simplified: just use the first path arg
-        val = null;
-        for (JfrPath.Arg arg : fve.args) {
-          if (arg instanceof JfrPath.PathArg pa) {
-            val = Values.get(row, pa.path.toArray());
-            break;
-          }
-        }
+        // The function's value, as a [...] predicate computes it: this compared the raw first
+        // argument, so filter(len(name) > 3) compared the name itself (#303)
+        val = PathValues.unwrapSimpleType(evalValueExpr(row, fve));
       } else {
         val = null;
       }
       return matchOp(val, ce.op, ce.literal);
     } else if (expr instanceof JfrPath.LogicalExpr le) {
+      // Short-circuit as [...] predicates do: the right side can throw (before(x, "garbage"))
       boolean left = matchBoolExpr(row, le.left);
-      boolean right = matchBoolExpr(row, le.right);
-      return le.op == JfrPath.LogicalExpr.Lop.AND ? left && right : left || right;
+      if (le.op == JfrPath.LogicalExpr.Lop.AND) {
+        return left && matchBoolExpr(row, le.right);
+      }
+      return left || matchBoolExpr(row, le.right);
     } else if (expr instanceof JfrPath.NotExpr ne) {
       return !matchBoolExpr(row, ne.inner);
+    } else if (expr instanceof JfrPath.FuncBoolExpr) {
+      // The [...] predicates' functions: missing here, filter(between(...)), filter(contains(...))
+      // and the others matched no row (#303)
+      return evalBoolExpr(row, expr);
     }
     return false;
   }

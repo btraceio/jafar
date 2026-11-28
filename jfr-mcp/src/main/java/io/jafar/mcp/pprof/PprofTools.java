@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -688,7 +689,7 @@ public final class PprofTools {
       List<Map<String, Object>> suspects = new ArrayList<>();
       for (Map<String, Object> row : topFns) {
         String name = row.get("stackTrace/0/name") instanceof String s ? s : "";
-        String nameLower = name.toLowerCase();
+        String nameLower = name.toLowerCase(Locale.ROOT);
         for (String kw : errorKeywords) {
           if (nameLower.contains(kw)) {
             suspects.add(row);
@@ -1019,7 +1020,8 @@ public final class PprofTools {
         var leafQuery = PprofPathParser.parse("samples | groupBy(stackTrace/0/name)");
         List<Map<String, Object>> leafFns = PprofPathEvaluator.evaluate(info.session(), leafQuery);
         for (Map<String, Object> row : leafFns) {
-          String fnName = row.get("stackTrace/0/name") instanceof String s ? s.toLowerCase() : "";
+          String fnName =
+              row.get("stackTrace/0/name") instanceof String s ? s.toLowerCase(Locale.ROOT) : "";
           long count = row.get("count") instanceof Number n ? n.longValue() : 0L;
           String state = inferStateFromFunctionName(fnName);
           stateCounts.merge(state, count, Long::sum);
@@ -1125,8 +1127,10 @@ public final class PprofTools {
       if (topPct > 90) {
         insights.add(
             String.format(
+                Locale.ROOT,
                 "Single-threaded bottleneck: thread '%s' holds %.1f%% of all samples",
-                threadDist.get(0).get("thread"), topPct));
+                threadDist.get(0).get("thread"),
+                topPct));
       } else if (threadDist.size() == 1) {
         insights.add("Only one thread observed — workload appears single-threaded");
       }
@@ -1139,6 +1143,7 @@ public final class PprofTools {
       if (waitPct > 20) {
         insights.add(
             String.format(
+                Locale.ROOT,
                 "%.1f%% of leaf frames suggest blocking/waiting — consider async I/O or off-CPU "
                     + "profiling (e.g. async-profiler --event=wall) for deeper insight",
                 waitPct));
@@ -1148,6 +1153,7 @@ public final class PprofTools {
       if (lockPct > 10) {
         insights.add(
             String.format(
+                Locale.ROOT,
                 "%.1f%% of leaf frames suggest lock contention — review synchronization patterns",
                 lockPct));
       }

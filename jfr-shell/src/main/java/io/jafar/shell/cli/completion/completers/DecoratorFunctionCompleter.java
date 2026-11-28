@@ -5,6 +5,7 @@ import io.jafar.shell.cli.completion.CompletionContextType;
 import io.jafar.shell.cli.completion.ContextCompleter;
 import io.jafar.shell.cli.completion.MetadataService;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.jline.reader.Candidate;
 
@@ -35,7 +36,7 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
       CompletionContext ctx, MetadataService metadata, List<Candidate> candidates) {
     String funcName = ctx.functionName();
     String params = ctx.extras().getOrDefault("functionParams", "");
-    String partial = ctx.partialInput().toLowerCase();
+    String partial = ctx.partialInput().toLowerCase(Locale.ROOT);
 
     // If no comma yet, we're completing the first parameter (event type)
     if (!params.contains(",")) {
@@ -66,7 +67,7 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
       MetadataService metadata, String partial, List<Candidate> candidates) {
     Set<String> eventTypes = metadata.getEventTypes();
     for (String type : eventTypes) {
-      if (type.toLowerCase().startsWith(partial)) {
+      if (type.toLowerCase(Locale.ROOT).startsWith(partial)) {
         candidates.add(noSpace(type));
       }
     }
@@ -77,12 +78,18 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
       String funcName, String partial, List<Candidate> candidates) {
     if (funcName.equalsIgnoreCase("decorateByTime")) {
       addIfMatches("fields=", partial, "Fields to include from decorator events", candidates);
+      // The defaults are EventThreads': sampledThread for samples, else eventThread
       addIfMatches(
-          "threadPath=", partial, "Path to thread in primary events (default: thread)", candidates);
+          "threadPath=",
+          partial,
+          "Thread id path in primary events (default: the event's own thread -"
+              + " sampledThread for samples, else eventThread)",
+          candidates);
       addIfMatches(
           "decoratorThreadPath=",
           partial,
-          "Path to thread in decorator events (default: sampledThread)",
+          "Thread id path in decorator events (default: the event's own thread -"
+              + " sampledThread for samples, else eventThread)",
           candidates);
     } else if (funcName.equalsIgnoreCase("decorateByKey")) {
       addIfMatches("key=", partial, "Key expression for primary events", candidates);
@@ -111,7 +118,7 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
       if (decoratorType != null) {
         List<String> fieldNames = metadata.getFieldNames(decoratorType);
         for (String fieldName : fieldNames) {
-          if (fieldName.toLowerCase().startsWith(partial)) {
+          if (fieldName.toLowerCase(Locale.ROOT).startsWith(partial)) {
             candidates.add(noSpace(fieldName));
           }
         }
@@ -123,8 +130,8 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
       if (eventType != null) {
         List<String> fieldNames = metadata.getFieldNames(eventType);
         for (String fieldName : fieldNames) {
-          if (fieldName.toLowerCase().startsWith(partial)
-              && fieldName.toLowerCase().contains("thread")) {
+          if (fieldName.toLowerCase(Locale.ROOT).startsWith(partial)
+              && fieldName.toLowerCase(Locale.ROOT).contains("thread")) {
             candidates.add(noSpace(fieldName));
           }
         }
@@ -135,7 +142,7 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
       if (eventType != null) {
         List<String> fieldNames = metadata.getFieldNames(eventType);
         for (String fieldName : fieldNames) {
-          if (fieldName.toLowerCase().startsWith(partial)) {
+          if (fieldName.toLowerCase(Locale.ROOT).startsWith(partial)) {
             candidates.add(noSpace(fieldName));
           }
         }
@@ -170,7 +177,7 @@ public final class DecoratorFunctionCompleter implements ContextCompleter {
   /** Add candidate if it matches the partial input. */
   private void addIfMatches(
       String paramName, String partial, String description, List<Candidate> candidates) {
-    if (paramName.toLowerCase().startsWith(partial)) {
+    if (paramName.toLowerCase(Locale.ROOT).startsWith(partial)) {
       candidates.add(candidateNoSpace(paramName, paramName, description));
     }
   }

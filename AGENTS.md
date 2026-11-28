@@ -88,7 +88,7 @@ Key components:
 - **jafar-processor/**: Annotation processor for build-time typed handler generation (eliminates runtime bytecode generation)
 - **tools/**: Utilities including JFR file scrubbing functionality
 - **jafar-gradle-plugin/**: Gradle plugin for generating Jafar type interfaces (separate included build)
-- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions) and the scripting both shells run (`core.scripting`: variables, maps, `merge()`, `if`, `script`, lazy query variables)
+- **shell-core/**: Shared shell abstractions (Session, VariableStore, QueryEvaluator, completions) and the scripting both shells run (`core.scripting`: variables, maps, `merge()`, `if`, `script`, lazy query variables), and the transport-free JFR analyses (`core.analysis`; `core.compare`, the comparison behind `jfr_compare`, `profile_compare` and `jfr-shell compare`, for JFR and pprof)
 - **jfr-shell/**: JFR-specific interactive CLI (standalone entry point)
 - **jfr-shell-jafar/**: Jafar-parser backend plugin for jfr-shell (high priority, full-featured)
 - **jfr-shell-jdk/**: JDK JFR API backend plugin for jfr-shell (lower priority, limited capabilities)
@@ -111,7 +111,7 @@ Key components:
 - **demo/**: Standalone demonstration project (separate Gradle build in `demo/`) comparing JFR parsers
 - **go-parser/**: Pure Go port of the untyped JFR parser (standalone Go module `github.com/btraceio/jafar/go-parser`, **not part of the Gradle build**); parser only, no query language or CLI
 - **arch-tests/**: ArchUnit freeze rules for module and package boundaries (not published)
-- **test-support/**: shared test utilities (allocation meter and budgets, golden files); not published
+- **test-support/**: shared test utilities (allocation meter and budgets, the work-budget agent and budgets, golden files); not published
 
 ## Quick start
 
@@ -119,7 +119,8 @@ Key components:
 ./gradlew build                       # everything; generates the test recordings first
 ./get_resources.sh                    # optional: real recordings instead of generated ones
 ./gradlew test                        # tests
-./gradlew spotlessApply               # formatting (every build runs spotlessCheck)
+./gradlew spotlessApply                # formatting (every build runs spotlessCheck)
+./gradlew :arch-tests:test             # architectural invariants (also runs in build)
 ./gradlew :jfr-shell:run --console=plain
 ```
 
@@ -167,3 +168,28 @@ change; these cover *what a change must not leave behind*.
   body carries a `Parity: ported in this PR` or `Parity: not applicable — <reason>` line
   (`scripts/parity-check.sh`, the `parity` job in `pr-tests.yml`; locally:
   `scripts/parity-check.sh --base origin/main`).
+- **Keep the two typed handler generators at parity.** The typed parser decodes the same
+  `@JfrType` interfaces with handlers from two generators: `jafar-processor` at build time
+  (`JfrTypeProcessor` and `src/main/resources/templates/`) and `parser-codegen`'s `CodeGenerator`
+  at runtime (with `CodeGeneratorDeserializerFactory` and `FieldMapping`). They must read a
+  recording into **the same values** — nulls, absent pools, arrays, inline and pooled storage,
+  errors — **and do comparable work per value**: how a reference resolves its constant pool, how an
+  undeclared field is skipped, what runs per event. Any fix, tolerance change or performance change
+  made in one must be considered for the other, and the outcome recorded. A difference that is kept
+  on purpose (the build-time handler reuses one event object per thread; the runtime class is a
+  new object per event) is documented where the code makes it.
+
+  Why both halves: the build-time getters looked their pool up on every call while the runtime
+  classes kept it in a field. The values were identical, so no value test could see it, and the
+  build-time handlers ran reference-heavy reads at about 62% of the runtime throughput (160.8 and
+  167.0 against 261.7 ops/s, `BuildTimeHandlerBenchmark.parseAndReadReferences`, one session;
+  [BuildTimeBenchmarks.md](doc/performance/BuildTimeBenchmarks.md)).
+
+  **Enforced:** a change to one generator's production code fails CI until the PR body carries a
+  `Typed-Parity: ported in this PR` or `Typed-Parity: not applicable — <reason>` line
+  (`scripts/typed-parity-check.sh`, the `typed-parity` job in `pr-tests.yml`; locally:
+  `scripts/typed-parity-check.sh --base origin/main`). Values are held equal by
+  `BuildTimeRuntimeParityTest` (jafar-processor), which decodes the generated fixtures with both
+  and compares every event through its getters. Cost has no PR-blocking oracle: compare the two
+  with `BuildTimeHandlerBenchmark` (both `decoder` values, same session) when a change touches
+  per-value work, and put the numbers in the PR.

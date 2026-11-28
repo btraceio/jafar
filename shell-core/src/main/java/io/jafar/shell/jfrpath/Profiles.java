@@ -4,7 +4,6 @@ import static io.jafar.shell.jfrpath.JfrPath.*;
 
 import io.jafar.parser.api.ArrayType;
 import io.jafar.parser.api.ComplexType;
-import io.jafar.parser.api.Values;
 import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.FlameNode;
 import java.util.ArrayList;
@@ -13,6 +12,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -237,10 +237,8 @@ final class Profiles {
   }
 
   private static String extractThreadName(Map<String, Object> event) {
-    Object tn = Values.get(event, "eventThread", "osName");
-    if (tn == null) tn = Values.get(event, "eventThread", "javaName");
-    if (tn == null) tn = Values.get(event, "sampledThread", "osName");
-    if (tn == null) tn = Values.get(event, "sampledThread", "javaName");
+    // The same thread and name as jfr_tsa: sampledThread first, its Java name first
+    Object tn = EventThreads.name(event);
     return tn != null ? tn.toString() : "<unknown>";
   }
 
@@ -535,16 +533,21 @@ final class Profiles {
                 double threadPct = node.total == 0 ? 0 : (cnt * 100.0) / node.total;
                 threads.put(
                     e.getKey(),
-                    String.format("%d (%4.1f%%) %s", cnt, threadPct, threadBar(cnt, maxCount, 10)));
+                    String.format(
+                        Locale.ROOT,
+                        "%d (%4.1f%%) %s",
+                        cnt,
+                        threadPct,
+                        threadBar(cnt, maxCount, 10)));
               });
       row.put("threads", threads);
     }
     Map<String, Object> profile = new LinkedHashMap<>();
     profile.put("self", node.self);
     profile.put("total", node.total);
-    profile.put("totalPct", String.format("%.1f%%", pct));
+    profile.put("totalPct", String.format(Locale.ROOT, "%.1f%%", pct));
     double selfPct = node.total == 0 ? 0 : (node.self * 100.0) / node.total;
-    profile.put("selfPct", String.format("%.1f%%", selfPct));
+    profile.put("selfPct", String.format(Locale.ROOT, "%.1f%%", selfPct));
     profile.put("pattern", pattern);
     profile.put("timeBuckets", node.timeBuckets.clone());
     profile.put("threadCounts", new LinkedHashMap<>(node.threadCounts));

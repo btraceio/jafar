@@ -50,6 +50,10 @@ configurations {
     shadedInclude
 }
 
+// Resolved outside `dependencies {}` on purpose: inside it `project(':parser-core')` is a
+// ProjectDependency, which Gradle 9.9 no longer delegates project properties to (#228).
+def parserCoreTestOutput = project(':parser-core').sourceSets.test.output
+
 dependencies {
     implementation project(':parser-core')
     shadedInclude(project(':jfr2pprof')) { transitive = false }
@@ -60,7 +64,7 @@ dependencies {
     // (parser-core is shaded into the shadow JAR and removed from the POM)
     runtimeOnly 'org.slf4j:slf4j-api:2.0.5'
     runtimeOnly 'org.slf4j:slf4j-simple:2.0.5'
-    testImplementation project(':parser-core').sourceSets.test.output
+    testImplementation parserCoreTestOutput
     testImplementation 'org.assertj:assertj-core:3.24.2'
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'

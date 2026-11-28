@@ -28,13 +28,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tools.jackson.databind.ObjectMapper;
 
 /** MCP tool implementations for higher-level JFR analyses. */
 public final class JfrAnalysisTools {
 
   private static final Logger LOG = LoggerFactory.getLogger(JfrAnalysisTools.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   /**
    * The analyses themselves, which no longer live here.
@@ -69,34 +67,41 @@ public final class JfrAnalysisTools {
     this.evaluator = evaluator;
     // The analyses read the recording through the evaluator this server was given, not one of
     // their own: the injection is what lets a test substitute an empty one.
-    this.analyses =
-        new JfrAnalyses(
-            new io.jafar.shell.core.analysis.JfrQuerySource() {
-              @Override
-              public java.util.List<Map<String, Object>> evaluate(
-                  io.jafar.shell.JFRSession session, io.jafar.shell.jfrpath.JfrPath.Query query)
-                  throws Exception {
-                return evaluator.evaluate(session, query);
-              }
-
-              @Override
-              public void consume(
-                  io.jafar.shell.JFRSession session,
-                  io.jafar.shell.jfrpath.JfrPath.Query query,
-                  java.util.function.Consumer<Map<String, Object>> consumer)
-                  throws Exception {
-                evaluator.consume(session, query, consumer);
-              }
-
-              @Override
-              public Map<String, Long> countAllEventTypes(io.jafar.shell.JFRSession session)
-                  throws Exception {
-                return evaluator.countAllEventTypes(session);
-              }
-            });
+    this.analyses = new JfrAnalyses(querySource(evaluator));
     this.queryParser = queryParser;
     this.resultFactory = resultFactory;
     this.progressReporter = progressReporter;
+  }
+
+  /**
+   * The MCP server's evaluator as the shell-core analyses' query source. Shared by every core
+   * analysis this server wraps, so each reads the recording through the evaluator the server was
+   * given: the injection is what lets a test substitute one.
+   */
+  static io.jafar.shell.core.analysis.JfrQuerySource querySource(QueryEvaluator evaluator) {
+    return new io.jafar.shell.core.analysis.JfrQuerySource() {
+      @Override
+      public java.util.List<Map<String, Object>> evaluate(
+          io.jafar.shell.JFRSession session, io.jafar.shell.jfrpath.JfrPath.Query query)
+          throws Exception {
+        return evaluator.evaluate(session, query);
+      }
+
+      @Override
+      public void consume(
+          io.jafar.shell.JFRSession session,
+          io.jafar.shell.jfrpath.JfrPath.Query query,
+          java.util.function.Consumer<Map<String, Object>> consumer)
+          throws Exception {
+        evaluator.consume(session, query, consumer);
+      }
+
+      @Override
+      public Map<String, Long> countAllEventTypes(io.jafar.shell.JFRSession session)
+          throws Exception {
+        return evaluator.countAllEventTypes(session);
+      }
+    };
   }
 
   private static Tool buildTool(String name, String description, String schema) {

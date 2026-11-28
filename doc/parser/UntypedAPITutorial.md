@@ -82,9 +82,9 @@ The `Values` utility class provides safe field access:
 - `Values.as(map, Class, "field")` - get typed value with Optional
 - Handles null values gracefully
 - `Values.resolvedDeep(map)` - copy with every wrapper unwrapped; a reference to a JFR simple type
-  (e.g. `jdk.types.ThreadState`) stays a one-entry map such as `{name=RUNNABLE}`
+  (e.g. `jdk.types.ThreadState`) stays a one-entry map such as `{name=STATE_RUNNABLE}`
 - `Values.resolvedDeepCollapsed(map)` - the same, but simple-type references become their value
-  (`RUNNABLE`), as in the typed API. A genuine one-field struct keeps its map. Decided by the
+  (`STATE_RUNNABLE`), as in the typed API. A genuine one-field struct keeps its map. Decided by the
   recording's metadata via `ComplexType.isSimpleType()`
 
 `UntypedStrategy` is accepted by `newUntypedParser(path, strategy)` but is currently a hint with no
@@ -486,24 +486,35 @@ parser.handle((type, value, ctl) -> {
 
 ### Counting Event Types
 
-Discover all event types in a recording:
+Count the events of every type without decoding any of them:
 
 ```java
-Map<String, AtomicLong> eventCounts = new ConcurrentHashMap<>();
-
-parser.handle((type, value, ctl) -> {
-    eventCounts.computeIfAbsent(type.getName(), k -> new AtomicLong())
-              .incrementAndGet();
-});
-
-parser.run();
-
-// Display results
-eventCounts.entrySet().stream()
-    .sorted(Map.Entry.<String, AtomicLong>comparingByValue((a, b) ->
-        Long.compare(b.get(), a.get())))
-    .forEach(e -> System.out.printf("%6d %s%n", e.getValue().get(), e.getKey()));
+SortedMap<String, Long> counts = parser.countEvents(); // runs the parse
+counts.forEach((name, count) -> System.out.printf("%8d %s%n", count, name));
 ```
+
+`countEvents(TypeFilter)` counts only the types the filter accepts. Both read each event's header
+and skip its payload, `startTime` included: on the 124.8 MB, 32-chunk recording of
+`QueryPushdownBenchmark`, counting took 91 ms this way and 451-477 ms by decoding every event in a
+handler (JDK 21, 4 processors).
+
+For more than the count, register a header handler. It receives the event's type, its size in
+bytes and its `startTime`, still without the event being decoded:
+
+```java
+Map<String, LongAdder> bytes = new ConcurrentHashMap<>();
+parser.handleHeaders(
+    type -> true,
+    (type, size, startTime, ctl) ->
+        bytes.computeIfAbsent(type.getName(), k -> new LongAdder()).add(size));
+parser.run();
+```
+
+`startTime` is the value a decoded event carries under `"startTime"` (epoch nanoseconds for every
+JDK event), or `UntypedJafarParser.EventHeaderHandler.NO_START_TIME` for a type without a `long startTime` field. The
+fields before it are skipped, not decoded. A header handler and a value handler can share a parse:
+an event a value handler wants is decoded for it, after the header handler has run. The Go parser
+offers the same as `Options.OnEventHeader` and `Parser.CountEvents`.
 
 ## Advanced Techniques
 
@@ -577,6 +588,12 @@ try (UntypedJafarParser parser = ctx.newUntypedParser(Paths.get("recording2.jfr"
 
 System.out.println("Total uptime: " + ctx.uptime() + "ns");
 ```
+
+Parsers made from the same context reuse each other's generated event deserializers: the second
+parse of a recording, or of another recording written by the same JVM build and agents, generates
+none. Recordings from different producers usually share nothing, because the cache key includes
+the type ids the producer assigned. `UntypedJafarParser.open(path)` takes no context and reuses
+nothing between parses.
 
 ### Early Termination
 

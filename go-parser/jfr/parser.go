@@ -34,6 +34,7 @@ package jfr
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 )
 
@@ -54,6 +55,28 @@ type Event struct {
 // Get looks a value up by path; see the package level Get function.
 func (e *Event) Get(path ...any) any {
 	return Get(e.Values, path...)
+}
+
+// NoStartTime is the EventHeader.StartTime of an event whose type has no
+// startTime field of type long (not an array, not a constant pool reference).
+const NoStartTime = math.MinInt64
+
+// EventHeader is what Options.OnEventHeader receives for an event, without the
+// event being decoded.
+type EventHeader struct {
+	// Type is the event type.
+	Type *ClassType
+	// Size is the event's size in bytes as the recording stores it, header
+	// included.
+	Size int64
+	// StartTime is the value the decoded event carries under "startTime":
+	// nanoseconds since the epoch for a jdk.jfr.Timestamp(TICKS) field, which
+	// every JDK event has, otherwise the stored value; or NoStartTime when the
+	// type has no long startTime field. The fields before it are skipped, not
+	// decoded.
+	StartTime int64
+	// Chunk describes the chunk the event belongs to.
+	Chunk *ChunkInfo
 }
 
 // EventFunc is called for every decoded event. Returning ErrStop ends parsing
@@ -102,6 +125,27 @@ type Options struct {
 
 	// OnChunkEnd, when set, is called once per chunk after its last event.
 	OnChunkEnd func(*ChunkInfo) error
+
+	// OnEventHeader, when set, is called for every event whose type
+	// HeaderFilter accepts (every event when HeaderFilter is nil), before the
+	// event is decoded and whether or not it is: an event TypeFilter rejects is
+	// still skipped without being decoded, so with a TypeFilter that rejects
+	// everything the parser reads each event's header and nothing more, which
+	// is what counting events per type needs (CountEvents does that). It is not
+	// called for an event whose type the chunk metadata does not declare.
+	// Returning ErrStop ends parsing successfully; any other error aborts it.
+	//
+	// While it is set, Options.StartTime skips no chunk: OnEventHeader asks for
+	// every chunk.
+	OnEventHeader func(EventHeader) error
+
+	// HeaderFilter, when set, selects the event types OnEventHeader is called
+	// for.
+	HeaderFilter func(*ClassType) bool
+
+	// headerWithoutStartTime makes every EventHeader carry NoStartTime without
+	// reading the payload. CountEvents sets it: a count needs no start time.
+	headerWithoutStartTime bool
 
 	// ReuseValues lets the parser recycle the maps, arrays and constant pool
 	// references that make up an event, per event type, so that after the first
@@ -247,7 +291,7 @@ func (p *Parser) parse(opts Options, fn EventFunc) error {
 		if err := c.readChunkMetadata(); err != nil {
 			return fmt.Errorf("%s: chunk %d: %w", p.name, header.Order, err)
 		}
-		if opts.StartTime != nil && !needsChunk(opts.TypeFilter, opts.StartTime, header, c.md) {
+		if opts.StartTime != nil && opts.OnEventHeader == nil && !needsChunk(opts.TypeFilter, opts.StartTime, header, c.md) {
 			if opts.OnChunkSkipped != nil {
 				return opts.OnChunkSkipped(c.info, c.md)
 			}
@@ -542,7 +586,7 @@ func (c *chunkParser) readEvents(fn EventFunc) error {
 		// Type IDs 0 and 1 are the metadata and checkpoint events, which are
 		// read separately.
 		if eventType > 1 {
-			if err := c.readEvent(r, eventType, fn); err != nil {
+			if err := c.readEvent(r, eventType, eventSize, fn); err != nil {
 				return err
 			}
 		}
@@ -551,10 +595,20 @@ func (c *chunkParser) readEvents(fn EventFunc) error {
 	return nil
 }
 
-func (c *chunkParser) readEvent(r *reader, typeID int64, fn EventFunc) error {
+func (c *chunkParser) readEvent(r *reader, typeID int64, size int64, fn EventFunc) error {
 	class := c.md.Class(typeID)
 	if class == nil {
 		return c.recoverable(fmt.Errorf("event at %d: type %d is not declared in the chunk metadata", r.position(), typeID))
+	}
+	if c.opts.OnEventHeader != nil && (c.opts.HeaderFilter == nil || c.opts.HeaderFilter(class)) {
+		startTime := int64(NoStartTime)
+		if !c.opts.headerWithoutStartTime {
+			startTime = c.peekStartTime(r, class)
+		}
+		header := EventHeader{Type: class, Size: size, StartTime: startTime, Chunk: c.info}
+		if err := c.opts.OnEventHeader(header); err != nil {
+			return &handlerError{err}
+		}
 	}
 	if c.opts.TypeFilter != nil && !c.opts.TypeFilter(class) {
 		return nil

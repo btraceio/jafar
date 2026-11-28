@@ -154,7 +154,6 @@ public final class HdumpCompletionContextAnalyzer {
   private CompletionContext analyzePathContext(ParsedLine line, String expression) {
     String fullLine = line.line();
     int cursor = line.cursor();
-    String currentWord = line.word();
 
     // Extract root type and remaining path
     int slashPos = expression.indexOf('/');
@@ -301,13 +300,13 @@ public final class HdumpCompletionContextAnalyzer {
 
   private String extractExpression(String line) {
     // Find 'show ' and return everything after
-    int showIdx = line.toLowerCase().indexOf("show ");
+    int showIdx = line.toLowerCase(Locale.ROOT).indexOf("show ");
     if (showIdx >= 0) {
       return line.substring(showIdx + 5).trim();
     }
     // Short syntax: line starts with root type (objects/classes/gcroots)
     String trimmed = line.trim();
-    String lower = trimmed.toLowerCase();
+    String lower = trimmed.toLowerCase(Locale.ROOT);
     if (lower.startsWith("objects")
         || lower.startsWith("classes")
         || lower.startsWith("gcroots")

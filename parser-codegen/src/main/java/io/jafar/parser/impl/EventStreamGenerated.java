@@ -120,11 +120,21 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
     MetadataClass eventClz = context.getMetadataLookup().getClass(typeId);
     // Decided before decoding: an event no handler wants costs its header and nothing else. An id
     // the metadata does not declare is not skipped, so it is still reported as undecodable.
-    Object selection = eventClz == null ? Boolean.TRUE : select(context, typeId, eventClz);
+    Object selection =
+        eventClz == null ? Boolean.TRUE : select(context, typeId, eventClz, rawSize, ctl);
     if (selection == null) {
-      // The listener still sees the event; StreamingChunkParser repositions past its payload.
-      return delegate == null
-          || delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
+      // The listener still sees the event; StreamingChunkParser repositions past its payload. A
+      // header handler may have aborted (in select): then nothing more of this chunk is read.
+      if (ctl.isAborted()) {
+        return false;
+      }
+      if (delegate == null) {
+        return true;
+      }
+      // select may have read into the payload: the listener gets the stream at its start, as
+      // it would without select
+      context.get(RecordingStream.class).position(eventStartPos + rawSize - payloadSize);
+      return delegate.onEvent(context, typeId, eventStartPos, rawSize, payloadSize);
     }
     Map<String, Object> value;
     try {
@@ -349,6 +359,23 @@ public abstract class EventStreamGenerated implements ChunkParserListener {
    */
   protected Object select(ParserContext context, long typeId, MetadataClass type) {
     return Boolean.TRUE;
+  }
+
+  /**
+   * {@link #select(ParserContext, long, MetadataClass)} with the event's size and the parse's
+   * control, called with the chunk's {@code RecordingStream} at the start of the event's payload.
+   * An override may read from the stream to look at the payload. When it returns a selection it
+   * must leave the stream at that position, for the event is decoded from there; when it returns
+   * {@code null} it may leave the stream anywhere within the event, and the stream is put back at
+   * the payload's start before the chunk parser listener sees the event. The default calls {@link
+   * #select(ParserContext, long, MetadataClass)}.
+   *
+   * @param size the event's size in bytes, header included
+   * @param ctl the control object for this parsing session
+   */
+  protected Object select(
+      ParserContext context, long typeId, MetadataClass type, long size, Control ctl) {
+    return select(context, typeId, type);
   }
 
   /**

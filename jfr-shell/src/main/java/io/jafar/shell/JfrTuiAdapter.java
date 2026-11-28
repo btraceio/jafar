@@ -13,14 +13,12 @@ import io.jafar.shell.providers.ConstantPoolProvider;
 import io.jafar.shell.providers.MetadataProvider;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.LongAdder;
 import org.jline.reader.Completer;
 
 /**
@@ -29,12 +27,10 @@ import org.jline.reader.Completer;
  */
 public final class JfrTuiAdapter implements TuiAdapter {
 
-  private final SessionManager<?> sessions;
   private final Completer completer;
 
   @SuppressWarnings("unchecked")
   public JfrTuiAdapter(SessionManager<?> sessions, Object context) {
-    this.sessions = sessions;
     CommandDispatcher dispatcher = context instanceof CommandDispatcher cd ? cd : null;
     // Erasure-safe wildcard-to-Session view (see JfrModule.getCompleter); ShellCompleter
     // narrows per-call where it needs JFRSession, so a live session flows through safely.
@@ -64,7 +60,7 @@ public final class JfrTuiAdapter implements TuiAdapter {
     String[] parts = command.trim().split("\\s+");
     if (parts.length == 0) return null;
 
-    String first = parts[0].toLowerCase();
+    String first = parts[0].toLowerCase(Locale.ROOT);
     // Metadata browser
     if (isMetadataSummaryCommand(parts, first)) return "metadata";
     // Constants browser
@@ -162,25 +158,19 @@ public final class JfrTuiAdapter implements TuiAdapter {
   }
 
   private List<Map<String, Object>> loadEventsSummary(Path recording) throws Exception {
-    // The handler runs on one parser thread per chunk (StreamingChunkParser's pool), so the map and
-    // the per-type counters must both be safe for concurrent update. Counts are commutative, so the
-    // totals do not depend on which chunk finishes first.
-    Map<String, LongAdder> counts = new ConcurrentHashMap<>();
+    // Counted from the event headers: no event is decoded (UntypedJafarParser.countEvents).
+    Map<String, Long> counts;
     try (var p = ParsingContext.create().newUntypedParser(recording)) {
-      p.handle(
-          (type, value, ctl) ->
-              counts.computeIfAbsent(type.getName(), k -> new LongAdder()).increment());
-      p.run();
+      counts = p.countEvents();
     }
     List<Map<String, Object>> summary = new ArrayList<>();
-    counts.forEach(
-        (name, c) -> {
+    counts.forEach( // in name order
+        (name, count) -> {
           Map<String, Object> row = new LinkedHashMap<>();
           row.put("name", name);
-          row.put("count", c.sum());
+          row.put("count", count);
           summary.add(row);
         });
-    summary.sort(Comparator.comparing(r -> String.valueOf(r.get("name"))));
     return summary;
   }
 

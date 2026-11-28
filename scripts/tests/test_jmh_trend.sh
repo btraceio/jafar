@@ -189,5 +189,90 @@ run "empty result file beside a full one, nothing required: 0" 0 "X.parse" -- --
 run "empty result file beside a full one, benchmark required: 2" 2 "no result for required benchmark(s)" -- \
     --current "$W/cur" --require QueryPushdownBenchmark.typeFilterInParser
 
+# 15. --ratio: one benchmark's score over another's, within a run, paired on
+#     the parameters both have. recp writes a record with arbitrary params.
+recp() { # recp <benchmark> <score> <unit> [param=value ...]
+    local bench="$1" score="$2" unit="$3"
+    shift 3
+    local params="" kv
+    for kv in "$@"; do
+        params="$params${params:+,}\"${kv%%=*}\":\"${kv#*=}\""
+    done
+    printf '{"benchmark":"%s","mode":"avgt","params":{%s},"primaryMetric":{"score":%s,"scoreError":"NaN","scoreUnit":"%s"}}' \
+        "$bench" "$params" "$score" "$unit"
+}
+B=io.jafar.parser.benchmark.Q
+ratio_fixture() { # ratio_fixture <dir> <all-rare> <filter-rare> <all-common> <filter-common> <ceiling>
+    mkdir -p "$1"
+    printf '[%s,%s,%s,%s,%s]' \
+        "$(recp $B.all "$2" ms/op chunks=32 type=Rare)" \
+        "$(recp $B.filter "$3" ms/op chunks=32 type=Rare)" \
+        "$(recp $B.all "$4" ms/op chunks=32 type=Common)" \
+        "$(recp $B.filter "$5" ms/op chunks=32 type=Common)" \
+        "$(recp $B.ceiling "$6" ms/op chunks=32)" > "$1/pushdown.json"
+}
+W=$(mktemp -d)
+ratio_fixture "$W/cur" 600 75 600 600 50
+# the previous run was on a machine half as fast: every score doubles, no ratio moves
+ratio_fixture "$W/prev" 1200 150 1200 1200 100
+run "ratio paired on shared params: 8 for Rare, 1 for Common" 0 \
+    "| speedup | chunks=32,type=Rare | 8 | - | new |" \
+    "| speedup | chunks=32,type=Common | 1 | - | new |" \
+    "- speedup = Q.all / Q.filter" -- \
+    --current "$W/cur" --ratio "speedup=Q.all/Q.filter"
+run "a slower machine moves every score and no ratio: +0.0%" 0 \
+    "| speedup | chunks=32,type=Rare | 8 | 8 | +0.0% |" "-50.0%" -- \
+    --current "$W/cur" --previous "$W/prev" --ratio "speedup=Q.all/Q.filter"
+run "a denominator with fewer params pairs with every numerator row" 0 \
+    "| over ceiling | chunks=32,type=Rare | 1.5 | - | new |" \
+    "| over ceiling | chunks=32,type=Common | 12 | - | new |" -- \
+    --current "$W/cur" --ratio "over ceiling=Q.filter/Q.ceiling"
+run "a side narrowed with [param=value]" 0 \
+    "| ceiling share | chunks=32 | 0.667 | - | new |" \
+    "- ceiling share = Q.ceiling / Q.filter[type=Rare]" -- \
+    --current "$W/cur" --ratio "ceiling share=Q.ceiling/Q.filter[type=Rare]"
+# a real change in one benchmark shows as a ratio delta
+ratio_fixture "$W/regressed" 600 150 600 600 50
+run "the filter got twice as slow: the ratio halves" 0 \
+    "| speedup | chunks=32,type=Rare | 4 | 8 | -50.0% |" -- \
+    --current "$W/regressed" --previous "$W/prev" --ratio "speedup=Q.all/Q.filter"
+# the previous run predates the benchmark: new, not an error
+mkdir "$W/old"
+rec io.jafar.parser.benchmark.X.parse 100 2 test.jfr > "$W/old/parser-core.json"
+run "previous run without the benchmarks: ratio is new, 0" 0 \
+    "| speedup | chunks=32,type=Rare | 8 | - | new |" -- \
+    --current "$W/cur" --previous "$W/old" --ratio "speedup=Q.all/Q.filter"
+
+# 16. A ratio the current run cannot provide is refused (R3), naming the reason.
+run "ratio numerator absent: 2" 2 "cannot be computed" "no result for the numerator Q.missing" -- \
+    --current "$W/cur" --ratio "x=Q.missing/Q.filter"
+run "ratio denominator absent: 2" 2 "no result for the denominator Q.missing" -- \
+    --current "$W/cur" --ratio "x=Q.all/Q.missing"
+run "ambiguous pairing: 2, says how to fix it" 2 "pairs with 2 results of Q.filter, not 1" "[param=value]" -- \
+    --current "$W/cur" --ratio "x=Q.ceiling/Q.filter"
+run "narrowed to nothing: 2" 2 "no result for the denominator Q.filter" -- \
+    --current "$W/cur" --ratio "x=Q.ceiling/Q.filter[type=Nope]"
+mkdir "$W/units"
+printf '[%s,%s]' "$(recp $B.all 600 ms/op chunks=32)" "$(recp $B.filter 5 ops/s chunks=32)" > "$W/units/a.json"
+run "different units: 2" 2 "Q.all is in ms/op and Q.filter in ops/s" -- \
+    --current "$W/units" --ratio "x=Q.all/Q.filter"
+mkdir "$W/zero"
+printf '[%s,%s]' "$(recp $B.all 600 ms/op chunks=32)" "$(recp $B.filter 0 ms/op chunks=32)" > "$W/zero/a.json"
+run "zero denominator: n/a, still 0" 0 "| x | chunks=32 | n/a | - | new |" -- \
+    --current "$W/zero" --ratio "x=Q.all/Q.filter"
+
+# 17. A malformed --ratio is the caller's bug: 2 before any data is read.
+run "ratio without a label: 2" 2 "expected LABEL=NUMERATOR/DENOMINATOR" -- \
+    --current "$W/no-such-dir" --ratio "Q.all/Q.filter"
+run "ratio without a denominator: 2" 2 "expected LABEL=NUMERATOR/DENOMINATOR" -- \
+    --current "$W/no-such-dir" --ratio "x=Q.all"
+run "ratio with a bad parameter: 2" 2 "is not param=value" -- \
+    --current "$W/no-such-dir" --ratio "x=Q.all[type]/Q.filter"
+# a slash inside [...] belongs to the parameter value (a file path)
+mkdir "$W/path"
+printf '[%s,%s]' "$(recp $B.all 600 ms/op file=a/b.jfr)" "$(recp $B.filter 200 ms/op file=a/b.jfr)" > "$W/path/a.json"
+run "slash inside a parameter value is not the separator" 0 "| x | file=a/b.jfr | 3 | - | new |" -- \
+    --current "$W/path" --ratio "x=Q.all[file=a/b.jfr]/Q.filter"
+
 printf '%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

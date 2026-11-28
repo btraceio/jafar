@@ -11,10 +11,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 /**
- * The Go parser's tests read {@link NodePoolFixture}'s recordings from {@code
- * go-parser/jfr/testdata}, so both untyped parsers are tested against the same bytes. This fails
- * when a checked-in file differs from what {@link NodePoolFixture} builds (Verification.md R7: one
- * source of truth, and a test that fails on drift).
+ * The Go parser's tests read {@link NodePoolFixture}'s and {@link StartTimeShapesFixture}'s
+ * recordings from {@code go-parser/jfr/testdata}, so both untyped parsers are tested against the
+ * same bytes. This fails when a checked-in file differs from what {@link NodePoolFixture} builds
+ * (Verification.md R7: one source of truth, and a test that fails on drift).
  *
  * <p>To regenerate after changing {@link NodePoolFixture} or {@link SyntheticRecording}, run this
  * test with {@code JAFAR_WRITE_FIXTURES=1} in the environment and commit the files:
@@ -42,6 +42,23 @@ class SharedFixturesTest {
         expected,
         Files.readAllBytes(file),
         file + " differs from NodePoolFixture." + shape + "; regenerate it with " + WRITE + "=1");
+  }
+
+  @org.junit.jupiter.api.Test
+  void goTestdataMatchesTheStartTimeShapesFixture() throws Exception {
+    Path file = testdata().resolve(StartTimeShapesFixture.FILE_NAME);
+    byte[] expected = StartTimeShapesFixture.bytes();
+    if ("1".equals(System.getenv(WRITE))) {
+      Files.createDirectories(file.getParent());
+      Files.write(file, expected);
+    }
+    assertTrue(
+        Files.exists(file),
+        file + " is missing; regenerate it with " + WRITE + "=1 (class javadoc)");
+    assertArrayEquals(
+        expected,
+        Files.readAllBytes(file),
+        file + " differs from StartTimeShapesFixture; regenerate it with " + WRITE + "=1");
   }
 
   /** {@code go-parser/jfr/testdata}, found from the working directory upwards. */

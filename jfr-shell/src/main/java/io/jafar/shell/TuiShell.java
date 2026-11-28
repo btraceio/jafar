@@ -109,10 +109,9 @@ public final class TuiShell implements AutoCloseable {
   /** Pre-open a file if the path exists. */
   public void openIfPresent(Path filePath) {
     if (filePath == null || !Files.exists(filePath)) return;
-    try {
-      components.dispatcher.dispatch("open " + filePath);
-    } catch (Exception ignore) {
-    }
+    // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233).
+    // A failure is reported by open itself.
+    components.dispatcher.open(filePath, null);
   }
 
   /** Enter full-screen mode and run the draw/event loop until exit. */
@@ -126,10 +125,12 @@ public final class TuiShell implements AutoCloseable {
     try {
       components.dispatcher.getGlobalStore().clear();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     try {
       sessions.closeAll();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
     commandExecutor.shutdownNow();
 
@@ -137,6 +138,7 @@ public final class TuiShell implements AutoCloseable {
       try {
         module.shutdown();
       } catch (Exception ignore) {
+        // one module failing to shut down must not stop the others
       }
     }
 

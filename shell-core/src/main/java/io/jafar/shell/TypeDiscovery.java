@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
  * Discovers available JFR event types in a recording and can generate typed interfaces for them on
@@ -28,37 +29,46 @@ public final class TypeDiscovery {
   /**
    * Discover all event types available in the given recording.
    *
+   * <p>Only the metadata of each chunk is read: the listener declines every chunk's events, so none
+   * is decoded. Chunks are parsed on a thread pool, so each chunk collects into its own map and the
+   * maps are merged in chunk order after the parse, a later chunk's class replacing an earlier
+   * one's of the same name.
+   *
    * @param recordingPath path to the JFR recording
    * @return map of event type names to their metadata
    * @throws IOException if reading fails
    */
   public Map<String, MetadataClass> discoverTypes(Path recordingPath) throws Exception {
-    Map<String, MetadataClass> discoveredTypes = new HashMap<>();
+    ConcurrentSkipListMap<Integer, Map<String, MetadataClass>> byChunk =
+        new ConcurrentSkipListMap<>();
 
-    // Use untyped parser just to collect metadata
-    try (UntypedJafarParser parser = parsingContext.newUntypedParser(recordingPath)) {
-      parser.withParserListener(
-          new io.jafar.parser.internal_api.ChunkParserListener() {
-            @Override
-            public boolean onMetadata(
-                io.jafar.parser.api.ParserContext context, MetadataEvent metadata) {
-              for (MetadataClass clazz : metadata.getClasses()) {
-                if (isEventType(clazz)) {
-                  discoveredTypes.put(clazz.getName(), clazz);
-                }
-              }
-              return true;
-            }
-          });
-
-      // Register a no-op handler to trigger metadata discovery
-      parser.handle(
-          (type, value, ctl) -> {
-            /* no-op */
-          });
+    // withParserListener returns a new parser with the listener installed; the one it is called on
+    // stays without it.
+    try (UntypedJafarParser base = parsingContext.newUntypedParser(recordingPath);
+        UntypedJafarParser parser =
+            base.withParserListener(
+                new io.jafar.parser.internal_api.ChunkParserListener() {
+                  @Override
+                  public boolean onMetadata(
+                      io.jafar.parser.api.ParserContext context, MetadataEvent metadata) {
+                    Map<String, MetadataClass> chunkTypes = new HashMap<>();
+                    for (MetadataClass clazz : metadata.getClasses()) {
+                      if (isEventType(clazz)) {
+                        chunkTypes.put(clazz.getName(), clazz);
+                      }
+                    }
+                    byChunk.put(context.getChunkIndex(), chunkTypes);
+                    // Skip this chunk's events; its metadata is all discovery needs.
+                    return false;
+                  }
+                })) {
       parser.run();
     }
 
+    Map<String, MetadataClass> discoveredTypes = new HashMap<>();
+    for (Map<String, MetadataClass> chunkTypes : byChunk.values()) { // ascending chunk index
+      discoveredTypes.putAll(chunkTypes);
+    }
     return discoveredTypes;
   }
 
@@ -102,19 +112,10 @@ public final class TypeDiscovery {
    * @throws IOException if reading fails
    */
   public Map<String, Long> getTypeCounts(Path recordingPath) throws Exception {
-    // The handler runs on several chunk-parsing threads at once.
-    Map<String, Long> typeCounts = new java.util.concurrent.ConcurrentHashMap<>();
-
+    // Counted from the event headers: no event is decoded (UntypedJafarParser.countEvents).
     try (UntypedJafarParser parser = parsingContext.newUntypedParser(recordingPath)) {
-      parser.handle(
-          (type, value, ctl) -> {
-            String typeName = type.getName();
-            typeCounts.merge(typeName, 1L, Long::sum);
-          });
-      parser.run();
+      return parser.countEvents();
     }
-
-    return typeCounts;
   }
 
   /**
@@ -191,17 +192,5 @@ public final class TypeDiscovery {
     }
 
     return false;
-  }
-
-  /**
-   * Convert JFR type name to Java interface name. e.g., "jdk.ExecutionSample" ->
-   * "JFRExecutionSample"
-   *
-   * @param typeName JFR type name
-   * @return Java interface name
-   */
-  private String toJavaInterfaceName(String typeName) {
-    String simpleName = typeName.substring(typeName.lastIndexOf('.') + 1);
-    return "JFR" + simpleName;
   }
 }

@@ -87,17 +87,13 @@ jobs:
           go-version: '1.24'
           cache: false
 
-      # The recordings are generated rather than downloaded (test-recordings
-      # module): the small ones the correctness tests read, and one large
-      # multi-chunk recording for the benchmarks, written a chunk at a time.
-      - name: Set up JDK 21 for the recording generator
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
       - name: Setup Gradle caching
         uses: gradle/actions/setup-gradle@v4
+
+      # Liberica JDK 8, 25 and 21 (the default), and Gradle pointed at exactly these:
+      # see .github/actions/liberica-jdks.
+      - name: Liberica JDKs for Gradle toolchains
+        uses: ./.github/actions/liberica-jdks
 
       - name: Generate recordings
         run: |

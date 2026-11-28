@@ -5,7 +5,9 @@ import io.jafar.shell.backend.BackendCapability;
 import io.jafar.shell.backend.BackendRegistry;
 import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.core.FlameNode;
+import io.jafar.shell.core.JsonText;
 import io.jafar.shell.core.LazyQueryValue;
+import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -16,6 +18,7 @@ import io.jafar.shell.core.VariableStore.Value;
 import io.jafar.shell.core.analysis.AnalysisTarget;
 import io.jafar.shell.core.analysis.JfrAnalyses;
 import io.jafar.shell.core.analysis.Progress;
+import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.llm.LlmSettings;
 import io.jafar.shell.core.llm.PromptBuilder;
 import io.jafar.shell.core.llm.SecretCommands;
@@ -46,7 +49,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -230,12 +232,12 @@ public class CommandDispatcher {
   public static boolean isVerboseEnabled() {
     String prop = System.getProperty("jfr.shell.verbose");
     if (prop != null) {
-      String v = prop.trim().toLowerCase();
+      String v = prop.trim().toLowerCase(Locale.ROOT);
       return v.equals("1") || v.equals("on") || v.equals("true");
     }
     String env = System.getenv("JFR_SHELL_VERBOSE");
     if (env != null) {
-      String v = env.trim().toLowerCase();
+      String v = env.trim().toLowerCase(Locale.ROOT);
       return v.equals("1") || v.equals("on") || v.equals("true");
     }
     return false;
@@ -739,6 +741,20 @@ public class CommandDispatcher {
   }
 
   /**
+   * The transcript's line that opens {@code recording}: {@code open} with the path in a form that
+   * reads back (quoted when it has spaces, #233), or, for the rare path no form of {@code open} can
+   * express, a comment saying so - a broken {@code open} line would run every later query with no
+   * session.
+   */
+  static String transcriptOpenLine(String recording) {
+    try {
+      return "open " + OpenArguments.quote(recording);
+    } catch (IllegalArgumentException e) {
+      return "# open cannot express this recording's path; open it by hand: " + recording;
+    }
+  }
+
+  /**
    * Writes an investigation's queries to a {@code .jfrs} script beside the recording's directory.
    *
    * <p>An investigation driven by a model is not reproducible; the script it ran is. This is the
@@ -755,7 +771,7 @@ public class CommandDispatcher {
       Files.createDirectories(directory);
       String stamp =
           java.time.LocalDateTime.now()
-              .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+              .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT));
       Path script = directory.resolve("ask-" + stamp + ".jfrs");
 
       StringBuilder sb = new StringBuilder();
@@ -765,7 +781,8 @@ public class CommandDispatcher {
       sb.append("# what it actually ran, and re-running them is how you check it.\n");
       var current = sessions.current();
       if (current.isPresent()) {
-        sb.append("open ").append(current.get().session.getFilePath()).append('\n');
+        sb.append(transcriptOpenLine(String.valueOf(current.get().session.getFilePath())))
+            .append('\n');
       }
       for (String query : queries) {
         sb.append(query).append('\n');
@@ -954,7 +971,8 @@ public class CommandDispatcher {
           llmCommands().llm(args);
           return true;
         case "open":
-          cmdOpen(args);
+          // The unsplit rest of the line: the split above breaks a path at its spaces (#233)
+          cmdOpen(line.trim().substring(parts[0].length()));
           return true;
         case "sessions":
           cmdSessions();
@@ -1088,16 +1106,24 @@ public class CommandDispatcher {
     }
   }
 
-  private void cmdOpen(List<String> args) throws Exception {
-    if (args.isEmpty()) {
+  /**
+   * @param rest the line after {@code open}, unsplit: a path may contain spaces, quoted or not (see
+   *     {@link OpenArguments})
+   */
+  private void cmdOpen(String rest) throws Exception {
+    if (rest.isBlank()) {
       io.error("Usage: open <path> [--alias NAME]");
       return;
     }
-    String pathStr = args.get(0);
-    String alias = null;
-    if (args.size() >= 3 && "--alias".equals(args.get(1))) {
-      alias = args.get(2);
+    OpenArguments parsed;
+    try {
+      parsed = OpenArguments.parse(rest);
+    } catch (IllegalArgumentException e) {
+      io.error(e.getMessage()); // a usage message, not a runtime failure: no "Error: " prefix
+      return;
     }
+    String pathStr = parsed.path();
+    String alias = parsed.alias();
 
     // Expand ~ to user home directory
     if (pathStr.startsWith("~/")) {
@@ -1107,6 +1133,43 @@ public class CommandDispatcher {
     }
 
     Path path = Paths.get(pathStr);
+    // Before #233 open read only the first word and ignored the rest ("open rec.jfr # main").
+    // When the whole unquoted text names no file but its first word does, keep doing that, and
+    // say so rather than open something the line did not plainly name.
+    if (!parsed.quoted() && !Files.exists(path)) {
+      String[] words = pathStr.split("\\s+", 2);
+      if (words.length == 2 && Files.exists(Paths.get(words[0]))) {
+        io.println(
+            "Note: no file '"
+                + pathStr
+                + "'; opening '"
+                + words[0]
+                + "' and ignoring '"
+                + words[1]
+                + "'. Quote a path that contains spaces.");
+        path = Paths.get(words[0]);
+      }
+    }
+    openSession(path, alias);
+  }
+
+  /**
+   * Opens a recording as {@code open} does, from a path that is already parsed. A path rebuilt into
+   * an {@code open} line is split again at its spaces (#233), so callers holding a {@link Path} use
+   * this. A failure is reported as {@link #dispatch} reports one.
+   *
+   * @param path the recording
+   * @param alias the session alias, or {@code null}
+   */
+  public void open(Path path, String alias) {
+    try {
+      openSession(path, alias);
+    } catch (Exception e) {
+      io.error("Error: " + e.getMessage());
+    }
+  }
+
+  private void openSession(Path path, String alias) throws Exception {
     SessionManager.SessionRef<? extends Session> ref = sessions.open(path, alias);
     if (verbose) {
       io.println(
@@ -1407,14 +1470,19 @@ public class CommandDispatcher {
     if (args.isEmpty()) {
       // Show current backend and capabilities
       JfrBackend current = registry.getCurrent();
-      io.println("Current backend: " + current.getName() + " (" + current.getId() + ")");
-      io.println("Version: " + current.getVersion());
-      io.println("Priority: " + current.getPriority());
+      String curId = ProviderDiscovery.call(current::getId, "?");
+      String curName = ProviderDiscovery.call(current::getName, "?");
+      String curVersion = ProviderDiscovery.call(current::getVersion, "?");
+      int curPriority = ProviderDiscovery.call(current::getPriority, -1);
+      java.util.Set<BackendCapability> curCaps =
+          ProviderDiscovery.call(
+              () -> current.getCapabilities(), java.util.Set.<BackendCapability>of());
+      io.println("Current backend: " + curName + " (" + curId + ")");
+      io.println("Version: " + curVersion);
+      io.println("Priority: " + curPriority);
       io.println(
           "Capabilities: "
-              + current.getCapabilities().stream()
-                  .map(BackendCapability::name)
-                  .collect(Collectors.joining(", ")));
+              + curCaps.stream().map(BackendCapability::name).collect(Collectors.joining(", ")));
       return;
     }
 
@@ -1422,11 +1490,31 @@ public class CommandDispatcher {
 
     if ("list".equals(subcmd)) {
       io.println("Available backends:");
-      JfrBackend current = registry.getCurrent();
+      JfrBackend current;
+      try {
+        current = registry.getCurrent();
+      } catch (IllegalStateException e) {
+        // Every backend broken (or none installed) — the list below and the "Failed to load"
+        // section are exactly where the user looks then, so they must still print.
+        current = null;
+      }
       for (JfrBackend b : registry.listAll()) {
-        String marker = b.getId().equals(current.getId()) ? "*" : " ";
-        io.printf(
-            "  %s %-10s %-20s (priority: %d)%n", marker, b.getId(), b.getName(), b.getPriority());
+        String id = ProviderDiscovery.call(b::getId, "?");
+        String name = ProviderDiscovery.call(b::getName, "?");
+        int priority = ProviderDiscovery.call(b::getPriority, -1);
+        String marker =
+            current != null && id.equals(ProviderDiscovery.call(current::getId, "")) ? "*" : " ";
+        io.printf("  %s %-10s %-20s (priority: %d)%n", marker, id, name, priority);
+      }
+      var failures = registry.discoveryFailures();
+      if (!failures.isEmpty()) {
+        io.println("");
+        io.println("Failed to load:");
+        for (var failure : failures) {
+          io.println("  " + failure);
+        }
+        io.println("  Reinstall or remove the broken jar (plugins live in ~/.jfr-shell/plugins),");
+        io.println("  then restart the shell.");
       }
       io.println("");
       io.println(
@@ -2364,77 +2452,11 @@ public class CommandDispatcher {
 
   // Very small JSON pretty-printer for Maps/Lists/values
   private static void printJson(Object obj, IO io) {
-    String json = toJson(obj, 0);
+    String json = JsonText.pretty(obj);
     PagedPrinter pager = PagedPrinter.forIO(io);
     for (String line : json.split("\n", -1)) {
       pager.println(line);
     }
-  }
-
-  private static String toJson(Object obj, int indent) {
-    String ind = "  ".repeat(indent);
-    if (obj == null) return "null";
-    if (obj instanceof String s) return '"' + escapeJson(s) + '"';
-    if (obj instanceof Number || obj instanceof Boolean) return String.valueOf(obj);
-    if (obj instanceof Map<?, ?> m) {
-      StringBuilder sb = new StringBuilder();
-      sb.append("{\n");
-      boolean first = true;
-      for (var e : m.entrySet()) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind)
-            .append("  ")
-            .append('"')
-            .append(escapeJson(String.valueOf(e.getKey())))
-            .append('"')
-            .append(": ");
-        sb.append(toJson(e.getValue(), indent + 1));
-      }
-      sb.append("\n").append(ind).append("}");
-      return sb.toString();
-    }
-    if (obj instanceof Collection<?> coll) {
-      StringBuilder sb = new StringBuilder();
-      sb.append("[\n");
-      boolean first = true;
-      for (Object v : coll) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind).append("  ").append(toJson(v, indent + 1));
-      }
-      sb.append("\n").append(ind).append("]");
-      return sb.toString();
-    }
-    return '"' + escapeJson(String.valueOf(obj)) + '"';
-  }
-
-  private static String escapeJson(String s) {
-    StringBuilder sb = new StringBuilder();
-    for (int i = 0; i < s.length(); i++) {
-      char c = s.charAt(i);
-      switch (c) {
-        case '"':
-          sb.append("\\\"");
-          break;
-        case '\\':
-          sb.append("\\\\");
-          break;
-        case '\n':
-          sb.append("\\n");
-          break;
-        case '\r':
-          sb.append("\\r");
-          break;
-        case '\t':
-          sb.append("\\t");
-          break;
-        default:
-          if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
-          else sb.append(c);
-      }
-    }
-    return sb.toString();
   }
 
   private void cmdTypes(List<String> args) {
@@ -2591,7 +2613,7 @@ public class CommandDispatcher {
               + "]:");
       for (String t : types) {
         Long typeId = sess.getMetadataTypeIds().get(t);
-        String idStr = typeId != null ? String.format("%5d", typeId) : "    ?";
+        String idStr = typeId != null ? String.format(Locale.ROOT, "%5d", typeId) : "    ?";
         io.println("  " + idStr + " - " + t);
       }
     }

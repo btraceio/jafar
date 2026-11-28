@@ -4,6 +4,7 @@ import io.jafar.shell.plugin.DependencyResolver.DependencyException;
 import io.jafar.shell.plugin.DependencyResolver.ResolutionResult;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.eclipse.aether.artifact.Artifact;
@@ -207,7 +209,7 @@ final class PluginInstaller {
               Instant.now());
 
       Map<String, PluginMetadata> installed = storageManager.loadInstalled();
-      installed.put(pluginId.toLowerCase(), installedMetadata);
+      installed.put(pluginId.toLowerCase(Locale.ROOT), installedMetadata);
       storageManager.saveInstalled(installed);
 
       // 6. Verify ServiceLoader discovery (optional validation step)
@@ -240,10 +242,8 @@ final class PluginInstaller {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       try (InputStream is = Files.newInputStream(jarPath);
           DigestInputStream dis = new DigestInputStream(is, digest)) {
-        byte[] buffer = new byte[8192];
-        while (dis.read(buffer) != -1) {
-          // Just reading to compute digest
-        }
+        // Drain the stream: reading through DigestInputStream is what updates the digest
+        dis.transferTo(OutputStream.nullOutputStream());
       }
       String actualChecksum = HexFormat.of().formatHex(digest.digest());
 
@@ -275,7 +275,7 @@ final class PluginInstaller {
 
       // Remove from installed.json
       Map<String, PluginMetadata> installed = storageManager.loadInstalled();
-      installed.remove(pluginId.toLowerCase());
+      installed.remove(pluginId.toLowerCase(Locale.ROOT));
       storageManager.saveInstalled(installed);
 
     } catch (IOException ignored) {

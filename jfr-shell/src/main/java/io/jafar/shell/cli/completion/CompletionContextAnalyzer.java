@@ -6,7 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
 import org.jline.reader.ParsedLine;
 
 /**
@@ -22,11 +21,6 @@ public final class CompletionContextAnalyzer {
   private static final String[] FIELD_FUNCTIONS = {
     "sum", "groupBy", "select", "top", "decorateByTime", "decorateByKey"
   };
-
-  // Pattern to match function calls: funcName(
-  private static final Pattern FUNCTION_PATTERN =
-      Pattern.compile(
-          "(sum|groupBy|select|top|decorateByTime|decorateByKey)\\s*\\(", Pattern.CASE_INSENSITIVE);
 
   // Tokenizer for JfrPath expressions
   private final JfrPathTokenizer tokenizer = new JfrPathTokenizer();
@@ -104,73 +98,6 @@ public final class CompletionContextAnalyzer {
     return CompletionContext.builder()
         .type(CompletionContextType.COMMAND_OPTION)
         .command(command)
-        .partialInput(currentWord)
-        .fullLine(fullLine)
-        .cursor(cursor)
-        .build();
-  }
-
-  /** Analyze context specifically for 'show' command. */
-  private CompletionContext analyzeShowContext(ParsedLine line) {
-    String fullLine = line.line();
-    int cursor = line.cursor();
-    String currentWord = line.word();
-
-    // Priority 1: Check if inside filter predicate [...]
-    FilterPosition filterPos = findFilterPosition(fullLine, cursor);
-    if (filterPos != null) {
-      return analyzeFilterContext(line, filterPos);
-    }
-
-    // Priority 2: Check if inside function call
-    FunctionPosition funcPos = findFunctionPosition(fullLine, cursor);
-    if (funcPos != null) {
-      return analyzeFunctionContext(line, funcPos);
-    }
-
-    // Priority 3: Check if after pipe |
-    if (isAfterPipe(line)) {
-      return analyzePipelineContext(line);
-    }
-
-    // Priority 4: Check if typing a path
-    String expressionToken = findExpressionToken(line.words());
-    if (expressionToken != null
-        || currentWord.startsWith("events/")
-        || currentWord.startsWith("metadata/")
-        || currentWord.startsWith("constants/")
-        || currentWord.startsWith("cp/")
-        || currentWord.startsWith("chunks")) {
-
-      String pathWord =
-          currentWord.startsWith("events/")
-                  || currentWord.startsWith("metadata/")
-                  || currentWord.startsWith("constants/")
-                  || currentWord.startsWith("cp/")
-                  || currentWord.startsWith("chunks")
-              ? currentWord
-              : expressionToken;
-
-      if (pathWord != null) {
-        return analyzePathContext(line, pathWord);
-      }
-    }
-
-    // Priority 5: Check for root completion after 'show '
-    if (line.wordIndex() == 1 && !currentWord.contains("/")) {
-      return CompletionContext.builder()
-          .type(CompletionContextType.ROOT)
-          .command("show")
-          .partialInput(currentWord)
-          .fullLine(fullLine)
-          .cursor(cursor)
-          .build();
-    }
-
-    // Default: option completion
-    return CompletionContext.builder()
-        .type(CompletionContextType.COMMAND_OPTION)
-        .command("show")
         .partialInput(currentWord)
         .fullLine(fullLine)
         .cursor(cursor)
@@ -431,322 +358,6 @@ public final class CompletionContextAnalyzer {
         .fullLine(fullLine) // Use original line
         .cursor(cursor) // Use original cursor
         .extras(showContext.extras())
-        .build();
-  }
-
-  /** Analyze context when inside a filter predicate [...]. */
-  private CompletionContext analyzeFilterContext(ParsedLine line, FilterPosition filterPos) {
-    String fullLine = line.line();
-    int cursor = line.cursor();
-    String inside = filterPos.content;
-
-    // Extract event type and nested path from the path before the filter
-    String[] typeAndPath = extractEventTypeAndNestedPath(fullLine, filterPos.openBracket);
-    String eventType = typeAndPath[0];
-    String nestedPath = typeAndPath[1];
-
-    // Determine filter sub-context based on what's inside
-    CompletionContextType filterType = determineFilterSubContext(inside);
-
-    // Extract partial input based on sub-context
-    String partial = extractFilterPartialInput(inside, filterType);
-
-    // Build extras with both filterContent and nestedPath
-    java.util.Map<String, String> extras = new java.util.HashMap<>();
-    extras.put("filterContent", inside);
-    if (nestedPath != null) {
-      extras.put("nestedPath", nestedPath);
-    }
-
-    return CompletionContext.builder()
-        .type(filterType)
-        .command("show")
-        .eventType(eventType)
-        .partialInput(partial)
-        .fullLine(fullLine)
-        .cursor(cursor)
-        .extras(extras)
-        .build();
-  }
-
-  /** Determine the specific filter sub-context. */
-  private CompletionContextType determineFilterSubContext(String inside) {
-    // Strip list prefix (any:, all:, none:)
-    String content = inside;
-    if (content.startsWith("any:") || content.startsWith("all:") || content.startsWith("none:")) {
-      int colonIdx = content.indexOf(':');
-      content = content.substring(colonIdx + 1);
-    }
-
-    // Check if there's a logical operator at the end - next part needs field
-    if (content.endsWith("&& ") || content.endsWith("|| ")) {
-      return CompletionContextType.FILTER_FIELD;
-    }
-
-    // Check for complete condition (field op value) followed by space
-    // Simple heuristic: if we have an operator and something after, and ends with space
-    if (hasCompleteCondition(content) && content.endsWith(" ")) {
-      return CompletionContextType.FILTER_LOGICAL;
-    }
-
-    // Check if there's an operator
-    if (hasOperator(content)) {
-      // Check if operator is followed by complete value
-      String afterOp = getContentAfterOperator(content);
-      if (afterOp != null && !afterOp.trim().isEmpty()) {
-        // We have a value, could be typing more or need logical
-        return CompletionContextType.FILTER_LOGICAL;
-      }
-      // Operator present but no value yet
-      return CompletionContextType.FILTER_VALUE;
-    }
-
-    // Check if we're typing a field name (with or without partial)
-    String trimmed = content.trim();
-    if (trimmed.isEmpty()) {
-      return CompletionContextType.FILTER_FIELD;
-    }
-
-    // If content ends with space and trimmed has no spaces, it's a field followed by space
-    // -> suggest operators
-    if (content.endsWith(" ") && !trimmed.contains(" ")) {
-      return CompletionContextType.FILTER_OPERATOR;
-    }
-
-    // If trimmed has no space, user is typing a field path
-    // Return FILTER_FIELD - the completer will also suggest operators
-    if (!trimmed.contains(" ")) {
-      return CompletionContextType.FILTER_FIELD;
-    }
-
-    // After a field name, suggest operator
-    return CompletionContextType.FILTER_OPERATOR;
-  }
-
-  /** Extract partial input based on filter context type. */
-  private String extractFilterPartialInput(String inside, CompletionContextType type) {
-    // Strip list prefix
-    String content = inside;
-    if (content.startsWith("any:") || content.startsWith("all:") || content.startsWith("none:")) {
-      int colonIdx = content.indexOf(':');
-      content = content.substring(colonIdx + 1);
-    }
-
-    return switch (type) {
-      case FILTER_FIELD -> {
-        // After && or ||, get what's after
-        int lastAnd = content.lastIndexOf("&&");
-        int lastOr = content.lastIndexOf("||");
-        int lastLogical = Math.max(lastAnd, lastOr);
-        if (lastLogical >= 0) {
-          yield content.substring(lastLogical + 2).trim();
-        }
-        yield content.trim();
-      }
-      case FILTER_OPERATOR -> {
-        // Get what's after the last space (the field name part)
-        int lastSpace = content.lastIndexOf(' ');
-        yield lastSpace >= 0 ? content.substring(lastSpace + 1) : content;
-      }
-      case FILTER_VALUE, FILTER_LOGICAL -> "";
-      default -> content.trim();
-    };
-  }
-
-  /** Analyze context when inside a function call. */
-  private CompletionContext analyzeFunctionContext(ParsedLine line, FunctionPosition funcPos) {
-    String fullLine = line.line();
-    int cursor = line.cursor();
-    String funcName = funcPos.functionName;
-    String params = funcPos.parameters;
-
-    // Count commas to determine parameter index
-    int paramIndex = countCommas(params);
-
-    // For top(), first param is a number - only complete second param
-    if ("top".equalsIgnoreCase(funcName) && paramIndex == 0) {
-      return CompletionContext.builder()
-          .type(CompletionContextType.UNKNOWN) // Don't complete first param of top
-          .command("show")
-          .functionName(funcName)
-          .parameterIndex(paramIndex)
-          .partialInput("")
-          .fullLine(fullLine)
-          .cursor(cursor)
-          .build();
-    }
-
-    // Extract event type from earlier in the line
-    String eventType = extractEventTypeFromLine(fullLine);
-
-    // Get partial input (after last comma or opening paren)
-    String partial = extractParameterPartial(params);
-
-    return CompletionContext.builder()
-        .type(CompletionContextType.FUNCTION_PARAM)
-        .command("show")
-        .eventType(eventType)
-        .functionName(funcName)
-        .parameterIndex(paramIndex)
-        .partialInput(partial)
-        .fullLine(fullLine)
-        .cursor(cursor)
-        .extras(Map.of("functionParams", params))
-        .build();
-  }
-
-  /** Analyze context when after a pipe. */
-  private CompletionContext analyzePipelineContext(ParsedLine line) {
-    String currentWord = line.word();
-    String fullLine = line.line();
-
-    // Get what's being typed after the pipe
-    String partial = "";
-    if (currentWord.equals("|")) {
-      partial = "";
-    } else if (currentWord.startsWith("|")) {
-      partial = currentWord.substring(1).trim();
-    } else if (currentWord.endsWith("|")) {
-      partial = "";
-    } else {
-      // Previous word was |, current word is the partial
-      partial = currentWord;
-    }
-
-    String eventType = extractEventTypeFromLine(fullLine);
-
-    return CompletionContext.builder()
-        .type(CompletionContextType.PIPELINE_OPERATOR)
-        .command("show")
-        .eventType(eventType)
-        .partialInput(partial)
-        .fullLine(fullLine)
-        .cursor(line.cursor())
-        .build();
-  }
-
-  /** Analyze context when typing a path (events/, metadata/, etc.) */
-  private CompletionContext analyzePathContext(ParsedLine line, String pathWord) {
-    String fullLine = line.line();
-    int cursor = line.cursor();
-
-    // Determine root type
-    String rootType = null;
-    if (pathWord.startsWith("events/")) {
-      rootType = "events";
-    } else if (pathWord.startsWith("metadata/")) {
-      rootType = "metadata";
-    } else if (pathWord.startsWith("constants/")) {
-      rootType = "constants";
-    } else if (pathWord.startsWith("cp/")) {
-      rootType = "cp";
-    } else if (pathWord.startsWith("chunks/")) {
-      rootType = "chunks";
-    } else if (pathWord.startsWith("chunks")) {
-      rootType = "chunks";
-    }
-
-    if (rootType == null) {
-      return CompletionContext.builder()
-          .type(CompletionContextType.ROOT)
-          .command("show")
-          .partialInput(pathWord)
-          .fullLine(fullLine)
-          .cursor(cursor)
-          .build();
-    }
-
-    // Special handling for chunks/
-    if ("chunks".equals(rootType)) {
-      String rest = pathWord.length() > 7 ? pathWord.substring(7) : ""; // after "chunks/"
-      return CompletionContext.builder()
-          .type(CompletionContextType.CHUNK_ID)
-          .command("show")
-          .rootType(rootType)
-          .partialInput(rest)
-          .fullLine(fullLine)
-          .cursor(cursor)
-          .build();
-    }
-
-    // Parse path segments
-    String rest = pathWord.substring(rootType.length() + 1); // after "events/"
-
-    // Check if typing event type or field path
-    int slashIdx = rest.indexOf('/');
-    int bracketIdx = rest.indexOf('[');
-
-    if (slashIdx < 0 && bracketIdx < 0) {
-      // Still typing event type
-      return CompletionContext.builder()
-          .type(CompletionContextType.EVENT_TYPE)
-          .command("show")
-          .rootType(rootType)
-          .partialInput(rest)
-          .fullLine(fullLine)
-          .cursor(cursor)
-          .build();
-    }
-
-    // Has event type, might be typing field path
-    int typeEnd =
-        slashIdx >= 0 && bracketIdx >= 0
-            ? Math.min(slashIdx, bracketIdx)
-            : slashIdx >= 0 ? slashIdx : bracketIdx;
-
-    String eventType = rest.substring(0, typeEnd);
-
-    // Extract field path segments
-    String afterType = slashIdx >= 0 && slashIdx == typeEnd ? rest.substring(slashIdx + 1) : "";
-
-    // Strip any filter portion
-    int filterStart = afterType.indexOf('[');
-    if (filterStart >= 0) {
-      afterType = afterType.substring(0, filterStart);
-    }
-
-    List<String> fieldPath = parseFieldPath(afterType);
-
-    // Check if path ends with / (user wants to complete nested fields)
-    // Use the original pathWord to check since afterType might be empty
-    boolean endsWithSlash = pathWord.endsWith("/");
-
-    // Special handling for metadata/Type/ - suggest subprops like "fields"
-    if ("metadata".equals(rootType) && endsWithSlash && fieldPath.isEmpty()) {
-      return CompletionContext.builder()
-          .type(CompletionContextType.METADATA_SUBPROP)
-          .command("show")
-          .rootType(rootType)
-          .eventType(eventType)
-          .partialInput("")
-          .fullLine(fullLine)
-          .cursor(cursor)
-          .build();
-    }
-
-    // Determine partial and complete path
-    String partial;
-    List<String> completePath;
-
-    if (endsWithSlash || fieldPath.isEmpty()) {
-      // Ends with / or empty - all segments are complete, partial is empty
-      completePath = fieldPath;
-      partial = "";
-    } else {
-      // Last segment is being typed
-      partial = fieldPath.get(fieldPath.size() - 1);
-      completePath = new ArrayList<>(fieldPath.subList(0, fieldPath.size() - 1));
-    }
-
-    return CompletionContext.builder()
-        .type(CompletionContextType.FIELD_PATH)
-        .command("show")
-        .rootType(rootType)
-        .eventType(eventType)
-        .fieldPath(completePath)
-        .partialInput(partial)
-        .fullLine(fullLine)
-        .cursor(cursor)
         .build();
   }
 
@@ -1081,26 +692,6 @@ public final class CompletionContextAnalyzer {
     return false;
   }
 
-  /** Check if tokens only contain command and whitespace. */
-  private boolean hasOnlyCommandAndWhitespace(List<Token> tokens) {
-    boolean foundCommand = false;
-    for (Token token : tokens) {
-      if (token.type() == TokenType.EOF) {
-        break;
-      }
-      if (token.type() == TokenType.WHITESPACE) {
-        continue;
-      }
-      if (!foundCommand && token.type() == TokenType.IDENTIFIER) {
-        foundCommand = true;
-        continue;
-      }
-      // Found something other than command and whitespace
-      return false;
-    }
-    return foundCommand;
-  }
-
   /** Extract partial input from cursor token. */
   private String extractPartialInput(Token cursorToken, int cursor) {
     if (cursorToken == null || cursorToken.type() == TokenType.EOF) {
@@ -1129,7 +720,7 @@ public final class CompletionContextAnalyzer {
   // Filter function names from FunctionRegistry (single source of truth)
   private static final java.util.Set<String> FILTER_FUNCTIONS_SET =
       FunctionRegistry.getFilterFunctions().stream()
-          .map(f -> f.name().toLowerCase())
+          .map(f -> f.name().toLowerCase(Locale.ROOT))
           .collect(java.util.stream.Collectors.toSet());
 
   /** Analyze filter context from tokens. */
@@ -1254,11 +845,9 @@ public final class CompletionContextAnalyzer {
     // FILTER_LOGICAL: after complete condition (field operator value)
 
     Token lastNonWhitespace = null;
-    Token secondLastNonWhitespace = null;
     for (Token t : tokens) {
       if (t.start() >= cursor) break;
       if (t.type() != TokenType.WHITESPACE && t.type() != TokenType.EOF) {
-        secondLastNonWhitespace = lastNonWhitespace;
         lastNonWhitespace = t;
       }
     }
@@ -1855,8 +1444,6 @@ public final class CompletionContextAnalyzer {
           // Check if cursor is at or after the {
           if (cursor >= next.end()) {
             // Find closing } or cursor position
-            int varStart = next.end();
-            int varEnd = cursor;
 
             // Look for closing brace
             for (int j = i + 2; j < tokens.size(); j++) {

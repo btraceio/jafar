@@ -26,6 +26,22 @@ java {
     }
 }
 
+sourceSets {
+    jmh {
+        java {
+            srcDirs = ["src/jmh/java"]
+        }
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations {
+    jmhImplementation {
+        extendsFrom configurations.implementation
+    }
+}
+
 dependencies {
     // Core parsing utilities (shared with jfr-parser)
     api project(':parser-core')
@@ -44,6 +60,31 @@ dependencies {
     // Allocation meter + budgets (test-support); the parse is single-threaded, so the budget
     // test runs in the normal `test` task (D9) — no dedicated allocationTest task here.
     testImplementation project(':test-support')
+
+    jmhImplementation project(':parser-core')
+    jmhImplementation 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+}
+
+// JMH benchmarks (operators: parse, dominator tree, retained sizes, path to GC root).
+// ./gradlew :hdump-parser:jmh -PjmhArgs="-rf json -rff build/jmh/hdump-parser.json <regex>"
+// Fixtures (real JVM heap dumps) are generated on first use into hdump-parser/build/jmh-fixtures.
+// Keep the benchmarks compiling: `check` (and so `build`) compiles them without running them.
+tasks.named('check') { dependsOn compileJmhJava }
+
+tasks.register('jmh', JavaExec) {
+    description = 'Runs JMH benchmarks'
+    group = 'verification'
+    dependsOn compileJmhJava
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass.set('org.openjdk.jmh.Main')
+    workingDir = rootProject.projectDir
+    systemProperty 'hdump.bench.fixtures', layout.buildDirectory.dir('jmh-fixtures').get().asFile.absolutePath
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+
+    if (project.hasProperty('jmhArgs')) {
+        setArgs(Arrays.asList(project.jmhArgs.split(' ')))
+    }
 }
 
 def allocationBudgetsFile = rootProject.file('gradle/allocation-budgets.properties')

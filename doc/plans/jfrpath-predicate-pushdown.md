@@ -468,3 +468,14 @@ Both were fixed afterwards, in separate commits: the chunk duration in `ChunkInf
 
 Task 7 followed: `nightly-jmh.yml` runs `QueryPushdownBenchmark` and the trend step requires
 each of its methods to have a result (`jmh_trend.py --require`).
+
+## 12. Addendum, 2026-11-26: steps 3 and 4 measured against multi-GB recordings
+
+The condition on steps 3 and 4, "only if multi-GB recordings are still not interactive", was
+measured: [`doc/performance/MultiGbQueries.md`](../performance/MultiGbQueries.md). They are not
+interactive (7 to 40 s on a 4.16 GB recording of real profiling events, 4 processors). Step 3
+would save at most about a third of a constant-pool predicate query and leave it at 7 to 13 s;
+step 4 removes the header-walk floor only for what an index stores (counts, type presence, time
+bounds). Neither has been started. The measurement also found and fixed a per-event exception in
+filter path resolution that made filtered queries 3.4x slower than `groupBy` over the same field.
+

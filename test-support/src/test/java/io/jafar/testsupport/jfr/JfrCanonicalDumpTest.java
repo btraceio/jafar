@@ -2,6 +2,7 @@ package io.jafar.testsupport.jfr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.jafar.testsupport.DumpDigest;
@@ -209,6 +210,13 @@ class JfrCanonicalDumpTest {
     assertEquals(DumpDigest.sha256Hex(Files.readAllBytes(recording)), withSections.fixtureSha256());
     // deterministic across parses, with the sections collected from the chunk callbacks
     assertEquals(withSections.digest(), JfrCanonicalDump.digest(recording, true).digest());
+
+    DumpDigest unpinned = JfrCanonicalDump.digest(recording, true, false);
+    assertNull(unpinned.fixtureSha256(), "pinFixtureSha=false must drop the byte identity");
+    assertEquals(
+        withSections.digest(), unpinned.digest(), "dropping the pin keeps the value digest");
+    assertEquals(withSections.lines(), unpinned.lines());
+    assertEquals(withSections.counts(), unpinned.counts());
 
     // both sections actually populate: constants from the pools at onChunkEnd, metadata classes
     // and fields at onMetadata — an empty section would be a silent hole in the golden, not a

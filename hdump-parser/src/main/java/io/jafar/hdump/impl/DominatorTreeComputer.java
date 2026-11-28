@@ -2,500 +2,500 @@ package io.jafar.hdump.impl;
 
 import io.jafar.hdump.api.GcRoot;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Computes full dominator tree using Cooper-Harvey-Kennedy algorithm.
+ * Computes the full dominator tree of the strong-reference graph with the Lengauer-Tarjan algorithm
+ * ("simple" variant: path compression, no balancing; O(E log N)).
  *
- * <p>This implementation follows the algorithm from "A Simple, Fast Dominance Algorithm" by Cooper,
- * Harvey, and Kennedy (2006). Despite O(N²) worst-case complexity, it runs ~2.5× faster than
- * Lengauer-Tarjan in practice on real-world graphs.
+ * <p>The graph is first converted to dense int indexes in compressed-sparse-row form, so the
+ * algorithm itself runs on {@code int[]} arrays only: no boxing, no hash lookups per step, and no
+ * fixed-point iteration (the earlier iterative Cooper-Harvey-Kennedy implementation needed tens of
+ * passes over the heap on cyclic graphs and could stop before converging).
  *
- * <p><strong>Performance:</strong> 15-30s for 10M objects with 420MB peak memory.
+ * <p>Semantics:
  *
- * <p><strong>Algorithm overview:</strong>
+ * <ul>
+ *   <li>Nodes are the heap objects in the given map; edges are {@link
+ *       HeapObjectImpl#getStrongOutboundReferenceIds()} that name an object in the map.
+ *   <li>A virtual root (index 0) has an edge to every GC root object; GC root objects therefore
+ *       have no dominator ({@link HeapObjectImpl#getDominator()} stays {@code null}).
+ *   <li>Only objects reachable from the GC roots get a dominator and a retained size; retained size
+ *       is the shallow size of the object plus the retained sizes of its dominator-tree children.
+ * </ul>
  *
- * <ol>
- *   <li>Build reverse post-order traversal from GC roots
- *   <li>Initialize immediate dominators (idom)
- *   <li>Iterate until fixed point:
- *       <ul>
- *         <li>For each node, compute new idom as intersection of predecessors' idoms
- *         <li>Continue until no changes
- *       </ul>
- * </ol>
+ * <p>Iterative throughout: deep object graphs (long linked lists) cannot overflow the stack.
+ * References are decoded only for objects reachable from the GC roots.
+ *
+ * <p><strong>Memory</strong> (transient, on top of the heap objects; N objects, E strong references
+ * between reachable objects): the id index ({@code long[]} + {@code Long2IntOpenHashMap}, about 8N
+ * + 12N..24N bytes), the successor CSR built during the DFS (4N + 4E, released before the
+ * Lengauer-Tarjan step), the predecessor CSR (4N + 4E) and eleven {@code int[N]} working arrays
+ * (44N). Peak is roughly 70N + 4E bytes plus the id index, e.g. about 1.2 GB for 10M objects with 3
+ * references each. The {@link Result} kept for {@code getDominatedObjects} holds the id index and
+ * the children CSR (about 8N + 12N..24N + 8N bytes).
  */
 public final class DominatorTreeComputer {
 
   private static final Logger LOG = LoggerFactory.getLogger(DominatorTreeComputer.class);
-  private static final long UNDEFINED = -1;
 
-  /** Synthetic node ID that acts as the unique entry dominating all GC roots. */
-  private static final long VIRTUAL_ROOT = Long.MIN_VALUE;
+  private static final long[] EMPTY_IDS = new long[0];
 
   private DominatorTreeComputer() {}
 
+  /** Immediate dominator-tree children by object id. */
+  interface Children {
+    /** Ids of the objects immediately dominated by {@code dominatorId} (empty if none). */
+    long[] childIds(long dominatorId);
+  }
+
   /**
-   * Computes full dominator tree for all objects in the heap dump.
+   * INDEXED mode: the children CSR over nodes {@code id32 + 1}; ids map through the dump's
+   * address/id32 maps (no copy of them).
+   */
+  static final class IndexedChildren implements Children {
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap id32;
+    private final it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap address;
+    private final int[] childStart;
+    private final int[] children;
+
+    IndexedChildren(
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap id32,
+        it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap address,
+        int[] childStart,
+        int[] children) {
+      this.id32 = id32;
+      this.address = address;
+      this.childStart = childStart;
+      this.children = children;
+    }
+
+    @Override
+    public long[] childIds(long dominatorId) {
+      int i = id32.get(dominatorId);
+      if (i < 0) return EMPTY_IDS;
+      int v = i + 1;
+      int from = childStart[v];
+      int to = childStart[v + 1];
+      if (from == to) return EMPTY_IDS;
+      long[] out = new long[to - from];
+      for (int k = from; k < to; k++) out[k - from] = address.get(children[k] - 1);
+      return out;
+    }
+  }
+
+  /**
+   * Immediate dominator-tree children, by object id. Children are stored per dominator as a
+   * contiguous slice of one {@code int[]} (CSR), indexing {@link #ids}.
+   */
+  public static final class Result implements Children {
+    private final long[] ids; // node index -> object id (index 0 = virtual root, unused)
+    private final Long2IntOpenHashMap indexOf; // object id -> node index
+    private final int[] childStart; // node index -> start in children; length nodes + 1
+    private final int[] children; // node indexes
+
+    Result(long[] ids, Long2IntOpenHashMap indexOf, int[] childStart, int[] children) {
+      this.ids = ids;
+      this.indexOf = indexOf;
+      this.childStart = childStart;
+      this.children = children;
+    }
+
+    /** Ids of the objects immediately dominated by {@code dominatorId} (empty if none). */
+    @Override
+    public long[] childIds(long dominatorId) {
+      int v = indexOf.get(dominatorId);
+      if (v <= 0) {
+        return EMPTY_IDS;
+      }
+      int from = childStart[v];
+      int to = childStart[v + 1];
+      if (from == to) {
+        return EMPTY_IDS;
+      }
+      long[] out = new long[to - from];
+      for (int i = from; i < to; i++) {
+        out[i - from] = ids[children[i]];
+      }
+      return out;
+    }
+  }
+
+  /**
+   * Computes the full dominator tree for all objects in {@code objectsById}.
    *
-   * <p>Sets the immediate dominator and retained size for each object. This is more expensive than
-   * approximate retained size computation but provides exact results.
+   * <p>Sets the immediate dominator and the exact retained size of each reachable object.
    *
    * @param dump the heap dump
-   * @param objectsById map of object IDs to objects
+   * @param objectsById map of object IDs to objects (the graph's node set)
    * @param gcRoots list of GC roots
    * @param progressCallback optional callback for progress updates (0.0 to 1.0)
-   * @return map from dominator ID to list of dominated object IDs (for efficient lookup)
+   * @return the dominator-tree children, for {@code getDominatedObjects}
    */
-  public static Map<Long, List<Long>> computeFull(
+  public static Result computeFull(
       HeapDumpImpl dump,
       Long2ObjectMap<HeapObjectImpl> objectsById,
       List<GcRootImpl> gcRoots,
       ProgressCallback progressCallback) {
 
     long startTime = System.currentTimeMillis();
-    int totalObjects = objectsById.size();
+    final int n = objectsById.size() + 1; // + virtual root at index 0
+    LOG.info("Computing full dominator tree for {} objects...", n - 1);
+    report(progressCallback, 0.0, "Indexing objects...");
 
-    LOG.info("Computing full dominator tree for {} objects...", totalObjects);
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.0, "Building reverse post-order traversal...");
+    // Dense node indexes
+    HeapObjectImpl[] nodes = new HeapObjectImpl[n];
+    long[] ids = new long[n];
+    Long2IntOpenHashMap indexOf = new Long2IntOpenHashMap(n);
+    indexOf.defaultReturnValue(-1);
+    {
+      int i = 1;
+      for (HeapObjectImpl obj : objectsById.values()) {
+        nodes[i] = obj;
+        ids[i] = obj.getId();
+        indexOf.put(obj.getId(), i);
+        i++;
+      }
+    }
+    int[] roots = rootNodes(gcRoots, indexOf::get, n);
+
+    // References are decoded only for objects the DFS reaches, so unreachable objects do not get
+    // their reference arrays decoded and cached.
+    Tree tree =
+        compute(
+            n,
+            roots,
+            (w, out) -> {
+              for (long ref : nodes[w].getStrongOutboundReferenceIds()) {
+                int x = indexOf.get(ref);
+                if (x > 0) out.add(x);
+              }
+            },
+            v -> nodes[v].getShallowSize(),
+            progressCallback);
+
+    for (int w = tree.reached - 1; w >= 1; w--) {
+      HeapObjectImpl obj = nodes[tree.vertex[w]];
+      obj.setRetainedSize(tree.retained[w]);
+      int d = tree.idom[w];
+      obj.setDominator(d != 0 ? nodes[tree.vertex[d]] : null); // null: root or several roots
     }
 
-    // Step 1: Build reverse post-order (RPO) from GC roots
-    List<Long> rpo = buildReversePostOrder(objectsById, gcRoots);
-    LOG.debug("Built RPO with {} reachable objects", rpo.size());
+    LOG.info(
+        "Dominator tree computation completed in {}ms ({} reachable objects)",
+        System.currentTimeMillis() - startTime,
+        tree.reached - 1);
+    report(progressCallback, 1.0, "Dominator tree computation complete");
+    return new Result(ids, indexOf, tree.childStart, tree.children);
+  }
 
-    // Prepend virtual root at position 0 so all GC roots share a common dominator.
-    // Without this, intersect(root1, root2) has no common ancestor and the iteration
-    // oscillates instead of converging for nodes reachable from multiple GC roots.
-    rpo.add(0, VIRTUAL_ROOT);
+  /** Appends the successor nodes of {@code node} (all &gt; 0) to {@code out}, in order. */
+  @FunctionalInterface
+  interface Successors {
+    void append(int node, IntBuffer out);
+  }
 
-    // Build RPO index map once (reused millions of times in intersect())
-    Long2IntOpenHashMap rpoIndex = new Long2IntOpenHashMap(rpo.size());
-    rpoIndex.defaultReturnValue(-1);
-    for (int i = 0; i < rpo.size(); i++) {
-      rpoIndex.put(rpo.get(i).longValue(), i);
-    }
+  /** The dominator tree over nodes {@code 1..n-1} (node 0 is the virtual root). */
+  static final class Tree {
+    int reached; // reached nodes, virtual root included
+    int[] vertex; // preorder -> node
+    int[] idom; // preorder -> preorder of the immediate dominator (0: the virtual root)
+    long[] retained; // preorder -> retained size
+    int[] childStart; // node -> start in children; length n + 1
+    int[] children; // dominator-tree children (nodes), in preorder within each slice
+  }
 
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.2, "Building predecessor map...");
-    }
-
-    // Step 2: Build predecessor map (reverse edges)
-    Map<Long, List<Long>> predecessors = buildPredecessorMap(objectsById, rpo, progressCallback);
-
-    // Step 3: Compute immediate dominators using iterative dataflow
-    Long2LongOpenHashMap idom = new Long2LongOpenHashMap(rpo.size());
-    idom.defaultReturnValue(UNDEFINED);
-
-    // Virtual root dominates itself; all GC roots are dominated by the virtual root.
-    idom.put(VIRTUAL_ROOT, VIRTUAL_ROOT);
-    LongOpenHashSet rootIds = new LongOpenHashSet();
+  /** The GC root objects as nodes (&gt; 0), deduplicated, in first-seen order. */
+  static int[] rootNodes(
+      List<GcRootImpl> gcRoots, java.util.function.LongToIntFunction nodeOf, int n) {
+    boolean[] isRoot = new boolean[n];
+    int[] out = new int[gcRoots.size()];
+    int k = 0;
     for (GcRoot root : gcRoots) {
-      rootIds.add(root.getObjectId());
-      idom.put(root.getObjectId(), VIRTUAL_ROOT);
-    }
-
-    // Iterate until fixed point with convergence-based progress tracking.
-    // Stagnation guard: if changeCount stops decreasing for STAGNATION_PATIENCE consecutive
-    // iterations it means we are stuck in a flip-flop cycle (common when the reference graph
-    // has cycles that prevent the RPO from being a perfect topological order).
-    // For heap analysis, the handful of affected nodes is negligible.
-    final int STAGNATION_PATIENCE = 20;
-    boolean changed = true;
-    int iteration = 0;
-    int lastChangeCount = Integer.MAX_VALUE;
-    int stagnantIterations = 0;
-    long totalIterationTime = 0;
-
-    while (changed) {
-      changed = false;
-      iteration++;
-      int changeCount = 0;
-      long iterationStart = System.currentTimeMillis();
-
-      // Process nodes in reverse post-order (skip roots)
-      int processed = 0;
-      int lastReportedPercent = 0;
-      for (int i = 0; i < rpo.size(); i++) {
-        long nodeId = rpo.get(i);
-        if (rootIds.contains(nodeId)) continue;
-
-        List<Long> preds = predecessors.get(nodeId);
-        if (preds == null || preds.isEmpty()) continue;
-
-        // Find new dominator: intersection of all predecessor dominators
-        long newIdom = UNDEFINED;
-        for (long predId : preds) {
-          if (idom.get(predId) == UNDEFINED) continue;
-
-          if (newIdom == UNDEFINED) {
-            newIdom = predId;
-          } else {
-            newIdom = intersect(rpoIndex, idom, newIdom, predId);
-          }
-        }
-
-        if (newIdom != UNDEFINED && idom.get(nodeId) != newIdom) {
-          idom.put(nodeId, newIdom);
-          changed = true;
-          changeCount++;
-        }
-
-        processed++;
-
-        // Show progress within iteration every 10% for first few iterations
-        if (iteration <= 5
-            && progressCallback != null
-            && processed % Math.max(rpo.size() / 10, 1) == 0) {
-          int percentWithinIteration = (int) ((processed / (double) rpo.size()) * 100);
-          if (percentWithinIteration > lastReportedPercent) {
-            progressCallback.onProgress(
-                0.4 + (0.01 * percentWithinIteration),
-                String.format(
-                    "Computing dominators (iteration %d, %d%% through %,d objects)...",
-                    iteration, percentWithinIteration, rpo.size()));
-            lastReportedPercent = percentWithinIteration;
-          }
-        }
+      int r = nodeOf.applyAsInt(root.getObjectId());
+      if (r > 0 && !isRoot[r]) {
+        isRoot[r] = true;
+        out[k++] = r;
       }
-
-      long iterationElapsed = System.currentTimeMillis() - iterationStart;
-      totalIterationTime += iterationElapsed;
-
-      // Log slow iterations to console
-      if (iterationElapsed > 5000) {
-        String msg =
-            String.format(
-                "⚠ Slow iteration %d: %dms, %d changes, avg %.2fms/change",
-                iteration,
-                iterationElapsed,
-                changeCount,
-                changeCount > 0 ? iterationElapsed / (double) changeCount : 0);
-        LOG.warn(msg);
-        System.err.println(msg);
-      }
-
-      // Update progress more frequently - every iteration for first 10, then every 5, then every 10
-      boolean shouldReport =
-          iteration <= 10 || (iteration <= 50 && iteration % 5 == 0) || iteration % 10 == 0;
-
-      if (shouldReport && progressCallback != null) {
-        double iterationProgress;
-        if (changeCount < lastChangeCount && changeCount > 0) {
-          int convergenceRate = lastChangeCount - changeCount;
-          int estimatedRemaining = Math.max(changeCount / Math.max(convergenceRate, 1), 1);
-          iterationProgress = Math.min(0.95, iteration / (double) (iteration + estimatedRemaining));
-        } else {
-          // Conservative estimate if not converging steadily
-          iterationProgress = Math.min(0.5, iteration / 100.0);
-        }
-
-        // Progress from 0.4 to 0.7 (40% to 70%) during iteration
-        double progress = 0.4 + (0.3 * iterationProgress);
-        progressCallback.onProgress(
-            progress,
-            String.format(
-                "Computing dominators (iteration %d, %d changes, %dms)...",
-                iteration, changeCount, iterationElapsed));
-      }
-
-      // Stagnation guard: stop if changeCount has not decreased for STAGNATION_PATIENCE
-      // consecutive iterations. This handles flip-flop cycles caused by cyclic reference graphs
-      // where a handful of nodes oscillate indefinitely. The result is approximate but
-      // negligibly so relative to heap size.
-      if (changeCount > 0 && changeCount >= lastChangeCount) {
-        stagnantIterations++;
-        if (stagnantIterations >= STAGNATION_PATIENCE) {
-          String msg =
-              String.format(
-                  "⚠ Dominator computation stagnated at %d change(s) after %d iterations "
-                      + "— stopping early (result is approximate, %d node(s) may have incorrect idom)",
-                  changeCount, iteration, changeCount);
-          LOG.warn(msg);
-          System.err.println(msg);
-          changed = false;
-        }
-      } else {
-        stagnantIterations = 0;
-      }
-      lastChangeCount = changeCount;
     }
-
-    LOG.debug(
-        "Converged after {} iterations in {}ms (avg {}ms/iteration)",
-        iteration,
-        totalIterationTime,
-        totalIterationTime / iteration);
-
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.7, "Computing retained sizes...");
-    }
-
-    // Step 4: Set immediate dominators on objects and build dominator children map.
-    // Skip the virtual root — it has no corresponding heap object.
-    Map<Long, LongArrayList> dominatorChildren = new HashMap<>();
-    for (long nodeId : rpo) {
-      if (nodeId == VIRTUAL_ROOT) continue;
-      long idomId = idom.get(nodeId);
-      if (idomId == UNDEFINED || idomId == VIRTUAL_ROOT || idomId == nodeId) continue;
-      HeapObjectImpl obj = objectsById.get(nodeId);
-      HeapObjectImpl dominator = objectsById.get(idomId);
-      if (obj != null && dominator != null) {
-        obj.setDominator(dominator);
-      }
-      // Build children map for efficient retained size computation
-      dominatorChildren.computeIfAbsent(idomId, k -> new LongArrayList()).add(nodeId);
-    }
-
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.8, "Computing exact retained sizes...");
-    }
-
-    // Step 5: Compute retained sizes bottom-up using children map
-    computeRetainedSizes(objectsById, rpo, dominatorChildren);
-
-    long elapsed = System.currentTimeMillis() - startTime;
-    LOG.info("Dominator tree computation completed in {}ms", elapsed);
-
-    if (progressCallback != null) {
-      progressCallback.onProgress(1.0, "Dominator tree computation complete");
-    }
-
-    // Convert LongArrayList to List<Long> for return
-    Map<Long, List<Long>> result = new HashMap<>();
-    for (Map.Entry<Long, LongArrayList> entry : dominatorChildren.entrySet()) {
-      List<Long> children = new ArrayList<>(entry.getValue().size());
-      for (int i = 0; i < entry.getValue().size(); i++) {
-        children.add(entry.getValue().getLong(i));
-      }
-      result.put(entry.getKey(), children);
-    }
-    return result;
+    return java.util.Arrays.copyOf(out, k);
   }
 
   /**
-   * Find intersection of two nodes in dominator tree. Walks up the tree from both nodes until they
-   * meet.
-   *
-   * @param rpoIndex precomputed RPO index map for O(1) position lookups
-   * @param idom immediate dominator map
-   * @param b1 first node
-   * @param b2 second node
-   * @return the intersection node (common dominator)
+   * DFS from the virtual root (whose successors are {@code roots}), Lengauer-Tarjan, retained sizes
+   * bottom-up and the children CSR — independent of where nodes and edges come from.
    */
-  private static long intersect(
-      Long2IntOpenHashMap rpoIndex, Long2LongOpenHashMap idom, long b1, long b2) {
-    while (b1 != b2) {
-      int pos1 = rpoIndex.get(b1);
-      int pos2 = rpoIndex.get(b2);
-      if (pos1 < 0 || pos2 < 0) return UNDEFINED;
-
-      while (pos1 > pos2) {
-        b1 = idom.get(b1);
-        if (b1 == UNDEFINED) return UNDEFINED;
-        pos1 = rpoIndex.get(b1);
-        if (pos1 < 0) return UNDEFINED;
-      }
-
-      while (pos2 > pos1) {
-        b2 = idom.get(b2);
-        if (b2 == UNDEFINED) return UNDEFINED;
-        pos2 = rpoIndex.get(b2);
-        if (pos2 < 0) return UNDEFINED;
-      }
-    }
-    return b1;
-  }
-
-  private static final long[] EMPTY_REFS = new long[0];
-
-  /**
-   * Build reverse post-order traversal from GC roots using iterative DFS. Iterative avoids
-   * StackOverflowError on deep object graphs (e.g. linked lists, DOM trees with chains > ~500
-   * deep).
-   *
-   * <p>Each DFS frame is stored as a pair of parallel longs: {@code nodeStack[i]} is the object ID
-   * and {@code childIdxStack[i]} is the index of the next child to visit.
-   */
-  private static List<Long> buildReversePostOrder(
-      Long2ObjectMap<HeapObjectImpl> objectsById, List<GcRootImpl> gcRoots) {
-
-    LongOpenHashSet visited = new LongOpenHashSet();
-    LongArrayList postOrder = new LongArrayList();
-    LongArrayList nodeStack = new LongArrayList();
-    LongArrayList childIdxStack = new LongArrayList();
-
-    for (GcRoot root : gcRoots) {
-      long rootId = root.getObjectId();
-      if (objectsById.containsKey(rootId) && visited.add(rootId)) {
-        nodeStack.add(rootId);
-        childIdxStack.add(0L);
-      }
-    }
-
-    while (!nodeStack.isEmpty()) {
-      int top = nodeStack.size() - 1;
-      long nodeId = nodeStack.getLong(top);
-      HeapObjectImpl obj = objectsById.get(nodeId);
-      long[] refIds = (obj != null) ? obj.getStrongOutboundReferenceIds() : EMPTY_REFS;
-      int childIdx = (int) childIdxStack.getLong(top);
-
-      // Scan forward to find the next unvisited reachable child
-      boolean foundChild = false;
-      while (childIdx < refIds.length) {
-        long refId = refIds[childIdx++];
-        if (visited.add(refId) && objectsById.containsKey(refId)) {
-          childIdxStack.set(top, childIdx); // save resume point
-          nodeStack.add(refId);
-          childIdxStack.add(0L);
-          foundChild = true;
-          break;
-        }
-      }
-
-      if (!foundChild) {
-        // All children visited — pop frame and record node in post-order
-        nodeStack.removeLong(top);
-        childIdxStack.removeLong(top);
-        postOrder.add(nodeId);
-      }
-    }
-
-    // Reverse to get RPO
-    List<Long> rpo = new ArrayList<>(postOrder.size());
-    for (int i = postOrder.size() - 1; i >= 0; i--) {
-      rpo.add(postOrder.getLong(i));
-    }
-    return rpo;
-  }
-
-  /**
-   * Build predecessor map (reverse edges) in parallel. Each thread processes a disjoint slice of
-   * the RPO list and builds a local map; slices are merged sequentially at the end. Thread-local
-   * HprofReader views make outbound-ref extraction lock-free.
-   */
-  private static Map<Long, List<Long>> buildPredecessorMap(
-      Long2ObjectMap<HeapObjectImpl> objectsById,
-      List<Long> rpo,
+  static Tree compute(
+      int n,
+      int[] roots,
+      Successors successors,
+      java.util.function.IntUnaryOperator shallow,
       ProgressCallback progressCallback) {
+    report(progressCallback, 0.1, "Depth-first traversal...");
+    Traversal t = depthFirst(n, roots, successors);
+    final int reached = t.count;
+    int[] vertex = t.vertex;
+    int[] parent = t.parent;
 
-    int n = rpo.size();
-    LongOpenHashSet reachable = new LongOpenHashSet(rpo);
+    report(progressCallback, 0.4, "Building predecessor graph...");
+    int[] predStart = new int[reached + 1];
+    int[] pred = buildPredecessors(t.succStart, t.succ, reached, predStart);
+    t = null; // successors no longer needed: release before the LT arrays are allocated
 
-    int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
-    int chunkSize = Math.max(1, (n + nThreads - 1) / nThreads);
-    int actualChunks = (n + chunkSize - 1) / chunkSize;
+    report(progressCallback, 0.5, "Computing immediate dominators...");
+    int[] idom = lengauerTarjan(reached, parent, predStart, pred); // preorder numbers
+    pred = null;
+    predStart = null;
 
-    LOG.debug("Building predecessor map for {} objects using {} parallel chunks", n, actualChunks);
-
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.2, "Building predecessor map (parallel)...");
-    }
-
-    AtomicInteger chunksCompleted = new AtomicInteger(0);
-
-    @SuppressWarnings("unchecked")
-    HashMap<Long, List<Long>>[] localMaps = new HashMap[actualChunks];
-
-    IntStream.range(0, actualChunks)
-        .parallel()
-        .forEach(
-            chunk -> {
-              int start = chunk * chunkSize;
-              int end = Math.min(start + chunkSize, n);
-              HashMap<Long, List<Long>> local = new HashMap<>();
-
-              for (int i = start; i < end; i++) {
-                long nodeId = rpo.get(i);
-                HeapObjectImpl obj = objectsById.get(nodeId);
-                if (obj == null) continue;
-                for (long refId : obj.getStrongOutboundReferenceIds()) {
-                  if (reachable.contains(refId)) {
-                    local.computeIfAbsent(refId, k -> new ArrayList<>(4)).add(nodeId);
-                  }
-                }
-              }
-
-              localMaps[chunk] = local;
-
-              int done = chunksCompleted.incrementAndGet();
-              if (progressCallback != null && done % Math.max(1, actualChunks / 10) == 0) {
-                progressCallback.onProgress(
-                    0.2 + 0.15 * done / actualChunks,
-                    String.format("Building predecessor map (%d%%)", done * 100 / actualChunks));
-              }
-            });
-
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.37, "Merging predecessor map...");
-    }
-
-    // Sequential merge of per-chunk maps
-    Map<Long, List<Long>> predecessors = new HashMap<>(n / 2);
-    for (HashMap<Long, List<Long>> local : localMaps) {
-      if (local == null) continue;
-      for (Map.Entry<Long, List<Long>> entry : local.entrySet()) {
-        predecessors
-            .computeIfAbsent(entry.getKey(), k -> new ArrayList<>())
-            .addAll(entry.getValue());
+    report(progressCallback, 0.8, "Computing exact retained sizes...");
+    long[] retained = new long[reached];
+    for (int w = reached - 1; w >= 1; w--) {
+      long r = retained[w] + shallow.applyAsInt(vertex[w]);
+      retained[w] = r;
+      int d = idom[w];
+      if (d != 0) {
+        retained[d] += r;
       }
     }
 
-    if (progressCallback != null) {
-      progressCallback.onProgress(0.4, "Computing immediate dominators...");
+    // Children CSR indexed by node (not preorder) so lookups go id -> node -> slice.
+    int[] childStart = new int[n + 1];
+    for (int w = 1; w < reached; w++) {
+      int d = idom[w];
+      if (d != 0) {
+        childStart[vertex[d] + 1]++;
+      }
+    }
+    for (int v = 0; v < n; v++) {
+      childStart[v + 1] += childStart[v];
+    }
+    int[] children = new int[childStart[n]];
+    int[] fill = new int[n];
+    for (int w = 1; w < reached; w++) {
+      int d = idom[w];
+      if (d != 0) {
+        int dv = vertex[d];
+        children[childStart[dv] + fill[dv]++] = vertex[w];
+      }
     }
 
-    LOG.debug("Built predecessor map with {} entries", predecessors.size());
-    return predecessors;
+    Tree tree = new Tree();
+    tree.reached = reached;
+    tree.vertex = vertex;
+    tree.idom = idom;
+    tree.retained = retained;
+    tree.childStart = childStart;
+    tree.children = children;
+    return tree;
+  }
+
+  private static void report(ProgressCallback cb, double progress, String message) {
+    if (cb != null) {
+      cb.onProgress(progress, message);
+    }
+  }
+
+  /** DFS result: preorder numbering and the successors of each reached node, by preorder. */
+  private static final class Traversal {
+    int count; // reached nodes, including the virtual root
+    int[] vertex; // preorder -> node
+    int[] parent; // preorder -> parent's preorder
+    int[] succStart; // preorder -> start in succ; length count + 1
+    int[] succ; // successor nodes (node indexes, not preorder)
   }
 
   /**
-   * Compute retained sizes bottom-up from leaves using dominator children map. Optimized from O(N²)
-   * to O(N) by using precomputed children map instead of scanning all objects.
-   *
-   * @param objectsById map of object IDs to objects
-   * @param rpo reverse post-order traversal
-   * @param dominatorChildren map from dominator ID to list of dominated children IDs
+   * Iterative DFS from the virtual root (node 0, whose successors are the GC root objects,
+   * deduplicated, in first-seen order). A node's successor list is decoded when the node is
+   * discovered and appended to the CSR, so the CSR rows are in preorder.
    */
-  private static void computeRetainedSizes(
-      Long2ObjectMap<HeapObjectImpl> objectsById,
-      List<Long> rpo,
-      Map<Long, LongArrayList> dominatorChildren) {
+  private static Traversal depthFirst(int n, int[] roots, Successors successors) {
+    int[] dfn = new int[n];
+    int[] vertex = new int[n];
+    int[] parent = new int[n];
+    int[] succStart = new int[n + 1];
+    IntBuffer succ = new IntBuffer(Math.max(16, n * 2));
 
-    // Process in reverse RPO (bottom-up, leaves first)
-    for (int i = rpo.size() - 1; i >= 0; i--) {
-      long nodeId = rpo.get(i);
-      HeapObjectImpl obj = objectsById.get(nodeId);
-      if (obj == null) continue;
+    // Virtual root, preorder 0.
+    int count = 1;
+    dfn[0] = 1;
+    succStart[0] = 0;
+    for (int r : roots) {
+      succ.add(r);
+    }
+    succStart[1] = succ.size;
 
-      // Retained size = shallow size + sum of dominated children's retained sizes
-      long retained = obj.getShallowSize();
+    int[] stackPre = new int[n]; // preorder of the frame's node
+    int[] stackEdge = new int[n]; // next index into succ
+    int sp = 0;
+    stackPre[0] = 0;
+    stackEdge[0] = 0;
+    sp = 1;
+    while (sp > 0) {
+      int top = sp - 1;
+      int a = stackPre[top];
+      int e = stackEdge[top];
+      int end = succStart[a + 1];
+      int[] sa = succ.data;
+      while (e < end && dfn[sa[e]] != 0) {
+        e++;
+      }
+      if (e == end) {
+        sp--;
+        continue;
+      }
+      stackEdge[top] = e + 1;
+      int w = sa[e];
+      int b = count++;
+      dfn[w] = b + 1;
+      vertex[b] = w;
+      parent[b] = a;
+      // Decode w's successors now: its row is the next one in the CSR.
+      successors.append(w, succ);
+      succStart[b + 1] = succ.size;
+      stackPre[sp] = b;
+      stackEdge[sp] = succStart[b];
+      sp++;
+    }
 
-      // Direct lookup of dominated children (O(1) access, O(children) iteration)
-      LongArrayList children = dominatorChildren.get(nodeId);
-      if (children != null) {
-        for (int j = 0; j < children.size(); j++) {
-          HeapObjectImpl child = objectsById.get(children.getLong(j));
-          if (child != null) {
-            retained += child.getRetainedSize();
-          }
+    Traversal t = new Traversal();
+    t.count = count;
+    t.vertex = vertex;
+    t.parent = parent;
+    t.succStart = succStart;
+    t.succ = succ.data;
+    // Translate successor node indexes to preorder numbers in place (all are reached).
+    int[] sa = succ.data;
+    for (int i = 0, m = succ.size; i < m; i++) {
+      sa[i] = dfn[sa[i]] - 1;
+    }
+    return t;
+  }
+
+  /** Growable int array. */
+  static final class IntBuffer {
+    int[] data;
+    int size;
+
+    IntBuffer(int capacity) {
+      data = new int[capacity];
+    }
+
+    void add(int v) {
+      if (size == data.length) {
+        long grown = Math.max(16L, (long) size + (size >> 1));
+        if (grown > Integer.MAX_VALUE - 8) {
+          throw new IllegalStateException("Too many references for dominator computation");
+        }
+        data = java.util.Arrays.copyOf(data, (int) grown);
+      }
+      data[size++] = v;
+    }
+  }
+
+  /** Predecessor lists over preorder numbers, from successor rows that are already in preorder. */
+  private static int[] buildPredecessors(
+      int[] succStart, int[] succ, int reached, int[] predStart) {
+    for (int a = 0; a < reached; a++) {
+      for (int e = succStart[a], end = succStart[a + 1]; e < end; e++) {
+        predStart[succ[e] + 1]++;
+      }
+    }
+    for (int i = 0; i < reached; i++) {
+      predStart[i + 1] += predStart[i];
+    }
+    int[] pred = new int[predStart[reached]];
+    int[] fill = new int[reached];
+    for (int a = 0; a < reached; a++) {
+      for (int e = succStart[a], end = succStart[a + 1]; e < end; e++) {
+        int b = succ[e];
+        pred[predStart[b] + fill[b]++] = a;
+      }
+    }
+    return pred;
+  }
+
+  /**
+   * Lengauer-Tarjan over preorder numbers {@code 0..count-1} (0 = entry). Returns {@code idom}
+   * indexed by preorder number ({@code idom[0] = 0}).
+   */
+  static int[] lengauerTarjan(int count, int[] parent, int[] predStart, int[] pred) {
+    int[] semi = new int[count];
+    int[] idom = new int[count];
+    int[] ancestor = new int[count];
+    int[] label = new int[count];
+    int[] bucketHead = new int[count];
+    int[] bucketNext = new int[count];
+    int[] stack = new int[count];
+    for (int v = 0; v < count; v++) {
+      semi[v] = v;
+      label[v] = v;
+      ancestor[v] = -1;
+      bucketHead[v] = -1;
+    }
+
+    for (int w = count - 1; w >= 1; w--) {
+      // Step 2: semidominator
+      int s = semi[w];
+      for (int i = predStart[w], end = predStart[w + 1]; i < end; i++) {
+        int v = pred[i];
+        int u = eval(v, ancestor, label, semi, stack);
+        if (semi[u] < s) {
+          s = semi[u];
         }
       }
+      semi[w] = s;
+      bucketNext[w] = bucketHead[s];
+      bucketHead[s] = w;
+      int p = parent[w];
+      ancestor[w] = p; // link(parent, w)
 
-      obj.setRetainedSize(retained);
+      // Step 3: implicit idoms for the parent's bucket
+      for (int v = bucketHead[p]; v != -1; v = bucketNext[v]) {
+        int u = eval(v, ancestor, label, semi, stack);
+        idom[v] = semi[u] < semi[v] ? u : p;
+      }
+      bucketHead[p] = -1;
     }
+
+    // Step 4: explicit idoms, in preorder
+    for (int w = 1; w < count; w++) {
+      if (idom[w] != semi[w]) {
+        idom[w] = idom[idom[w]];
+      }
+    }
+    idom[0] = 0;
+    return idom;
+  }
+
+  /**
+   * EVAL with path compression, iterative. Returns the vertex with minimal semidominator on the
+   * forest path from {@code v} (exclusive of the forest root).
+   */
+  private static int eval(int v, int[] ancestor, int[] label, int[] semi, int[] stack) {
+    if (ancestor[v] == -1) {
+      return v;
+    }
+    // Collect the path v -> ... while the ancestor has its own ancestor.
+    int sp = 0;
+    int x = v;
+    while (ancestor[ancestor[x]] != -1) {
+      stack[sp++] = x;
+      x = ancestor[x];
+    }
+    // Compress from the top of the path down.
+    while (sp > 0) {
+      int y = stack[--sp];
+      int a = ancestor[y];
+      if (semi[label[a]] < semi[label[y]]) {
+        label[y] = label[a];
+      }
+      ancestor[y] = ancestor[a];
+    }
+    return label[v];
   }
 
   /** Callback interface for progress updates during computation. */

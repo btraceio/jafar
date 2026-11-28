@@ -201,7 +201,14 @@ jfr-shell metadata recording.jfr --events-only
 
 # Chunk information
 jfr-shell chunks recording.jfr --summary
+
+# Compare a candidate recording against a baseline (self and inclusive frame shares, rates)
+jfr-shell compare before.jfr after.jfr --json
 ```
+
+See [Comparing two recordings](../doc/cli/Usage.md#comparing-two-recordings) for what `compare`
+reports. Run from the `jafar-shell` jar, either side can also be a pprof profile; see
+[Comparing a pprof profile](../doc/cli/Usage.md#comparing-a-pprof-profile).
 
 Exit codes: 0 for success, 1 for errors (sent to stderr).
 

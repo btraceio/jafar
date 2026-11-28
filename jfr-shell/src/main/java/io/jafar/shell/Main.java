@@ -6,6 +6,18 @@ import io.jafar.shell.backend.JfrBackend;
 import io.jafar.shell.cli.CommandDispatcher;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
+import io.jafar.shell.core.ShellModule;
+import io.jafar.shell.core.ShellModuleLoader;
+import io.jafar.shell.core.analysis.AnalysisTarget;
+import io.jafar.shell.core.compare.CompareOptions;
+import io.jafar.shell.core.compare.CompareResult;
+import io.jafar.shell.core.compare.JfrCompare;
+import io.jafar.shell.core.compare.ProfileCompare;
+import io.jafar.shell.core.compare.ProfileReader;
+import io.jafar.shell.core.compare.ProfileSelection;
+import io.jafar.shell.core.compare.RecordingProfile;
+import io.jafar.shell.core.compare.SampleTypeInfo;
+import io.jafar.shell.core.discovery.ProviderDiscovery;
 import io.jafar.shell.core.scripting.ScriptRunner;
 import io.jafar.shell.live.TailRunner;
 import io.jafar.shell.plugin.PluginManager;
@@ -17,6 +29,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -32,6 +45,7 @@ import picocli.CommandLine;
       Main.MetadataCommand.class,
       Main.ChunksCommand.class,
       Main.CpCommand.class,
+      Main.CompareCommand.class,
       Main.ScriptCommand.class,
       Main.PsCommand.class,
       Main.TailCommand.class
@@ -83,7 +97,13 @@ public final class Main implements Callable<Integer> {
   public static void main(String[] args) {
     // Parse CLI args to extract plugin-dir and install-plugin before initialization
     Main main = new Main();
-    new CommandLine(main).parseArgs(args);
+    try {
+      new CommandLine(main).parseArgs(args);
+    } catch (CommandLine.ParameterException e) {
+      // A usage error (missing or malformed arguments): say what is wrong and how the command is
+      // used, as picocli's own handler would, instead of escaping with a stack trace.
+      System.exit(usageError(e));
+    }
 
     // Set plugin directory if specified
     if (main.pluginDir != null) {
@@ -109,6 +129,76 @@ public final class Main implements Callable<Integer> {
 
     int exitCode = new CommandLine(new Main()).execute(args);
     System.exit(exitCode);
+  }
+
+  /** Exit code for a usage error, as picocli's {@code execute} returns for invalid input. */
+  public static final int USAGE_ERROR = 2;
+
+  /** Prints a usage error's message and the failing command's usage to stderr. */
+  static int usageError(CommandLine.ParameterException e) {
+    System.err.println("Error: " + e.getMessage());
+    e.getCommandLine().usage(System.err);
+    return USAGE_ERROR;
+  }
+
+  /**
+   * The backend a subcommand runs with: its own {@code -b}, else the one given before the
+   * subcommand ({@code jfr-shell -b jdk script q.jfrs}), which used to be dropped silently (#268).
+   *
+   * @throws CommandLine.ParameterException when both are given and name different backends
+   */
+  static String subcommandBackend(CommandLine.Model.CommandSpec spec, Main parent, String own) {
+    String beforeSubcommand = parent == null ? null : parent.backend;
+    if (own == null) {
+      return beforeSubcommand;
+    }
+    if (beforeSubcommand != null && !beforeSubcommand.equalsIgnoreCase(own)) {
+      throw new CommandLine.ParameterException(
+          spec.commandLine(),
+          "--backend is '"
+              + beforeSubcommand
+              + "' before '"
+              + typedName(spec)
+              + "' and '"
+              + own
+              + "' after it; give one");
+    }
+    return own;
+  }
+
+  /**
+   * Refuses a {@code -b} given before a subcommand that reads no recording through a backend
+   * ({@code tail}, {@code ps}), rather than ignore it (#268).
+   *
+   * @throws CommandLine.ParameterException when one was given
+   */
+  static void refuseBackend(CommandLine.Model.CommandSpec spec, Main parent) {
+    if (parent != null && parent.backend != null) {
+      throw new CommandLine.ParameterException(
+          spec.commandLine(),
+          "--backend does not apply to '" + typedName(spec) + "': it uses no backend");
+    }
+  }
+
+  /**
+   * The subcommand's name as typed: an alias ({@code cp}) rather than its name ({@code constants}).
+   */
+  private static String typedName(CommandLine.Model.CommandSpec spec) {
+    CommandLine parent = spec.commandLine().getParent();
+    if (parent != null && parent.getParseResult() != null) {
+      for (String arg : parent.getParseResult().originalArgs()) {
+        if (arg.equals(spec.name()) || java.util.Arrays.asList(spec.aliases()).contains(arg)) {
+          return arg;
+        }
+      }
+    }
+    return spec.name();
+  }
+
+  /** An exception's message, or its class name when it has none (an NPE, many wrapped errors). */
+  static String describe(Throwable e) {
+    String message = e.getMessage();
+    return message == null || message.isBlank() ? e.getClass().getName() : message;
   }
 
   @Override
@@ -150,13 +240,32 @@ public final class Main implements Callable<Integer> {
     }
   }
 
+  /** Prints providers skipped during backend discovery, if any, with a fix hint. */
+  private static void printBackendFailures(BackendRegistry registry) {
+    var failures = registry.discoveryFailures();
+    if (failures.isEmpty()) {
+      return;
+    }
+    System.err.println("Failed to load " + failures.size() + " backend provider(s):");
+    for (var failure : failures) {
+      System.err.println("  " + failure);
+    }
+    System.err.println("Reinstall or remove the broken jar(s) from ~/.jfr-shell/plugins.");
+  }
+
   private boolean validateBackend() {
+    String conflict = environmentConflict(backend, System.getenv("JFRSHELL_BACKEND"));
+    if (conflict != null) {
+      System.err.println(conflict);
+      return false;
+    }
     try {
       BackendRegistry registry = BackendRegistry.getInstance();
 
       // Auto-install default backend if none available
       if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
         System.err.println("Error: No JFR backends available");
+        printBackendFailures(registry);
         return false;
       }
 
@@ -185,8 +294,9 @@ public final class Main implements Callable<Integer> {
         System.err.println(
             "Available backends: "
                 + registry.listAll().stream()
-                    .map(JfrBackend::getId)
+                    .map(b -> ProviderDiscovery.call(b::getId, "?"))
                     .collect(Collectors.joining(", ")));
+        printBackendFailures(registry);
         return false;
       }
       return true;
@@ -283,7 +393,41 @@ public final class Main implements Callable<Integer> {
    * property, auto-installs a default when none is present, and honors {@code --backend} (incl. the
    * auto-install-and-restart path). Returns 0 on success, or the process exit code.
    */
-  static Integer validateBackend(String backend) {
+  public static Integer validateBackend(String backend) {
+    return validateBackend(backend, System.getenv("JFRSHELL_BACKEND"));
+  }
+
+  /**
+   * The error for a {@code -b} that {@code JFRSHELL_BACKEND} overrides, or {@code null}. The
+   * variable wins only when it names an installed backend (the registry passes over one it cannot
+   * find), so only then is a different {@code -b} refused.
+   */
+  static String environmentConflict(String backend, String envBackend) {
+    if (backend == null
+        || envBackend == null
+        || envBackend.isBlank()
+        || envBackend.trim().equalsIgnoreCase(backend)
+        || BackendRegistry.getInstance().get(envBackend).isEmpty()) {
+      return null;
+    }
+    return "Error: --backend is '"
+        + backend
+        + "' but JFRSHELL_BACKEND is '"
+        + envBackend.trim()
+        + "', which takes precedence; unset it or give the same backend";
+  }
+
+  /**
+   * As {@link #validateBackend(String)}, with the value of {@code JFRSHELL_BACKEND} given: it takes
+   * precedence over {@code -b} (doc/cli/Backends.md), so a {@code -b} that names another backend is
+   * refused here, naming the variable, rather than reported as a backend that is not installed.
+   */
+  static Integer validateBackend(String backend, String envBackend) {
+    String conflict = environmentConflict(backend, envBackend);
+    if (conflict != null) {
+      System.err.println(conflict);
+      return USAGE_ERROR;
+    }
     if (backend != null) {
       System.setProperty("jfr.shell.backend", backend);
     }
@@ -292,6 +436,7 @@ public final class Main implements Callable<Integer> {
 
       if (registry.listAll().isEmpty() && !autoInstallDefaultBackend()) {
         System.err.println("Error: No JFR backends available");
+        printBackendFailures(registry);
         return 1;
       }
 
@@ -315,8 +460,9 @@ public final class Main implements Callable<Integer> {
         System.err.println(
             "Available backends: "
                 + registry.listAll().stream()
-                    .map(JfrBackend::getId)
+                    .map(b -> ProviderDiscovery.call(b::getId, "?"))
                     .collect(Collectors.joining(", ")));
+        printBackendFailures(registry);
         return 1;
       }
     } catch (IllegalStateException e) {
@@ -336,8 +482,17 @@ public final class Main implements Callable<Integer> {
         description = "JFR backend to use")
     protected String backend;
 
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     protected Integer executeNonInteractive(String command) {
-      Integer rc = validateBackend(backend);
+      Integer rc;
+      try {
+        rc = validateBackend(subcommandBackend(spec, parent, backend));
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       if (rc != 0) {
         return rc;
       }
@@ -365,7 +520,7 @@ public final class Main implements Callable<Integer> {
 
                   @Override
                   public void printf(String fmt, Object... args) {
-                    output.append(String.format(fmt, args));
+                    output.append(String.format(Locale.ROOT, fmt, args));
                   }
 
                   @Override
@@ -373,10 +528,16 @@ public final class Main implements Callable<Integer> {
                     errors.append(s).append("\n");
                   }
                 },
-                current -> {});
+                current -> {},
+                null,
+                null,
+                // Not verbose: stdout is the command's result only, so '--format json' pipes into
+                // a JSON parser without an "Opened session" line before it (#266).
+                // -Djfr.shell.verbose / JFR_SHELL_VERBOSE still turn the notes on.
+                false);
 
-        // Open the file
-        dispatcher.dispatch("open " + path.toString());
+        // As a Path, not an "open <path>" line: the dispatcher would split it at its spaces (#233)
+        dispatcher.open(path, null);
 
         // Execute command
         boolean handled = dispatcher.dispatch(command);
@@ -554,8 +715,17 @@ public final class Main implements Callable<Integer> {
       mixinStandardHelpOptions = true,
       description = "List local JVMs ([jfr] marks a discoverable disk-backed JFR event repository)")
   static class PsCommand implements Callable<Integer> {
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     @Override
     public Integer call() {
+      try {
+        refuseBackend(spec, parent);
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       var processes = io.jafar.shell.live.DefaultLiveStreams.INSTANCE.listLocalJvm();
       if (processes.isEmpty()) {
         System.out.println(
@@ -617,10 +787,19 @@ public final class Main implements Callable<Integer> {
     transient PrintStream outOverride;
     transient PrintStream errOverride;
 
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     @Override
     public Integer call() {
       final PrintStream out = outOverride != null ? outOverride : System.out;
       final PrintStream err = errOverride != null ? errOverride : System.err;
+      try {
+        refuseBackend(spec, parent);
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       // Validate filter/format FIRST (cheap, no I/O) so a bad expression never reaches the
       // hardening check or opens any stream.
       io.jafar.shell.jfrpath.JfrPath.Query filter = null;
@@ -685,7 +864,7 @@ public final class Main implements Callable<Integer> {
 
                   @Override
                   public void printf(String fmt2, Object... args) {
-                    out.printf(fmt2, args);
+                    out.printf(Locale.ROOT, fmt2, args);
                   }
 
                   @Override
@@ -698,6 +877,286 @@ public final class Main implements Callable<Integer> {
       } catch (Exception e) {
         err.println("Error: " + e.getMessage());
         return 1;
+      }
+    }
+  }
+
+  /**
+   * {@code compare <baseline> <candidate>}: the {@code jfr_compare} comparison, headless, for JFR
+   * recordings, pprof profiles and OTLP profiles in any pairing. Exits 0 when the comparison ran,
+   * whatever it found; 1 when it could not run (a missing or unreadable file, an unknown event or
+   * sample type, samplers that measure different things); and 2 on a usage error (a missing or
+   * malformed argument), with the message and usage on stderr. It reports where time moved; it does
+   * not decide whether a build got slower.
+   *
+   * <p>A file that starts with JFR's magic is read as a recording. Any other file goes to the first
+   * module on the class path whose {@code canHandle} claims it and that has a {@link
+   * io.jafar.shell.core.compare.ProfileReader}; when none does, it is read as a recording, so a
+   * file that is neither fails with "cannot read JFR recording". jfr-shell's own jar knows JFR
+   * only; the {@code jafar-shell} jar adds the pprof and OTLP modules.
+   */
+  @CommandLine.Command(
+      name = "compare",
+      mixinStandardHelpOptions = true,
+      description =
+          "Compare a candidate recording or profile against a baseline: per-frame self and"
+              + " inclusive time shares, and event rates when both are JFR recordings. Each side"
+              + " is a JFR recording, a pprof profile or an OTLP profiles file (.otlp); pprof and"
+              + " OTLP need the jafar-shell jar.")
+  static class CompareCommand implements Callable<Integer> {
+    @CommandLine.Parameters(
+        index = "0",
+        description = "Baseline recording or profile (the 'before')")
+    private String baselineFile;
+
+    @CommandLine.Parameters(
+        index = "1",
+        description = "Candidate recording or profile (the 'after')")
+    private String candidateFile;
+
+    @CommandLine.Option(
+        names = {"--sample-type"},
+        paramLabel = "<type[/unit]>",
+        description =
+            "pprof or OTLP sample type, for every pprof and OTLP side (default: the first CPU"
+                + " sample type, else the first)")
+    private String sampleType;
+
+    @CommandLine.Option(
+        names = {"--baseline-sample-type"},
+        paramLabel = "<type[/unit]>",
+        description = "pprof or OTLP sample type of the baseline; overrides --sample-type")
+    private String baselineSampleType;
+
+    @CommandLine.Option(
+        names = {"--candidate-sample-type"},
+        paramLabel = "<type[/unit]>",
+        description = "pprof or OTLP sample type of the candidate; overrides --sample-type")
+    private String candidateSampleType;
+
+    @CommandLine.Option(
+        names = {"--allow-mixed-samplers"},
+        description =
+            "Compare samplers of different kinds (CPU against wall clock) instead of refusing;"
+                + " no change is then called significant. Allocation against time is always"
+                + " refused")
+    private boolean allowMixedSamplers;
+
+    @CommandLine.Option(
+        names = {"--list-sample-types"},
+        description = "List the sample types of both files and exit")
+    private boolean listSampleTypes;
+
+    @CommandLine.Option(
+        names = {"--json"},
+        description = "Print the full result as JSON")
+    private boolean json;
+
+    @CommandLine.Option(
+        names = {"--event-type"},
+        description = "Execution sample event type (default: detected per recording)")
+    private String eventType;
+
+    @CommandLine.Option(
+        names = {"--min-delta-pct"},
+        description = "Noise floor in percentage points for per-frame changes (default: 1.0)")
+    private double minDeltaPct = JfrCompare.DEFAULT_MIN_DELTA_PCT;
+
+    @CommandLine.Option(
+        names = {"--limit", "-l"},
+        description = "Maximum number of changed frames per list (default: 25)")
+    private int limit = JfrCompare.DEFAULT_LIMIT;
+
+    @CommandLine.Option(
+        names = {"-b", "--backend"},
+        description = "JFR backend to use")
+    private String backend;
+
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
+    /** An option used wrongly: the message and the command's usage on stderr, exit 2. */
+    private int usage(String message) {
+      return usageError(new CommandLine.ParameterException(spec.commandLine(), message));
+    }
+
+    @Override
+    public Integer call() {
+      if (limit <= 0) {
+        return usage("--limit must be positive");
+      }
+      if (!Double.isFinite(minDeltaPct) || minDeltaPct < 0) {
+        return usage("--min-delta-pct must be a number of zero or more");
+      }
+      Path baselinePath = Paths.get(baselineFile);
+      Path candidatePath = Paths.get(candidateFile);
+      for (Path p : List.of(baselinePath, candidatePath)) {
+        Path name = p.getFileName(); // null for a root such as "/"
+        String what = name != null && name.toString().endsWith(".jfr") ? "JFR file" : "file";
+        if (!Files.isRegularFile(p)) {
+          System.err.println("Error: " + what + " not found: " + p);
+          return 1;
+        }
+        if (!Files.isReadable(p)) {
+          System.err.println("Error: " + what + " not readable: " + p);
+          return 1;
+        }
+      }
+      try {
+        // null: the side is a JFR recording, read through the selected backend.
+        ProfileReader baseReader = profileReader(baselinePath);
+        ProfileReader candReader = profileReader(candidatePath);
+        String baseType = baselineSampleType != null ? baselineSampleType : sampleType;
+        String candType = candidateSampleType != null ? candidateSampleType : sampleType;
+        String misuse = typeOptionMisuse(baseReader, candReader);
+        if (misuse != null) {
+          return usage(misuse);
+        }
+        String chosen;
+        try {
+          chosen = subcommandBackend(spec, parent, backend);
+        } catch (CommandLine.ParameterException e) {
+          return usageError(e);
+        }
+        // A JFR side is read through the backend; a named backend is checked even when no side
+        // is, so a typo or a conflict is not passed over in silence (#268)
+        if (baseReader == null || candReader == null || chosen != null) {
+          Integer rc = validateBackend(chosen);
+          if (rc != 0) {
+            return rc;
+          }
+        }
+        if (listSampleTypes) {
+          System.out.print(listTypes(baselinePath, baseReader));
+          System.out.print(listTypes(candidatePath, candReader));
+          return 0;
+        }
+
+        ParsingContext ctx = ParsingContext.create();
+        // Inclusive shares always: they are what names a caller whose callees got slower.
+        RecordingProfile base = read(baselinePath, baseReader, baseType, 1, ctx);
+        RecordingProfile cand = read(candidatePath, candReader, candType, 2, ctx);
+        CompareResult result =
+            ProfileCompare.compare(
+                base,
+                cand,
+                new CompareOptions(
+                    eventType,
+                    minDeltaPct,
+                    limit,
+                    true,
+                    CompareOptions.MixedSamplers.forPair(
+                        base.format(), cand.format(), allowMixedSamplers)));
+        System.out.print(json ? CompareOutput.json(result.toMap()) : CompareOutput.table(result));
+        return 0;
+      } catch (Exception e) {
+        System.err.println("Error: " + describe(e));
+        return 1;
+      }
+    }
+
+    /**
+     * The reader of a file that is not a JFR recording, or {@code null} for a recording: a file
+     * with JFR's magic, or one no module with a reader claims.
+     *
+     * @throws IllegalArgumentException when the module that claims the file cannot compare it
+     */
+    static ProfileReader profileReader(Path path) {
+      if (isJfr(path)) {
+        return null;
+      }
+      for (ShellModule module : ShellModuleLoader.loadAll()) {
+        if ("jfr".equals(module.getId()) || !module.canHandle(path)) {
+          continue;
+        }
+        ProfileReader reader = module.profileReader();
+        if (reader == null) {
+          throw new IllegalArgumentException(
+              "cannot compare "
+                  + path
+                  + ": it is a "
+                  + module.getDisplayName()
+                  + " file, and only JFR recordings, pprof and OTLP profiles can be compared");
+        }
+        return reader;
+      }
+      return null;
+    }
+
+    private static boolean isJfr(Path path) {
+      try (java.io.InputStream in = Files.newInputStream(path)) {
+        byte[] magic = in.readNBytes(4);
+        return magic.length == 4
+            && magic[0] == 'F'
+            && magic[1] == 'L'
+            && magic[2] == 'R'
+            && magic[3] == 0;
+      } catch (java.io.IOException e) {
+        return false;
+      }
+    }
+
+    /**
+     * {@code --event-type} is for JFR sides and the sample-type options for the others: the misuse,
+     * or {@code null} when there is none.
+     */
+    private String typeOptionMisuse(ProfileReader baseReader, ProfileReader candReader) {
+      if (eventType != null && baseReader != null && candReader != null) {
+        return "--event-type selects a JFR event type, and neither file is a JFR recording: use"
+            + " --sample-type";
+      }
+      if (sampleType != null && baseReader == null && candReader == null) {
+        return "--sample-type selects a pprof or OTLP sample type, and both files are JFR"
+            + " recordings: use --event-type";
+      }
+      if (baselineSampleType != null && baseReader == null) {
+        return "--baseline-sample-type selects a pprof or OTLP sample type, and the baseline is a"
+            + " JFR recording: use --event-type";
+      }
+      if (candidateSampleType != null && candReader == null) {
+        return "--candidate-sample-type selects a pprof or OTLP sample type, and the candidate is"
+            + " a JFR recording: use --event-type";
+      }
+      return null;
+    }
+
+    private RecordingProfile read(
+        Path path, ProfileReader reader, String type, int id, ParsingContext ctx) throws Exception {
+      if (reader != null) {
+        return reader.read(path, new ProfileSelection(type, true));
+      }
+      try (JFRSession session = open(path, ctx)) {
+        return new JfrCompare().profile(AnalysisTarget.of(id, session), eventType, true);
+      }
+    }
+
+    private static String listTypes(Path path, ProfileReader reader) throws Exception {
+      ProfileReader r = reader != null ? reader : new JfrCompare();
+      StringBuilder out = new StringBuilder();
+      out.append(path).append(" (").append(r.format()).append(")\n");
+      List<SampleTypeInfo> types = r.sampleTypes(path);
+      if (types.isEmpty()) {
+        out.append("  no sample types\n");
+      }
+      for (SampleTypeInfo type : types) {
+        out.append(String.format(java.util.Locale.ROOT, "  %-40s %s%n", type.label(), type.kind()));
+      }
+      return out.toString();
+    }
+
+    /** Opens a recording, naming the file when it is not one the parser can read. */
+    private static JFRSession open(Path path, ParsingContext ctx) {
+      try {
+        return new JFRSession(path, ctx);
+      } catch (Exception e) {
+        String hint =
+            isJfr(path)
+                ? ""
+                : " (it is not a JFR recording, and no module on the class path reads it: pprof"
+                    + " and OTLP profiles are read by the jafar-shell jar)";
+        throw new IllegalArgumentException(
+            "cannot read JFR recording " + path + ": " + describe(e) + hint, e);
       }
     }
   }
@@ -726,9 +1185,18 @@ public final class Main implements Callable<Integer> {
         description = "JFR backend to use")
     private String backend;
 
+    @CommandLine.ParentCommand private Main parent;
+
+    @CommandLine.Spec private CommandLine.Model.CommandSpec spec;
+
     @Override
     public Integer call() {
-      Integer rc = validateBackend(backend);
+      Integer rc;
+      try {
+        rc = validateBackend(subcommandBackend(spec, parent, backend));
+      } catch (CommandLine.ParameterException e) {
+        return usageError(e);
+      }
       if (rc != 0) {
         return rc;
       }
@@ -770,7 +1238,7 @@ public final class Main implements Callable<Integer> {
 
                   @Override
                   public void printf(String fmt, Object... args) {
-                    output.append(String.format(fmt, args));
+                    output.append(String.format(Locale.ROOT, fmt, args));
                   }
 
                   @Override
@@ -817,8 +1285,10 @@ public final class Main implements Callable<Integer> {
           }
           System.err.println(
               String.format(
+                  Locale.ROOT,
                   "\nExecuted %d/%d commands successfully.",
-                  result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size()));
+                  result.getSuccessCount(),
+                  result.getSuccessCount() + result.getErrors().size()));
           return 1;
         }
 

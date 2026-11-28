@@ -1,0 +1,157 @@
+name: Performance A/B (perf-ab)
+
+# An advisory A/B performance report on demand: doc/plans/perf-ab.md, step 3. It benchmarks a
+# PR against its merge base on one runner, in interleaved rounds, and reports per benchmark
+# whether the PR is slower, faster or unchanged, with JFR attribution for the changed ones.
+# scripts/perf_ab_run.sh does the work; it runs the same way locally.
+#
+# Never a gate: timing in CI varies too much to block on (Gates.md, principle 3), and a
+# regression never fails this job. It fails only when the comparison could not run. JMH is too
+# slow for every PR (Gates.md, principle 4), so it runs only:
+#   - on a PR while it carries the `perf-ab` label: when the label is added, and on each push
+#     while it is there (a newer push cancels the run in progress);
+#   - on demand (workflow_dispatch), comparing any two refs; like every dispatch, this works only
+#     once the workflow is on the default branch;
+#   - on a push to a branch named perf/*, comparing it with its merge base on main: how this
+#     workflow is tried from a branch that is not merged yet (the nightly/* and bench/* pattern).
+#
+# Without a committed calibration (scripts/perf-ab-calibration.json, step 5 of the plan) every
+# verdict reads `uncalibrated`: the numbers are shown, but no benchmark is called slower or faster.
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Base: a branch, tag or commit'
+        required: true
+        default: 'main'
+      head_ref:
+        description: 'Head: a branch, tag or commit (default: the commit this run is for)'
+        required: false
+        default: ''
+      merge_base:
+        description: 'Compare against the merge base of base and head, not base itself'
+        type: boolean
+        required: false
+        default: false
+      benchmarks:
+        description: 'JMH benchmark regex, no spaces (default: the six QueryPushdownBenchmark methods)'
+        required: false
+        default: ''
+      jmh_args:
+        description: 'JMH options per timing invocation (default: -f 3 -wi 3 -i 5)'
+        required: false
+        default: ''
+  push:
+    branches:
+      - 'perf/**'
+
+concurrency:
+  # A newer push to the same PR, or to the same perf/* branch, makes the running comparison
+  # obsolete. A dispatch never does: each dispatched run gets a group of its own (its run id),
+  # so the A/A runs of a calibration (doc/plans/perf-ab.md, section 3.8) can run side by side
+  # instead of each new one cancelling the last, as they did when every dispatch on main
+  # shared the group of github.ref.
+  group: perf-ab-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# The job runs the PR's own code, so it gets no write access and no secrets.
+permissions:
+  contents: read
+
+jobs:
+  perf-ab:
+    name: Performance A/B
+    # On a PR: only when the perf-ab label was just added, or on a push while it is there.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'perf-ab') ||
+      (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'perf-ab'))
+    runs-on: ubuntu-latest
+    # Local estimate for the default settings: 40-50 minutes (doc/plans/perf-ab.md, section 6).
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Both commits and their merge base must be in the clone.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      # Liberica JDK 8, 25 and 21 (the default): JMH runs on 21, jfr-shell (attribution) on 25.
+      - name: Liberica JDKs for Gradle toolchains
+        uses: ./.github/actions/liberica-jdks
+
+      # Inputs reach the script through the environment only, never interpolated into the
+      # command line, so a ref or regex cannot inject shell.
+      - name: Compare
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          IN_BASE: ${{ inputs.base_ref }}
+          IN_HEAD: ${{ inputs.head_ref }}
+          IN_MERGE_BASE: ${{ inputs.merge_base }}
+          IN_BENCHMARKS: ${{ inputs.benchmarks }}
+          IN_JMH: ${{ inputs.jmh_args }}
+        run: |
+          set -euo pipefail
+          # A branch name means its tip on origin: the clone has no local branches but this one.
+          on_origin() {
+            if git rev-parse --verify --quiet "origin/$1^{commit}" >/dev/null; then
+              echo "origin/$1"
+            else
+              echo "$1"
+            fi
+          }
+          extra=()
+          case "$EVENT" in
+            pull_request)
+              base="origin/$PR_BASE"
+              head="$PR_HEAD" ;;
+            workflow_dispatch)
+              base="$(on_origin "$IN_BASE")"
+              head="$GITHUB_SHA"
+              [ -z "$IN_HEAD" ] || head="$(on_origin "$IN_HEAD")"
+              [ "$IN_MERGE_BASE" = "true" ] || extra+=(--exact-base)
+              [ -z "$IN_BENCHMARKS" ] || extra+=(--benchmarks "$IN_BENCHMARKS")
+              [ -z "$IN_JMH" ] || extra+=(--jmh "$IN_JMH") ;;
+            push)
+              base="origin/main"
+              head="$GITHUB_SHA" ;;
+            *)
+              echo "unexpected event $EVENT" >&2
+              exit 1 ;;
+          esac
+          scripts/perf_ab_run.sh --base "$base" --head "$head" --out build/perf-ab ${extra[@]+"${extra[@]}"}
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f build/perf-ab/summary.md ]; then
+            cat build/perf-ab/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "perf-ab produced no report: see the Compare step's log" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Results, recordings and logs, not the worktrees.
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-ab
+          path: |
+            build/perf-ab/*.json
+            build/perf-ab/*.md
+            build/perf-ab/*.txt
+            build/perf-ab/*.tsv
+            build/perf-ab/logs/
+            build/perf-ab/jfr/
+            build/perf-ab/attribution/
+          if-no-files-found: warn
+          retention-days: 30

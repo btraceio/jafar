@@ -195,7 +195,8 @@ public final class JfrHelpProvider {
         ```
 
         ## decorateByTime(eventType, fields=f1,f2[, threadPath=..., decoratorThreadPath=...])
-        Join with time-overlapping events on same thread.
+        Join with time-overlapping events on same thread. Without threadPath/decoratorThreadPath,
+        each event's own thread is matched: sampledThread for samples, else eventThread.
         ```
         events/jdk.ExecutionSample | decorateByTime(jdk.JavaMonitorWait, fields=monitorClass,duration)
         ```
@@ -416,6 +417,9 @@ public final class JfrHelpProvider {
         ## Common Field Paths
         - `eventThread/javaName` - Thread name
         - `eventThread/javaThreadId` - Thread ID
+        - `sampledThread/javaName`, `sampledThread/javaThreadId` - the thread of a sample:
+          `jdk.ExecutionSample` and `jdk.NativeMethodSample` have no `eventThread`, so
+          `eventThread/...` is null for every one of them
         - `stackTrace/frames` - Stack frames array
         - `stackTrace/frames/0/method/name/string` - Top frame method name
         - `duration` - Event duration (nanoseconds)

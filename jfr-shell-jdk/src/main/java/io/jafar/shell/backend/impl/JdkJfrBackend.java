@@ -53,6 +53,8 @@ import org.slf4j.LoggerFactory;
  */
 public final class JdkJfrBackend implements JfrBackend {
 
+  private static final Logger LOG = LoggerFactory.getLogger(JdkJfrBackend.class);
+
   private static final Set<BackendCapability> CAPABILITIES =
       EnumSet.of(
           BackendCapability.EVENT_STREAMING,
@@ -70,9 +72,47 @@ public final class JdkJfrBackend implements JfrBackend {
     return "JDK JFR API";
   }
 
+  /**
+   * This backend's build version, from its jar's manifest, as the jafar backend reports its own;
+   * {@code dev} when it was not loaded from a jar (Gradle tests, an IDE). It used to be the JDK's
+   * version, which a development shell's check for a stale backend could never match, so that
+   * warning fired even for the jar built with the shell (#267). The JDK's version is {@link
+   * Runtime#version()}.
+   */
   @Override
   public String getVersion() {
-    return Runtime.version().toString();
+    return buildVersion(JdkJfrBackend.class);
+  }
+
+  /**
+   * The {@code Implementation-Version} in the manifest of the jar {@code type} was loaded from, or
+   * {@code dev}. Read from that jar itself, not from {@link Class#getPackage()}: the jafar backend
+   * has classes in this package too, and the shell loads every plugin jar through one class loader,
+   * where the package's version is whichever jar defined it first. The jafar backend has the same
+   * method: a plugin cannot rely on a shell-core helper an older shell lacks.
+   */
+  static String buildVersion(Class<?> type) {
+    try {
+      java.security.CodeSource source = type.getProtectionDomain().getCodeSource();
+      if (source == null || source.getLocation() == null) {
+        return "dev";
+      }
+      Path location = Path.of(source.getLocation().toURI());
+      if (!java.nio.file.Files.isRegularFile(location)) {
+        return "dev"; // a classes directory
+      }
+      try (java.util.jar.JarFile jar = new java.util.jar.JarFile(location.toFile())) {
+        java.util.jar.Manifest manifest = jar.getManifest();
+        String version =
+            manifest == null
+                ? null
+                : manifest.getMainAttributes().getValue("Implementation-Version");
+        return version == null || version.isBlank() ? "dev" : version;
+      }
+    } catch (java.io.IOException | java.net.URISyntaxException | RuntimeException e) {
+      LOG.debug("No build version for {}: {}", type.getName(), e.toString());
+      return "dev";
+    }
   }
 
   @Override
@@ -141,8 +181,9 @@ public final class JdkJfrBackend implements JfrBackend {
     }
 
     private static Map<String, Object> convertEvent(RecordedEvent event) {
-      // Shared with the live tail path; must stay byte-identical to the previous inline
-      // implementation (no decorations here — file-backend output shape is a contract).
+      // Shared with the live tail path (no decorations here). Array fields became the untyped
+      // Object[]-of-maps model in #196; shell event queries do not use this source (see
+      // doc/agents/Shells.md, "Event queries do not go through the backend plugin").
       return io.jafar.shell.live.LiveEventDecoder.decodeFields(event);
     }
   }
@@ -172,6 +213,22 @@ public final class JdkJfrBackend implements JfrBackend {
     /** Upper bound for the chunk-local recovery scan in this class. */
     private static final long MAX_RECOVERY_SCAN_EVENTS = 2_000_000;
 
+    /** The recovery scan's event cap: {@link #MAX_RECOVERY_SCAN_EVENTS} outside tests. */
+    private final long maxRecoveryScanEvents;
+
+    /** Where the cap and chunk-local-type warnings go: the log outside tests. */
+    private final Consumer<String> warnings;
+
+    JdkMetadataSource() {
+      this(MAX_RECOVERY_SCAN_EVENTS, log::warn);
+    }
+
+    /** For tests: a smaller scan cap, and the warnings captured instead of logged. */
+    JdkMetadataSource(long maxRecoveryScanEvents, Consumer<String> warnings) {
+      this.maxRecoveryScanEvents = maxRecoveryScanEvents;
+      this.warnings = warnings;
+    }
+
     /**
      * Normalized absolute path of the recording the chunk-local-types warning was last emitted for.
      */
@@ -197,13 +254,15 @@ public final class JdkJfrBackend implements JfrBackend {
           if (event == null) {
             break;
           }
-          if (++scanned > MAX_RECOVERY_SCAN_EVENTS) {
-            log.warn(
-                "Stopped the chunk-local type recovery scan of '{}' after {} events while "
-                    + "looking up '{}'; treating the type as not found",
-                recording,
-                MAX_RECOVERY_SCAN_EVENTS,
-                typeName);
+          if (++scanned > maxRecoveryScanEvents) {
+            warnings.accept(
+                "Stopped the chunk-local type recovery scan of '"
+                    + recording
+                    + "' after "
+                    + maxRecoveryScanEvents
+                    + " events while looking up '"
+                    + typeName
+                    + "'; treating the type as not found");
             return null;
           }
           EventType eventType = event.getEventType();
@@ -264,7 +323,7 @@ public final class JdkJfrBackend implements JfrBackend {
           if (mergedName != null && !mergedName.equals(eventType.getName())) {
             divergent = true;
           }
-          if (++scanned > MAX_RECOVERY_SCAN_EVENTS) {
+          if (++scanned > maxRecoveryScanEvents) {
             capped = true;
             break;
           }
@@ -277,11 +336,13 @@ public final class JdkJfrBackend implements JfrBackend {
         warnChunkLocalTypes(recording);
       }
       if (capped) {
-        log.warn(
-            "Stopped the chunk-local type recovery scan of '{}' after {} events; types that only "
-                + "occur later in the recording may be missing from the metadata view",
-            recording,
-            MAX_RECOVERY_SCAN_EVENTS);
+        warnings.accept(
+            "Stopped the chunk-local type recovery scan of '"
+                + recording
+                + "' after "
+                + maxRecoveryScanEvents
+                + " events; types that only occur later in the recording may be missing from the "
+                + "metadata view");
       }
       return new ArrayList<>(byName.values());
     }
@@ -314,19 +375,25 @@ public final class JdkJfrBackend implements JfrBackend {
       return type.getId() + ":" + type.getName();
     }
 
-    private static void warnChunkLocalTypes(Path recording) {
+    /**
+     * Warns that {@code recording} has chunk-local types, unless the previous warning was for the
+     * same recording: the state is one process-wide slot, shared by every source whatever its sink,
+     * so A, A warns once, and A, B, A warns three times.
+     */
+    private void warnChunkLocalTypes(Path recording) {
       String key = recording.toAbsolutePath().normalize().toString();
       String previous = chunkLocalTypesWarnedFor.get();
       if (key.equals(previous)) {
         return;
       }
       if (chunkLocalTypesWarnedFor.compareAndSet(previous, key)) {
-        log.warn(
-            "Recording '{}' redefines type ids across chunks (per-chunk metadata); the JDK "
+        warnings.accept(
+            "Recording '"
+                + recording
+                + "' redefines type ids across chunks (per-chunk metadata); the JDK "
                 + "backend's merged metadata view misattributes or hides chunk-local types. "
                 + "Chunk-local types were recovered from event payloads. Prefer the 'jafar' "
-                + "backend for faithful per-chunk metadata.",
-            recording);
+                + "backend for faithful per-chunk metadata.");
       }
     }
 

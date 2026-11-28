@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -338,7 +339,7 @@ public final class TuiBrowserController {
     StringBuilder sb = new StringBuilder("  ");
     for (int c = 0; c < headers.size(); c++) {
       if (c > 0) sb.append("  ");
-      sb.append(String.format("%-" + widths[c] + "s", headers.get(c)));
+      sb.append(String.format(Locale.ROOT, "%-" + widths[c] + "s", headers.get(c)));
     }
     String headerLine = sb.toString();
     tab.lines.add(headerLine);
@@ -422,7 +423,7 @@ public final class TuiBrowserController {
         if (cell.length() > TuiTableRenderer.MAX_CELL_WIDTH) {
           cell = cell.substring(0, TuiTableRenderer.MAX_CELL_WIDTH - 3) + "...";
         }
-        sb.append(String.format("%-" + tab.cpColumnWidths[c] + "s", cell));
+        sb.append(String.format(Locale.ROOT, "%-" + tab.cpColumnWidths[c] + "s", cell));
       }
       String line = sb.toString();
       tab.lines.add(line);

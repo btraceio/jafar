@@ -4,6 +4,7 @@ import io.jafar.utils.CustomByteBuffer;
 import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
+import java.util.Locale;
 
 /**
  * Memory-mapped reader for retained.idx with O(1) random access.
@@ -53,16 +54,20 @@ public final class RetainedSizeReader implements AutoCloseable {
     if (magic != IndexFormat.RETAINED_INDEX_MAGIC) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Invalid retained.idx magic: 0x%08X (expected 0x%08X)",
-              magic, IndexFormat.RETAINED_INDEX_MAGIC));
+              magic,
+              IndexFormat.RETAINED_INDEX_MAGIC));
     }
 
     formatVersion = buffer.getInt();
     if (formatVersion != IndexFormat.FORMAT_VERSION) {
       throw new IOException(
           String.format(
+              Locale.ROOT,
               "Unsupported format version: %d (expected %d)",
-              formatVersion, IndexFormat.FORMAT_VERSION));
+              formatVersion,
+              IndexFormat.FORMAT_VERSION));
     }
 
     long entryCountLong = buffer.getLong();
@@ -71,7 +76,7 @@ public final class RetainedSizeReader implements AutoCloseable {
     }
     entryCount = (int) entryCountLong;
 
-    int flags = buffer.getInt(); // Reserved for future use
+    buffer.getInt(); // Reserved for future use
   }
 
   /**
@@ -87,7 +92,10 @@ public final class RetainedSizeReader implements AutoCloseable {
     if (objectId32 < 0 || objectId32 >= entryCount) {
       throw new IllegalArgumentException(
           String.format(
-              "Object ID out of range: %d (valid range: 0 to %d)", objectId32, entryCount - 1));
+              Locale.ROOT,
+              "Object ID out of range: %d (valid range: 0 to %d)",
+              objectId32,
+              entryCount - 1));
     }
 
     // Calculate entry offset with long arithmetic to avoid int overflow for >178M objects

@@ -77,7 +77,7 @@ class GoldenFileTest {
           GoldenFile.verify(FIXTURE, digestA(), () -> marked(invoked, LINES_A), REGEN_COMMAND);
           assertFalse(
               invoked[0],
-              "a matching golden must not materialize the full dump — the tck dump is ~480 MB "
+              "a matching golden must not materialize the full dump — the tck dump is ~454 MB "
                   + "(Risk 4)");
           assertFalse(
               Files.exists(actualDir()),

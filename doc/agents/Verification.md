@@ -36,11 +36,16 @@ backend it selected reports a different version, it prints to stderr, before the
 Warning: this jfr-shell is a development build (0.0.0-SNAPSHOT) but its 'jafar' backend is version 0.29.0, not the one built with it. …
 ```
 
-That line means everything typed into that shell ran the release. The warning is a backstop, not
-a replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from
-a fresh one. `jafar-shell` bundles the backend built with it and uses that one even when a released
-plugin is installed (its `backend` command reports `Version: dev`), so its shadow jar needs no
-flags.
+That line means everything typed into that shell ran the release. The warning is a backstop, not a
+replacement for the flags above: it compares versions, so it cannot tell a stale SNAPSHOT jar from a
+fresh one. Each backend reads its version from the manifest of the jar it was loaded from: the shell
+loads every plugin jar through one class loader, where a package shared by two jars (both backends
+live in `io.jafar.shell.backend.impl`) takes the manifest of whichever jar defined it first, so
+`Class.getPackage()` there names the wrong jar's version (#267). Released backend jars up to 0.29.0
+still read it that way: next to a built `jdk` jar, a released `jafar` plugin reports the `jdk` jar's
+version and the warning stays silent. `jafar-shell` bundles the backend built with it and uses that
+one even when a released plugin is installed (its `backend` command reports `Version: dev`), so its
+shadow jar needs no flags.
 
 > **Case file — verifying 0.29.0.** Fixing `crossref` in `JafarSources`, every
 > built-jar check — "works on a real recording", "a corrupted real recording still prints the clean
@@ -111,9 +116,10 @@ In this repository the recurring multiplicities are:
 | JfrPath execution | via `JfrSelector` when supplied; via `JfrPathEvaluator` directly when not |
 | LLM backends | `llm-anthropic`, and `llm-openai`'s `openai` + `ollama` profiles |
 | Untyped parsers | Java (`parser-core`) and Go (`go-parser`) — see the [parity rule](../../AGENTS.md#rules) |
-| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses) and generated `EventStreamGenerated` (`parser-codegen`, not reachable from the public API) — held equal by `GeneratedUntypedParityTest` |
+| Java untyped value paths | generic `EventStream` (what `UntypedJafarParser` uses when `parser-codegen` is not on the classpath, or with `-Djafar.untyped.generated=false`) and generated `EventStreamGenerated` (`parser-codegen`; what `UntypedJafarParser` uses otherwise, `UntypedJafarParserImpl.usesGeneratedReader`) — held equal by `GeneratedUntypedParityTest` |
+| Typed decode paths | build-time `HandlerFactory` (`jafar-processor`) and run-time generated handlers (`parser-codegen`). With both on the classpath a chunk the factory is not attached to is decoded by a run-time handler: right values, wrong path, no error. `:jafar-processor:test` runs without `parser-codegen`; `:jafar-processor:codegenTest` runs with it and asserts which implementation decoded each value |
 | Query evaluators | JFR, Hdump, pprof, OTLP |
-| Chunks | one parsing task per chunk on a pool of `max(availableProcessors - 2, 1)` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
+| Chunks | one parsing task per chunk on a pool of `availableProcessors` threads (`StreamingChunkParser`) — a one-chunk fixture exercises one of them |
 
 > **Case file — two query paths.** `CommandDispatcher` runs JfrPath two ways. The LLM host adapter
 > knew only the `JfrSelector` one; the interactive shell builds the dispatcher the other way. Fixed
@@ -144,6 +150,25 @@ In this repository the recurring multiplicities are:
 > self-contained, so a recording concatenated with itself is a valid N-chunk recording
 > (`AbortProbe.fixtures`, Go's `TestMultipleChunks`). Constant-pool ids are chunk-local as well: key
 > anything per id on (chunk, id).
+
+> **Case file — one chunk's answer kept for every chunk.** `SharedParsingContextStressTest` failed
+> once in a CI run and once in 18 local runs with `round 3 parse 0 (typed): chunk 1 differs from the
+> reference first at index 0: expected … when=After GC … but was … when=null`. The order was
+> right and the value was not, so neither the test's per-chunk bookkeeping nor the shared
+> `ParsingContext` was involved. `TypedJafarParserImpl`'s listener computed the set of types its
+> handlers reference from a chunk's metadata, `if (referencedTypes == null)`, into a field shared
+> by the chunk threads, and the type filter that decides which constant pools are indexed read
+> that field each time it was asked. Chunk 2 of `tck-test.jfr` (a different producer) declares
+> neither `jdk.GCHeapSummary` nor `jdk.types.GCWhen`. When both chunk threads found the field
+> unset and chunk 2 wrote last, chunk 1 skipped its `GCWhen` pool and all 1,892 `when()` values
+> were `null`, with no error. Forcing that interleaving with two latches gave 1,892 nulls in 3 of 3
+> runs. The set is now a local of each chunk's metadata callback. Three things to keep: **when a
+> comparison fails, read which side of it is wrong before suspecting the harness** (the message was
+> lost the first time because a later run overwrote the JUnit XML; loop to the first failure and
+> copy the report); **a lambda that reads a field is not a snapshot of it**; and **anything derived
+> from one chunk's metadata belongs to that chunk**, since the other chunks of a recording need not
+> declare the same types. `TypedTypeFilterChunkRaceTest` lines the two chunk threads up at the
+> computation and fails in 30 of 30 runs on the old code, at `ActiveProcessorCount` 1, 4 and 16.
 
 > **Case file — two modes of one shell.** `unified/Shell` gained a terminal-free script mode with
 > a private constructor taking `out` and `err` — the same names as its fields. The anonymous
@@ -467,6 +492,21 @@ way — by looking at a value rather than at control flow.
 > The unified shell must delegate to the same enrichment: its host's default methods otherwise
 > silently reduce both metadata requests to bare names.
 
+> **Case file — a comparison of a thing with itself.** `BuildTimeHandlerBenchmark` compared
+> build-time handlers with runtime-generated ones through method pairs such as
+> `parseWithRuntimeGeneration` / `parseWithBuildTimeGeneration`. The two methods of each pair
+> were the same code, and the typed parser uses every factory `ServiceLoader` finds, so every
+> "runtime" method ran the build-time handlers. Nothing failed: the methods returned numbers, a
+> recorded report gave the pair 0.187 and 0.189 ops/s, and `BuildTimeBenchmarks.md` published
+> "sample results" of +23% throughput and −24% allocation that the class could not have produced
+> (it reports ops/s, never MB/s or single-shot ms). Meanwhile the two `parseWith*` methods had
+> stopped running at all: a benchmark interface declared `java.lang.ThreadGroup` where recordings
+> have `jdk.types.ThreadGroup`, and the generated handler refused it. What found it was printing
+> `event.getClass()` inside the measured parse: `JFRExecutionSampleHandler` for both. The
+> benchmark now records the decoding class during measurement and fails a trial whose class is not
+> the one its `decoder` parameter names. **A comparison is only evidence once each side has been
+> seen to run the thing its label names.**
+
 When a model is the consumer, this is the only way: it will use whatever it is given and produce a
 fluent answer either way. A plausible answer drawn from redacted data is indistinguishable from a
 good one unless you looked.
@@ -615,6 +655,24 @@ take precedence over the generated ones.
 > so `test-dd.jfr` was fetched fresh, and three `jfr-mcp` tests failed on assertions about MCP tool
 > results; the cause, `Invalid JFR Magic Number: 3c21444f` (`<!DO`), was only in the test's stderr.
 > The script now refuses any file without the `FLR\0` magic and says what it got instead.
+
+> **Case file — deterministic here, deterministic there, different bytes.** `JfrGoldenDumpTest`
+> `[2] TEST_AP` and `[3] TEST_JFR` failed in one development container on every run, with and
+> without any change, with "fixture bytes changed", and passed on CI. The generator had fixed
+> seeds and gave the same file on every run, so it was called deterministic; then, after different
+> JDK builds were seen to write different files, deterministic per JDK build. It was neither. Same
+> generator, same JDK 21 binary: `cbd7a797…` through Gradle, `2414a2d4…` with `java -cp`. The
+> files had the same size and header and differed in one block, bytes 110,100 to 115,287, inside
+> the constant-pool checkpoint, holding the same bytes in another order. `-XX:hashCode=<mode>`
+> changed the hash for every mode, and the address-based modes gave a new file on each run: the
+> JMC writer orders constant pools by iterating a `ConcurrentHashMap` keyed by type,
+> `BuiltinType.hashCode` includes its `Types.Builtin` enum constant, and an enum's hash is its
+> identity hash. The goldens no longer pin these bytes (#220), and the task passes
+> `-XX:hashCode=2` (every identity hash is 1), with which Gradle, `java -cp` on JDK 21 and 25 and
+> the CI runner all wrote `a61945b2…`. **"Same output twice" proves determinism only for the
+> conditions both runs shared, and "differs between A and B" does not name the cause: vary one
+> thing at a time (the launch, a flag such as `-XX:hashCode=1`) before pinning a hash of generated
+> bytes or explaining why it moved.**
 
 > **Case file — a stand-in recording found three bugs by being different.** The first generated
 > `test-ap.jfr` had two chunks; the downloaded one had evidently always had one. Eight tests failed.

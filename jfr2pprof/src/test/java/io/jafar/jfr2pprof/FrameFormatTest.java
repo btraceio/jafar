@@ -43,6 +43,24 @@ class FrameFormatTest {
     assertThat(fmt.render("com.Foo", "bar", 10)).isEqualTo("com.Foo#bar");
   }
 
+  @Test
+  void aFrameWithoutAClassIsItsMethodAlone() {
+    // Native frames have no class. They were rendered ".sendto", a name no other tool writes, so
+    // they did not line up with the same frame read from the recording ("sendto").
+    assertThat(FrameFormat.defaultFormat().render("", "sendto", -1)).isEqualTo("sendto");
+    assertThat(FrameFormat.defaultFormat().render("", "CodeCache::contains", 3))
+        .isEqualTo("CodeCache::contains");
+    assertThat(new FrameFormat("{class}#{method}", false).render("", "sendto", -1))
+        .isEqualTo("sendto");
+    assertThat(new FrameFormat("{method}@{class}", false).render("", "sendto", -1))
+        .isEqualTo("sendto");
+    assertThat(new FrameFormat("{class}.{method}", true).render("", "sendto", 7))
+        .isEqualTo("sendto:7");
+    // With a class, nothing changes.
+    assertThat(new FrameFormat("{method}@{class}", false).render("a.B", "c", -1))
+        .isEqualTo("c@a.B");
+  }
+
   // ---- FrameExtractor.extract() tests ----
 
   @Test

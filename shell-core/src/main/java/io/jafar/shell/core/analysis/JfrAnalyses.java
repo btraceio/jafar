@@ -1,9 +1,11 @@
 package io.jafar.shell.core.analysis;
 
 import io.jafar.parser.api.Values;
+import io.jafar.shell.JFRSession;
 import io.jafar.shell.core.findings.Finding;
 import io.jafar.shell.core.findings.Findings;
 import io.jafar.shell.core.findings.JfrFindings;
+import io.jafar.shell.jfrpath.EventThreads;
 import io.jafar.shell.jfrpath.JfrPath;
 import io.jafar.shell.jfrpath.JfrPathParser;
 import java.util.ArrayList;
@@ -11,6 +13,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,6 +52,46 @@ public final class JfrAnalyses {
   }
 
   /**
+   * The event counts of the analysis running on this thread, by session: an analysis asks for them
+   * once per detector and once per nested analysis ({@code diagnose} runs five others), and each
+   * count reads the whole recording, so they are counted once per top-level call. {@code null}
+   * outside an analysis.
+   */
+  private final ThreadLocal<Map<JFRSession, Map<String, Long>>> analysisCounts =
+      new ThreadLocal<>();
+
+  /** Runs {@code analysis} with its event counts shared by everything it calls on this thread. */
+  private <T> T withEventCounts(java.util.concurrent.Callable<T> analysis) throws Exception {
+    if (analysisCounts.get() != null) {
+      return analysis.call(); // nested: share the outer analysis's counts
+    }
+    analysisCounts.set(new java.util.IdentityHashMap<>());
+    try {
+      return analysis.call();
+    } finally {
+      analysisCounts.remove();
+    }
+  }
+
+  /**
+   * The number of events of each type in {@code target}'s recording: counted once per top-level
+   * analysis (see {@link #withEventCounts}), and afresh on every call outside one.
+   */
+  private Map<String, Long> eventCounts(AnalysisTarget target) throws Exception {
+    Map<JFRSession, Map<String, Long>> counts = analysisCounts.get();
+    if (counts == null) {
+      return evaluator.countAllEventTypes(target.session());
+    }
+    Map<String, Long> known = counts.get(target.session());
+    if (known == null) {
+      // Unmodifiable: every caller in the analysis gets the same map.
+      known = java.util.Collections.unmodifiableMap(evaluator.countAllEventTypes(target.session()));
+      counts.put(target.session(), known);
+    }
+    return known;
+  }
+
+  /**
    * What is in this recording: event totals, the dominant types, and the highlights that decide
    * where to look next.
    *
@@ -56,6 +99,11 @@ public final class JfrAnalyses {
    * difference between O(file) and O(types x file) on a large recording.
    */
   public Map<String, Object> summary(AnalysisTarget target, Progress progress) throws Exception {
+    return withEventCounts(() -> summaryCounted(target, progress));
+  }
+
+  private Map<String, Object> summaryCounted(AnalysisTarget target, Progress progress)
+      throws Exception {
     {
       Map<String, Object> result = new LinkedHashMap<>();
 
@@ -65,7 +113,7 @@ public final class JfrAnalyses {
 
       // Single-pass count of all event types — O(file_size) instead of O(N × file_size)
       progress.step(0, 2, "Counting events...");
-      Map<String, Long> rawCounts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> rawCounts = eventCounts(target);
       progress.step(1, 2, "Aggregating...");
 
       Map<String, Long> eventCounts = new LinkedHashMap<>();
@@ -93,7 +141,9 @@ public final class JfrAnalyses {
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("type", e.getKey());
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / finalTotalEvents));
+                entry.put(
+                    "pct",
+                    String.format(Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / finalTotalEvents));
                 topTypes.add(entry);
               });
       result.put("topEventTypes", topTypes);
@@ -241,7 +291,10 @@ public final class JfrAnalyses {
       final long totalSamples = total.sum();
       return methodCounts.entrySet().stream()
           .max(Comparator.comparingLong(Map.Entry::getValue))
-          .map(e -> String.format("%s (%.1f%%)", e.getKey(), e.getValue() * 100.0 / totalSamples))
+          .map(
+              e ->
+                  String.format(
+                      Locale.ROOT, "%s (%.1f%%)", e.getKey(), e.getValue() * 100.0 / totalSamples))
           .orElse(null);
 
     } catch (Exception e) {
@@ -250,6 +303,18 @@ public final class JfrAnalyses {
   }
 
   public List<String> extractFrames(Map<String, Object> event, String direction, Integer maxDepth) {
+    return extractFrames(event, direction, maxDepth, this::extractMethodName);
+  }
+
+  /**
+   * As {@link #extractFrames(Map, String, Integer)}, naming each frame with {@code frameName}; a
+   * frame it names {@code null} is dropped.
+   */
+  public List<String> extractFrames(
+      Map<String, Object> event,
+      String direction,
+      Integer maxDepth,
+      java.util.function.Function<Object, String> frameName) {
     List<String> frames = new ArrayList<>();
 
     Object stackTrace = event.get("stackTrace");
@@ -287,7 +352,7 @@ public final class JfrAnalyses {
 
     // Extract method names from frames
     for (Object frame : frameArray) {
-      String methodName = extractMethodName(frame);
+      String methodName = frameName.apply(frame);
       if (methodName != null) {
         frames.add(methodName);
       }
@@ -307,8 +372,18 @@ public final class JfrAnalyses {
     return frames;
   }
 
-  @SuppressWarnings("unchecked")
   public String extractMethodName(Object frame) {
+    return extractFrameName(
+        frame,
+        (className, methodName) -> className.isEmpty() ? methodName : className + "." + methodName);
+  }
+
+  /**
+   * A frame's class and method names, unwrapped, passed to {@code naming}; {@code null} when the
+   * frame has neither. Either name is {@code ""} when absent.
+   */
+  @SuppressWarnings("unchecked")
+  public String extractFrameName(Object frame, java.util.function.BinaryOperator<String> naming) {
     if (frame == null) {
       return null;
     }
@@ -366,7 +441,7 @@ public final class JfrAnalyses {
       return null;
     }
 
-    return className.isEmpty() ? methodName : className + "." + methodName;
+    return naming.apply(className, methodName);
   }
 
   public Object unwrapValue(Object obj) {
@@ -381,8 +456,12 @@ public final class JfrAnalyses {
 
   public Map<String, Object> exceptions(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
+    return withEventCounts(() -> exceptionsCounted(target, args, progress));
+  }
+
+  private Map<String, Object> exceptionsCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
-    String sessionId = (String) args.get("sessionId");
     int minCount = args.get("minCount") instanceof Number n ? n.intValue() : 1;
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 50;
 
@@ -456,7 +535,9 @@ public final class JfrAnalyses {
                 entry.put("type", extractSimpleName(fullName));
                 entry.put("fullType", fullName);
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / totalEvents));
+                entry.put(
+                    "pct",
+                    String.format(Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / totalEvents));
                 // Add top throw site for this exception type
                 String topSite = analysis.topThrowSiteByType.get(fullName);
                 if (topSite != null) {
@@ -477,7 +558,9 @@ public final class JfrAnalyses {
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("site", e.getKey());
                 entry.put("count", e.getValue());
-                entry.put("pct", String.format("%.1f%%", e.getValue() * 100.0 / totalEvents));
+                entry.put(
+                    "pct",
+                    String.format(Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / totalEvents));
                 throwSites.add(entry);
               });
       result.put("topThrowSites", throwSites);
@@ -506,7 +589,7 @@ public final class JfrAnalyses {
       "jdk.JavaExceptionThrow", "datadog.ExceptionSample", "jdk.ExceptionStatistics"
     };
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       for (String type : candidateTypes) {
         if (counts.getOrDefault(type, 0L) > 0) return type;
       }
@@ -614,8 +697,12 @@ public final class JfrAnalyses {
 
   public Map<String, Object> hotmethods(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
+    return withEventCounts(() -> hotmethodsCounted(target, args, progress));
+  }
+
+  private Map<String, Object> hotmethodsCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     String eventType = (String) args.get("eventType");
-    String sessionId = (String) args.get("sessionId");
     int limit = args.get("limit") instanceof Number n ? n.intValue() : 20;
     boolean includeNative = args.get("includeNative") instanceof Boolean b ? b : true;
 
@@ -675,7 +762,9 @@ public final class JfrAnalyses {
                 entry.put("method", methodName);
                 entry.put("samples", e.getValue());
                 entry.put(
-                    "pct", String.format("%.1f%%", e.getValue() * 100.0 / totalSamples.sum()));
+                    "pct",
+                    String.format(
+                        Locale.ROOT, "%.1f%%", e.getValue() * 100.0 / totalSamples.sum()));
                 entry.put("type", isNativeMethod(methodName) ? "native" : "java");
                 methods.add(entry);
               });
@@ -706,7 +795,7 @@ public final class JfrAnalyses {
       "jdk.ExecutionSample", "datadog.ExecutionSample", "jdk.NativeMethodSample"
     };
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       for (String type : candidateTypes) {
         if (counts.getOrDefault(type, 0L) > 0) return type;
       }
@@ -717,7 +806,7 @@ public final class JfrAnalyses {
 
   String detectQueueTimeEventType(AnalysisTarget target) {
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       return counts.getOrDefault("datadog.QueueTime", 0L) > 0 ? "datadog.QueueTime" : null;
     } catch (Exception ignored) {
       return null;
@@ -732,7 +821,7 @@ public final class JfrAnalyses {
       "jdk.ObjectAllocationOutsideTLAB"
     };
     try {
-      Map<String, Long> counts = evaluator.countAllEventTypes(target.session());
+      Map<String, Long> counts = eventCounts(target);
       for (String type : candidateTypes) {
         if (counts.getOrDefault(type, 0L) > 0) return type;
       }
@@ -742,18 +831,30 @@ public final class JfrAnalyses {
   }
 
   public boolean isNativeMethod(String methodName) {
+    return isNativeFrame(methodName);
+  }
+
+  /**
+   * Whether a frame name looks like a native (C/C++) frame rather than a Java one. Static, so the
+   * comparison can classify frames of any format with the same rule.
+   */
+  public static boolean isNativeFrame(String methodName) {
     if (methodName == null) return false;
     // C++ mangled names typically have < > :: or start with special chars
     return methodName.contains("<")
         || methodName.contains(">::")
         || methodName.contains("::")
         || methodName.startsWith("_")
-        || methodName.toLowerCase().contains("atomic");
+        || methodName.toLowerCase(Locale.ROOT).contains("atomic");
   }
 
   public Map<String, Object> use(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
-    String sessionId = (String) args.get("sessionId");
+    return withEventCounts(() -> useCounted(target, args, progress));
+  }
+
+  private Map<String, Object> useCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     boolean includeInsights = args.get("includeInsights") instanceof Boolean b ? b : true;
@@ -784,7 +885,7 @@ public final class JfrAnalyses {
       // CPU Resource Analysis
       if (resources.contains("cpu")) {
         progress.step(step++, totalSteps, "Analyzing CPU...");
-        resourceMetrics.put("cpu", analyzeCpuResource(target, timeFilter));
+        resourceMetrics.put("cpu", analyzeCpuResource(target, timeFilter, window));
       }
 
       // Memory Resource Analysis
@@ -822,14 +923,19 @@ public final class JfrAnalyses {
     }
   }
 
-  Map<String, Object> analyzeCpuResource(AnalysisTarget target, String timeFilter) {
+  Map<String, Object> analyzeCpuResource(
+      AnalysisTarget target, String timeFilter, TimeWindow window) {
     Map<String, Object> cpu = new LinkedHashMap<>();
 
     try {
       // Query jdk.CPULoad events for actual CPU utilization
-      String cpuLoadQuery = "events/jdk.CPULoad" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(cpuLoadQuery);
-      List<Map<String, Object>> cpuLoadEvents = evaluator.evaluate(target.session(), parsed);
+      // A recording that does not declare jdk.CPULoad (not every producer is the JDK) falls back
+      // to the thread states as one with no such events does; querying the type would throw
+      List<Map<String, Object>> cpuLoadEvents =
+          target.session().getAvailableTypes().contains("jdk.CPULoad")
+              ? evaluator.evaluate(
+                  target.session(), JfrPathParser.parse("events/jdk.CPULoad" + timeFilter))
+              : List.of();
 
       if (!cpuLoadEvents.isEmpty()) {
         // Calculate statistics from jdk.CPULoad events
@@ -878,6 +984,7 @@ public final class JfrAnalyses {
           utilization.put(
               "detail",
               String.format(
+                  Locale.ROOT,
                   "Avg %.1f%%, min %.1f%%, max %.1f%%, p95 %.1f%%, p99 %.1f%%",
                   avgMachineTotal * 100,
                   minMachineTotal * 100,
@@ -906,55 +1013,20 @@ public final class JfrAnalyses {
           cpu.put("utilization", utilization);
 
           // Check for container CPU throttling
-          Map<String, Object> saturation = new LinkedHashMap<>();
+          Map<String, Object> saturation;
           try {
-            String throttleQuery = "events/jdk.ContainerCPUThrottling" + timeFilter;
-            JfrPath.Query throttleParsed = JfrPathParser.parse(throttleQuery);
+            // All readings, not just the window's: the counters are running totals, so the
+            // window's throttling is measured against the readings that bracket it (#263).
             List<Map<String, Object>> throttleEvents =
-                evaluator.evaluate(target.session(), throttleParsed);
-
-            long totalThrottledTime = 0;
-            long totalThrottledSlices = 0;
-            long totalElapsedSlices = 0;
-
-            for (Map<String, Object> event : throttleEvents) {
-              Object throttledTime = Values.get(event, "cpuThrottledTime");
-              Object throttledSlices = Values.get(event, "cpuThrottledSlices");
-              Object elapsedSlices = Values.get(event, "cpuElapsedSlices");
-
-              if (throttledTime instanceof Number) {
-                totalThrottledTime += ((Number) throttledTime).longValue();
-              }
-              if (throttledSlices instanceof Number) {
-                totalThrottledSlices += ((Number) throttledSlices).longValue();
-              }
-              if (elapsedSlices instanceof Number) {
-                totalElapsedSlices += ((Number) elapsedSlices).longValue();
-              }
-            }
-
-            if (!throttleEvents.isEmpty()) {
-              saturation.put("throttledTimeNs", totalThrottledTime);
-              saturation.put("throttledSlices", totalThrottledSlices);
-              saturation.put("elapsedSlices", totalElapsedSlices);
-
-              if (totalThrottledTime > 0) {
-                saturation.put("value", totalThrottledSlices);
-                saturation.put("unit", "slices");
-                saturation.put(
-                    "detail",
-                    String.format(
-                        "Container throttled %d times, %d ns total",
-                        totalThrottledSlices, totalThrottledTime));
-              } else {
-                saturation.put("value", 0);
-                saturation.put("detail", "No container CPU throttling detected");
-              }
-            } else {
-              saturation.put("value", 0);
-              saturation.put("detail", "Container throttling events not available");
-            }
+                evaluator.evaluate(
+                    target.session(), JfrPathParser.parse("events/jdk.ContainerCPUThrottling"));
+            saturation =
+                containerThrottlingSaturation(
+                    throttleEvents,
+                    window == null ? null : window.fromEpochNanos(),
+                    window == null ? null : window.toEpochNanos());
           } catch (Exception e) {
+            saturation = new LinkedHashMap<>();
             saturation.put("value", "N/A");
             saturation.put("detail", "Could not check container throttling: " + e.getMessage());
           }
@@ -1005,6 +1077,26 @@ public final class JfrAnalyses {
         long runnableCount = counters.get(1);
         long saturatedCount = counters.get(2);
         long totalSamples = counters.get(0);
+        if (runnableCount == totalSamples) {
+          // Every sample RUNNABLE: what a CPU sampler records, whatever the threads did (#276)
+          String why = statesUninformative(eventType, totalSamples);
+          Map<String, Object> utilization = new LinkedHashMap<>();
+          utilization.put("value", "N/A");
+          utilization.put("detail", why);
+          utilization.put("note", "Enable jdk.CPULoad events for CPU utilization.");
+          cpu.put("utilization", utilization);
+          Map<String, Object> saturation = new LinkedHashMap<>();
+          saturation.put("source", JfrFindings.SATURATION_THREAD_STATES);
+          saturation.put("value", "N/A");
+          saturation.put("detail", why);
+          cpu.put("saturation", saturation);
+          Map<String, Object> errors = new LinkedHashMap<>();
+          errors.put("value", 0);
+          errors.put("detail", "No compilation failures detected");
+          cpu.put("errors", errors);
+          cpu.put("assessment", "UNKNOWN");
+          return cpu;
+        }
         double threadStatePct = (runnableCount * 100.0) / totalSamples;
 
         Map<String, Object> utilization = new LinkedHashMap<>();
@@ -1013,15 +1105,28 @@ public final class JfrAnalyses {
         utilization.put(
             "detail",
             String.format(
-                "%.1f%% of samples in RUNNABLE state (not actual CPU load)", threadStatePct));
+                Locale.ROOT,
+                "%.1f%% of samples in RUNNABLE state (not actual CPU load)",
+                threadStatePct));
         utilization.put(
             "note",
             "Thread state != CPU utilization. Enable jdk.CPULoad events for accurate data.");
         cpu.put("utilization", utilization);
 
+        double blockedPct = (saturatedCount * 100.0) / totalSamples;
         Map<String, Object> saturation = new LinkedHashMap<>();
-        saturation.put("value", saturatedCount);
-        saturation.put("detail", saturatedCount + " samples in blocking states");
+        saturation.put("source", JfrFindings.SATURATION_THREAD_STATES);
+        saturation.put("value", Math.round(blockedPct * 10) / 10.0);
+        saturation.put("unit", "%");
+        saturation.put("blockedSamples", saturatedCount);
+        saturation.put(
+            "detail",
+            String.format(
+                Locale.ROOT,
+                "%d of %d samples (%.1f%%) in blocking states",
+                saturatedCount,
+                totalSamples,
+                blockedPct));
         cpu.put("saturation", saturation);
 
         Map<String, Object> errors = new LinkedHashMap<>();
@@ -1044,9 +1149,8 @@ public final class JfrAnalyses {
 
     try {
       // Get heap usage (after GC)
-      String heapQuery = "events/jdk.GCHeapSummary" + timeFilter;
-      JfrPath.Query parsed = JfrPathParser.parse(heapQuery);
-      List<Map<String, Object>> heapEvents = evaluator.evaluate(target.session(), parsed);
+      List<Map<String, Object>> heapEvents =
+          declaredEvents(target, "jdk.GCHeapSummary", timeFilter);
 
       Map<String, Object> utilization = new LinkedHashMap<>();
       if (!heapEvents.isEmpty()) {
@@ -1070,7 +1174,8 @@ public final class JfrAnalyses {
 
             utilization.put("value", Math.round(heapPct * 10) / 10.0);
             utilization.put("unit", "%");
-            utilization.put("detail", String.format("Heap %.1f%% full after GC", heapPct));
+            utilization.put(
+                "detail", String.format(Locale.ROOT, "Heap %.1f%% full after GC", heapPct));
             utilization.put("heapUsedMB", heapUsed / (1024 * 1024));
             utilization.put("heapCommittedMB", heapCommitted / (1024 * 1024));
           }
@@ -1084,9 +1189,7 @@ public final class JfrAnalyses {
       memory.put("utilization", utilization);
 
       // Get GC pause statistics
-      String gcQuery = "events/jdk.GCPhasePause" + timeFilter;
-      parsed = JfrPathParser.parse(gcQuery);
-      List<Map<String, Object>> gcEvents = evaluator.evaluate(target.session(), parsed);
+      List<Map<String, Object>> gcEvents = declaredEvents(target, "jdk.GCPhasePause", timeFilter);
 
       Map<String, Object> saturation = new LinkedHashMap<>();
       if (!gcEvents.isEmpty()) {
@@ -1161,9 +1264,13 @@ public final class JfrAnalyses {
       memory.put("errors", errors);
 
       // Assessment
-      double heapPct = utilization.get("value") instanceof Number n ? n.doubleValue() : 0.0;
-      double gcTimePct = 0.0; // Would need recording duration to calculate
-      memory.put("assessment", assessMemoryPressure(heapPct, gcTimePct));
+      // Without heap figures there is nothing to judge: not knowing is not "HEALTHY" (#291)
+      if (utilization.get("value") instanceof Number n) {
+        double gcTimePct = 0.0; // Would need recording duration to calculate
+        memory.put("assessment", assessMemoryPressure(n.doubleValue(), gcTimePct));
+      } else {
+        memory.put("assessment", "UNKNOWN");
+      }
 
     } catch (Exception e) {
       memory.put("error", "Failed to analyze memory: " + e.getMessage());
@@ -1384,25 +1491,34 @@ public final class JfrAnalyses {
       AtomicLong ioMaxNs = new AtomicLong(0L);
       LongAdder ioSlowCount = new LongAdder();
 
-      // Single-pass over all four I/O types
+      // Single pass over the I/O types the recording declares (#291: naming one it does not
+      // declare fails the query)
+      List<String> ioTypes =
+          java.util.stream.Stream.of(
+                  "jdk.FileRead", "jdk.FileWrite", "jdk.SocketRead", "jdk.SocketWrite")
+              .filter(type -> declares(target, type))
+              .toList();
       JfrPath.Query ioParsed =
-          JfrPathParser.parse(
-              "events/(jdk.FileRead|jdk.FileWrite|jdk.SocketRead|jdk.SocketWrite)" + timeFilter);
-      evaluator.consume(
-          target.session(),
-          ioParsed,
-          event -> {
-            ioOps.increment();
-            Object durationObj = Values.get(event, "duration");
-            if (durationObj instanceof Number) {
-              long durationNs = ((Number) durationObj).longValue();
-              ioTotalNs.add(durationNs);
-              ioMaxNs.accumulateAndGet(durationNs, Math::max);
-              if (durationNs > 10_000_000) {
-                ioSlowCount.increment();
+          ioTypes.isEmpty()
+              ? null
+              : JfrPathParser.parse("events/(" + String.join("|", ioTypes) + ")" + timeFilter);
+      if (ioParsed != null) {
+        evaluator.consume(
+            target.session(),
+            ioParsed,
+            event -> {
+              ioOps.increment();
+              Object durationObj = Values.get(event, "duration");
+              if (durationObj instanceof Number) {
+                long durationNs = ((Number) durationObj).longValue();
+                ioTotalNs.add(durationNs);
+                ioMaxNs.accumulateAndGet(durationNs, Math::max);
+                if (durationNs > 10_000_000) {
+                  ioSlowCount.increment();
+                }
               }
-            }
-          });
+            });
+      }
       long totalOps = ioOps.longValue();
 
       if (totalOps > 0) {
@@ -1447,13 +1563,23 @@ public final class JfrAnalyses {
     if (cpu != null && !cpu.containsKey("error")) {
       @SuppressWarnings("unchecked")
       Map<String, Object> cpuSat = (Map<String, Object>) cpu.get("saturation");
-      if (cpuSat != null && cpuSat.get("value") instanceof Number) {
-        double satPct = ((Number) cpuSat.get("value")).doubleValue();
+      if (cpuSat != null
+          && "%".equals(cpuSat.get("unit"))
+          && cpuSat.get("value") instanceof Number value) {
+        double satPct = value.doubleValue();
         if (satPct > 30) {
           bottlenecks.add("cpu_saturation");
           recommendations.add(
-              String.format(
-                  "Investigate thread blocking: %.1f%% of CPU time spent waiting/blocked", satPct));
+              JfrFindings.SATURATION_CONTAINER_THROTTLING.equals(cpuSat.get("source"))
+                  ? String.format(
+                      Locale.ROOT,
+                      "Raise the container's CPU limit or reduce CPU demand: throttled in %.1f%%"
+                          + " of CPU periods",
+                      satPct)
+                  : String.format(
+                      Locale.ROOT,
+                      "Investigate thread blocking: %.1f%% of samples in blocking states",
+                      satPct));
         }
       }
     }
@@ -1507,29 +1633,22 @@ public final class JfrAnalyses {
             Object avgQueueMs = queueSat.get("avgQueueTimeMs");
             recommendations.add(
                 String.format(
+                    Locale.ROOT,
                     "High queue saturation detected (avg: %.1f ms) - consider increasing executor pool sizes",
                     avgQueueMs instanceof Number ? ((Number) avgQueueMs).doubleValue() : 0.0));
           } else if ("MODERATE_QUEUE_SATURATION".equals(queueAssessment)) {
             recommendations.add("Moderate queue saturation - monitor executor capacity");
           }
         }
-
-        // Warn if Datadog profiler but no queue events
-        String eventType = null;
-        if (threadsRes.containsKey("utilization")) {
-          // Try to detect if Datadog profiler is being used
-          // This is a heuristic - we check if we have any Datadog-specific data
-          if (threadsSat != null && !threadsSat.containsKey("queueSaturation")) {
-            // Check if we might be using Datadog profiler
-            // For now, we skip this warning as we can't reliably detect profiler type
-            // without additional context
-          }
-        }
       }
     }
 
     if (recommendations.isEmpty()) {
-      recommendations.add("No significant bottlenecks detected - system appears healthy");
+      // With no share to judge by, nothing was found healthy either (#297)
+      recommendations.add(
+          anySaturationShare(resourceMetrics)
+              ? "No significant bottlenecks detected - system appears healthy"
+              : "No resource reported a saturation share - no verdict");
     }
 
     insights.put("recommendations", recommendations);
@@ -1554,7 +1673,10 @@ public final class JfrAnalyses {
       // Check saturation
       @SuppressWarnings("unchecked")
       Map<String, Object> saturation = (Map<String, Object>) resource.get("saturation");
-      if (saturation != null && saturation.get("value") instanceof Number) {
+      // Only a share is comparable across resources; counts and N/A are not (#263)
+      if (saturation != null
+          && "%".equals(saturation.get("unit"))
+          && saturation.get("value") instanceof Number) {
         double value = ((Number) saturation.get("value")).doubleValue();
         if (value > worstValue) {
           worstValue = value;
@@ -1564,20 +1686,66 @@ public final class JfrAnalyses {
       }
     }
 
+    // The bottlenecks the insights report count too: a verdict beside a listed bottleneck that
+    // ignores it is not one (#297)
+    List<?> bottlenecks =
+        generateUseInsights(resourceMetrics).get("bottlenecks") instanceof List<?> l
+            ? l
+            : List.of();
     if (worstResource != null) {
       summary.put("worstResource", worstResource);
       summary.put("worstMetric", worstMetric);
-      summary.put("overallAssessment", worstValue > 50 ? "NEEDS_ATTENTION" : "ACCEPTABLE");
-    } else {
+    }
+    if (!bottlenecks.isEmpty()) {
+      summary.put("bottlenecks", bottlenecks);
+    }
+    if ((worstResource != null && worstValue > 50) || !bottlenecks.isEmpty()) {
+      summary.put("overallAssessment", "NEEDS_ATTENTION");
+    } else if (worstResource != null) {
+      summary.put("overallAssessment", "ACCEPTABLE");
+    } else if (anySaturationShare(resourceMetrics)) {
+      // Every share measured is 0
       summary.put("overallAssessment", "HEALTHY");
+    } else {
+      // Nothing measured is not a clean bill of health (#297)
+      summary.put("overallAssessment", "UNKNOWN");
+      summary.put(
+          "note",
+          "No resource reported a saturation share; see each resource's utilization and"
+              + " assessment");
     }
 
     return summary;
   }
 
+  /** Whether any resource without an error reports its saturation as a share ({@code %}). */
+  private static boolean anySaturationShare(Map<String, Object> resourceMetrics) {
+    for (String resource : resourceMetrics.keySet()) {
+      if (saturationShare(resourceMetrics, resource) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The resource's saturation share in percent, or null if it reports none. */
+  private static Number saturationShare(Map<String, Object> resourceMetrics, String resource) {
+    if (!(resourceMetrics.get(resource) instanceof Map<?, ?> metrics)
+        || metrics.containsKey("error")
+        || !(metrics.get("saturation") instanceof Map<?, ?> saturation)
+        || !"%".equals(saturation.get("unit"))) {
+      return null;
+    }
+    return saturation.get("value") instanceof Number value ? value : null;
+  }
+
   public Map<String, Object> tsa(AnalysisTarget target, Map<String, Object> args, Progress progress)
       throws Exception {
-    String sessionId = (String) args.get("sessionId");
+    return withEventCounts(() -> tsaCounted(target, args, progress));
+  }
+
+  private Map<String, Object> tsaCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     Long startTimeNs = args.get("startTime") instanceof Number n ? n.longValue() : null;
     Long endTimeNs = args.get("endTime") instanceof Number n ? n.longValue() : null;
     int topThreads = args.get("topThreads") instanceof Number n ? n.intValue() : 10;
@@ -1650,6 +1818,11 @@ public final class JfrAnalyses {
       result.put("totalSamples", totalSamples);
       result.put("totalThreads", threadMetrics.size());
 
+      boolean statesInformative = !onlyRunnable(globalStateCount);
+      if (!statesInformative) {
+        result.put("stateNote", statesUninformative(eventType, totalSamples));
+      }
+
       // Global state distribution
       Map<String, Object> stateDistribution = new LinkedHashMap<>();
       for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
@@ -1667,7 +1840,8 @@ public final class JfrAnalyses {
 
       // Thread profiles
       List<Map<String, Object>> threadProfiles =
-          buildThreadProfiles(threadMetrics, totalSamples, correlations, queueCorrelations);
+          buildThreadProfiles(
+              threadMetrics, totalSamples, correlations, queueCorrelations, statesInformative);
       result.put("threadProfiles", threadProfiles);
 
       // Correlations
@@ -1687,7 +1861,12 @@ public final class JfrAnalyses {
         result.put(
             "insights",
             generateTsaInsights(
-                threadMetrics, globalStateCount, totalSamples, correlations, queueCorrelations));
+                threadMetrics,
+                globalStateCount,
+                totalSamples,
+                correlations,
+                queueCorrelations,
+                statesInformative));
         result.put(
             "findings", Findings.toMaps(Findings.merge(JfrFindings.fromTsa(result, "jfr_tsa"))));
       }
@@ -1816,7 +1995,8 @@ public final class JfrAnalyses {
       Map<String, ThreadStateMetrics> threadMetrics,
       long totalSamples,
       Map<String, MonitorCorrelation> correlations,
-      Map<String, QueueCorrelation> queueCorrelations) {
+      Map<String, QueueCorrelation> queueCorrelations,
+      boolean statesInformative) {
     return threadMetrics.values().stream()
         .sorted((a, b) -> Long.compare(b.totalSamples.sum(), a.totalSamples.sum()))
         .limit(20) // Top 20 threads by sample count
@@ -1842,7 +2022,11 @@ public final class JfrAnalyses {
               profile.put("stateBreakdown", stateBreakdown);
 
               // Assessment
-              profile.put("assessment", assessThreadBehavior(m.stateCount, m.totalSamples.sum()));
+              profile.put(
+                  "assessment",
+                  statesInformative
+                      ? assessThreadBehavior(m.stateCount, m.totalSamples.sum())
+                      : "NOT_APPLICABLE");
 
               // Add queue correlation info if available
               if (queueCorrelations != null && !queueCorrelations.isEmpty()) {
@@ -1926,35 +2110,52 @@ public final class JfrAnalyses {
       Map<String, Long> globalStateCount,
       long totalSamples,
       Map<String, MonitorCorrelation> correlations,
-      Map<String, QueueCorrelation> queueCorrelations) {
+      Map<String, QueueCorrelation> queueCorrelations,
+      boolean statesInformative) {
     Map<String, Object> insights = new LinkedHashMap<>();
     List<String> patterns = new ArrayList<>();
     List<Map<String, Object>> problematicThreads = new ArrayList<>();
     List<String> recommendations = new ArrayList<>();
+    if (!statesInformative) {
+      // No state patterns or thread assessments: the blocking-event correlations below still are
+      recommendations.add(
+          "Thread states cannot show blocking in these samples; jdk.JavaMonitorEnter events"
+              + " (correlateBlocking) show monitor contention");
+    }
 
     // Analyze global state distribution
-    for (Map.Entry<String, Long> entry : globalStateCount.entrySet()) {
+    for (Map.Entry<String, Long> entry :
+        statesInformative
+            ? globalStateCount.entrySet()
+            : java.util.Set.<Map.Entry<String, Long>>of()) {
       double pct = (entry.getValue() * 100.0) / totalSamples;
       String state = entry.getKey();
 
       if ("RUNNABLE".equals(state)) {
         if (pct > 70) {
-          patterns.add(String.format("High CPU utilization (%.1f%% RUNNABLE)", pct));
+          patterns.add(String.format(Locale.ROOT, "High CPU utilization (%.1f%% RUNNABLE)", pct));
         } else if (pct < 30) {
           patterns.add(
-              String.format("Low CPU utilization (%.1f%% RUNNABLE) - threads mostly waiting", pct));
+              String.format(
+                  Locale.ROOT,
+                  "Low CPU utilization (%.1f%% RUNNABLE) - threads mostly waiting",
+                  pct));
         } else {
-          patterns.add(String.format("Healthy CPU utilization (%.1f%% RUNNABLE)", pct));
+          patterns.add(
+              String.format(Locale.ROOT, "Healthy CPU utilization (%.1f%% RUNNABLE)", pct));
         }
       } else if ("WAITING".equals(state) || "TIMED_WAITING".equals(state)) {
         if (pct > 30) {
           patterns.add(
               String.format(
-                  "Significant time in %s (%.1f%%) - likely I/O or queue waits", state, pct));
+                  Locale.ROOT,
+                  "Significant time in %s (%.1f%%) - likely I/O or queue waits",
+                  state,
+                  pct));
         }
       } else if ("BLOCKED".equals(state)) {
         if (pct > 10) {
-          patterns.add(String.format("High lock contention (%.1f%% BLOCKED)", pct));
+          patterns.add(String.format(Locale.ROOT, "High lock contention (%.1f%% BLOCKED)", pct));
           recommendations.add(
               "Investigate lock contention - threads spending significant time blocked on monitors");
         }
@@ -1962,14 +2163,17 @@ public final class JfrAnalyses {
     }
 
     // Find problematic threads
-    for (ThreadStateMetrics m : threadMetrics.values()) {
+    for (ThreadStateMetrics m :
+        statesInformative ? threadMetrics.values() : List.<ThreadStateMetrics>of()) {
       String assessment = assessThreadBehavior(m.stateCount, m.totalSamples.sum());
       if ("LOCK_CONTENTION".equals(assessment)) {
         Map<String, Object> problem = new LinkedHashMap<>();
         problem.put("thread", m.threadName);
         long blockedSamples = m.stateCount.getOrDefault("BLOCKED", 0L);
         double blockedPct = (blockedSamples * 100.0) / m.totalSamples.sum();
-        problem.put("issue", String.format("%.1f%% of time spent BLOCKED on locks", blockedPct));
+        problem.put(
+            "issue",
+            String.format(Locale.ROOT, "%.1f%% of time spent BLOCKED on locks", blockedPct));
         problem.put("recommendation", "Review synchronization strategy for this thread");
         problematicThreads.add(problem);
       }
@@ -1984,8 +2188,10 @@ public final class JfrAnalyses {
       if (topContention != null && topContention.samples.sum() > 50) {
         recommendations.add(
             String.format(
+                Locale.ROOT,
                 "Monitor class '%s' has high contention (%d events) - consider lock-free alternatives",
-                topContention.monitorClass, topContention.samples.sum()));
+                topContention.monitorClass,
+                topContention.samples.sum()));
       }
     }
 
@@ -1999,10 +2205,13 @@ public final class JfrAnalyses {
       if (maxQueue != null && maxQueue.getAvgDurationMs() > 50) {
         patterns.add(
             String.format(
+                Locale.ROOT,
                 "High executor queue times on %s (avg: %.1f ms)",
-                maxQueue.scheduler, maxQueue.getAvgDurationMs()));
+                maxQueue.scheduler,
+                maxQueue.getAvgDurationMs()));
         recommendations.add(
             String.format(
+                Locale.ROOT,
                 "Consider increasing thread pool size for %s or optimizing task submission rate",
                 maxQueue.scheduler));
       }
@@ -2061,24 +2270,283 @@ public final class JfrAnalyses {
     }
   }
 
+  /**
+   * Whether the recording declares the event type. A JfrPath query that names a type the recording
+   * does not declare throws "Event type ... not found"; not every producer is the JDK (#291). As
+   * {@code JfrPathEvaluator.validateEventTypes}: with no type information the query is run.
+   */
+  private static boolean declares(AnalysisTarget target, String eventType) {
+    Set<String> types = target.session().getAvailableTypes();
+    return types == null || types.isEmpty() || types.contains(eventType);
+  }
+
+  /** The type's events in the window, or none when the recording does not declare the type. */
+  private List<Map<String, Object>> declaredEvents(
+      AnalysisTarget target, String eventType, String timeFilter) throws Exception {
+    return declares(target, eventType)
+        ? evaluator.evaluate(
+            target.session(), JfrPathParser.parse("events/" + eventType + timeFilter))
+        : List.of();
+  }
+
+  /**
+   * {@code cpu.saturation} from {@code jdk.ContainerCPUThrottling} readings: the share of the
+   * container's CFS periods that were throttled.
+   *
+   * <p>Each reading carries the cgroup's {@code cpu.stat} counters ({@code nr_periods}, {@code
+   * nr_throttled}, throttled time), which count from the cgroup's start, so the throttling between
+   * two readings is their difference, not either reading or a sum (#263). The window is measured
+   * from the last reading at or before its start to the first at or after its end, so what is
+   * measured can be longer than the window: readings are sparse (a minute apart in test-dd.jfr).
+   * {@code measuredFromEpochNanos}..{@code measuredToEpochNanos} run from the first to the last
+   * interval counted, and the detail gives the counted intervals' total length. An interval whose
+   * counters are inconsistent (one decreased: the cgroup was recreated, or the recording joins
+   * several containers; more periods were throttled than elapsed; or periods elapsed between two
+   * readings at the same instant) is skipped and counted in {@code intervalsSkipped}. The value is
+   * {@code "N/A"} for a window that ends before it starts, with fewer than two readable readings,
+   * when no interval covers the window, when every interval is skipped, or when no period elapsed.
+   * The JDK writes -1 (not available) or -2 (not supported) for a counter it could not read; such
+   * readings are ignored.
+   *
+   * @param events the recording's {@code jdk.ContainerCPUThrottling} events, in any order
+   * @param fromEpochNanos the window's start, or {@code null} for the recording's
+   * @param toEpochNanos the window's end, or {@code null} for the recording's
+   */
+  static Map<String, Object> containerThrottlingSaturation(
+      List<Map<String, Object>> events, Long fromEpochNanos, Long toEpochNanos) {
+    Map<String, Object> saturation = new LinkedHashMap<>();
+    if (fromEpochNanos != null && toEpochNanos != null && fromEpochNanos > toEpochNanos) {
+      saturation.put("value", "N/A");
+      saturation.put("detail", "The window ends before it starts");
+      return saturation;
+    }
+    if (events.isEmpty()) {
+      saturation.put("value", 0);
+      saturation.put("detail", "Container throttling events not available");
+      return saturation;
+    }
+    saturation.put("source", JfrFindings.SATURATION_CONTAINER_THROTTLING);
+    List<long[]> readings = new ArrayList<>(); // {startTime, elapsed, throttled, timeNs}
+    for (Map<String, Object> event : events) {
+      long startTime = counter(Values.get(event, "startTime"));
+      long elapsed = counter(Values.get(event, "cpuElapsedSlices"));
+      long throttled = counter(Values.get(event, "cpuThrottledSlices"));
+      if (startTime >= 0 && elapsed >= 0 && throttled >= 0) {
+        readings.add(
+            new long[] {
+              startTime, elapsed, throttled, counter(Values.get(event, "cpuThrottledTime"))
+            });
+      }
+    }
+    if (readings.size() < 2) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail",
+          "Fewer than two readable container throttling readings; their counters count from the"
+              + " container's start, so they give no share");
+      return saturation;
+    }
+    // Ties broken on the counters, so equal timestamps give the same result in any input order
+    readings.sort(
+        java.util.Comparator.<long[]>comparingLong(r -> r[0])
+            .thenComparingLong(r -> r[1])
+            .thenComparingLong(r -> r[2])
+            .thenComparingLong(r -> r[3]));
+    int lo = 0;
+    int hi = readings.size() - 1;
+    if (fromEpochNanos != null) {
+      while (lo + 1 < readings.size() && readings.get(lo + 1)[0] <= fromEpochNanos) {
+        lo++;
+      }
+    }
+    if (toEpochNanos != null) {
+      while (hi - 1 >= 0 && readings.get(hi - 1)[0] >= toEpochNanos) {
+        hi--;
+      }
+    }
+    if (lo >= hi) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail", "No interval between two container throttling readings covers the window");
+      return saturation;
+    }
+    long elapsedSlices = 0;
+    long throttledSlices = 0;
+    long throttledTimeNs = 0;
+    long measuredNs = 0; // the counted intervals' total length
+    long measuredFrom = -1;
+    long measuredTo = -1;
+    boolean timeKnown = true;
+    int intervals = 0;
+    int skipped = 0;
+    try {
+      for (int i = lo; i < hi; i++) {
+        long[] a = readings.get(i);
+        long[] b = readings.get(i + 1);
+        long dElapsed = b[1] - a[1];
+        long dThrottled = b[2] - a[2];
+        // Periods that elapsed in no time: two containers reporting at the same instant
+        boolean noTime = b[0] == a[0] && dElapsed > 0;
+        if (dElapsed < 0 || dThrottled < 0 || dThrottled > dElapsed || noTime) {
+          skipped++;
+          continue;
+        }
+        intervals++;
+        elapsedSlices = Math.addExact(elapsedSlices, dElapsed);
+        throttledSlices = Math.addExact(throttledSlices, dThrottled);
+        measuredNs = Math.addExact(measuredNs, b[0] - a[0]);
+        measuredFrom = measuredFrom < 0 ? a[0] : measuredFrom;
+        measuredTo = b[0];
+        if (timeKnown && a[3] >= 0 && b[3] >= a[3]) {
+          try {
+            throttledTimeNs = Math.addExact(throttledTimeNs, b[3] - a[3]);
+          } catch (ArithmeticException timeOverflow) {
+            timeKnown = false; // the share does not depend on the time
+          }
+        } else {
+          timeKnown = false;
+        }
+      }
+    } catch (ArithmeticException overflow) {
+      saturation.put("value", "N/A");
+      saturation.put("detail", "Container throttling counters too large to add up");
+      return saturation;
+    }
+    if (skipped > 0) {
+      saturation.put("intervalsSkipped", skipped);
+    }
+    if (intervals == 0) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail",
+          "Every interval between the container throttling readings has inconsistent counters"
+              + " (a counter decreased, more periods throttled than elapsed, or periods counted between two"
+              + " readings at the same instant)");
+      return saturation;
+    }
+    // The counted intervals only; skipped ones (in between, too) are not part of the share
+    saturation.put("measuredFromEpochNanos", measuredFrom);
+    saturation.put("measuredToEpochNanos", measuredTo);
+    String skippedNote =
+        skipped > 0
+            ? "; "
+                + skipped
+                + " interval(s) with inconsistent counters skipped (a counter decreased, more"
+                + " periods throttled than elapsed, or periods counted between two readings at"
+                + " the same instant)"
+            : "";
+    if (elapsedSlices == 0) {
+      saturation.put("value", "N/A");
+      saturation.put(
+          "detail",
+          "No CPU periods elapsed between the container throttling readings" + skippedNote);
+      return saturation;
+    }
+    saturation.put("throttledSlices", throttledSlices);
+    saturation.put("elapsedSlices", elapsedSlices);
+    if (timeKnown) {
+      saturation.put("throttledTimeNs", throttledTimeNs);
+    }
+    double throttledPct = throttledSlices * 100.0 / elapsedSlices;
+    saturation.put("value", Math.round(throttledPct * 10) / 10.0);
+    saturation.put("unit", "%");
+    saturation.put(
+        "detail",
+        String.format(
+            Locale.ROOT,
+            "Container throttled in %d of %d CPU periods (%.1f%%), over %.1f s between the"
+                + " throttling readings nearest the window%s",
+            throttledSlices,
+            elapsedSlices,
+            throttledPct,
+            measuredNs / 1e9,
+            skippedNote));
+    return saturation;
+  }
+
+  /** A field as a long, or -1 when absent or not a number (the JDK's -1/-2 stay negative). */
+  private static long counter(Object value) {
+    return value instanceof Number n ? n.longValue() : -1;
+  }
+
+  /**
+   * A sample's thread state, named as {@link #normalizeState} names it; {@code UNKNOWN} if none.
+   */
   String extractState(Map<String, Object> event) {
     Object state = Values.get(event, "state", "name");
     if (state == null) {
       state = Values.get(event, "state");
     }
-    return state != null ? String.valueOf(unwrapValue(state)) : "UNKNOWN";
+    return state != null ? normalizeState(String.valueOf(unwrapValue(state))) : "UNKNOWN";
   }
 
+  /**
+   * HotSpot's thread statuses, as JDK recordings name them ({@code jdk.types.ThreadState}), mapped
+   * to the {@link Thread.State} each one is: {@code Thread.sleep}, a timed {@code Object.wait} and
+   * {@code parkNanos} are {@code TIMED_WAITING}, {@code Object.wait} and {@code park} are {@code
+   * WAITING}, waiting to enter a monitor is {@code BLOCKED} (see {@link Thread.State}).
+   */
+  private static final Map<String, String> JDK_THREAD_STATES =
+      Map.of(
+          "STATE_NEW", "NEW",
+          "STATE_RUNNABLE", "RUNNABLE",
+          "STATE_SLEEPING", "TIMED_WAITING",
+          "STATE_IN_OBJECT_WAIT", "WAITING",
+          "STATE_IN_OBJECT_WAIT_TIMED", "TIMED_WAITING",
+          "STATE_PARKED", "WAITING",
+          "STATE_PARKED_TIMED", "TIMED_WAITING",
+          "STATE_BLOCKED_ON_MONITOR_ENTER", "BLOCKED",
+          "STATE_TERMINATED", "TERMINATED");
+
+  /**
+   * A thread state as the analyses compare it (#276). JDK recordings name HotSpot's statuses
+   * ({@code STATE_RUNNABLE}, {@code STATE_BLOCKED_ON_MONITOR_ENTER}, ...), which become their
+   * {@link Thread.State}; another {@code STATE_} name loses the prefix. Other recordings' names
+   * ({@code RUNNABLE} in Datadog's, {@code PARKED}) stay as they are.
+   */
+  static String normalizeState(String state) {
+    String mapped = JDK_THREAD_STATES.get(state);
+    if (mapped == null) {
+      mapped = DATADOG_THREAD_STATES.get(state);
+    }
+    if (mapped != null) {
+      return mapped;
+    }
+    return state.startsWith("STATE_") ? state.substring("STATE_".length()) : state;
+  }
+
+  /**
+   * The Datadog profiler's names ({@code datadog.ExecutionSample}'s state pool) that are not a
+   * {@link Thread.State}: contending for a monitor is {@code BLOCKED}, a park {@code WAITING}, a
+   * sleep {@code TIMED_WAITING}. Its other names ({@code RUNNABLE}, {@code NEW}, {@code SYSCALL},
+   * {@code BREAKPOINT}, ...) stay.
+   */
+  private static final Map<String, String> DATADOG_THREAD_STATES =
+      Map.of("CONTENDED", "BLOCKED", "PARKED", "WAITING", "SLEEPING", "TIMED_WAITING");
+
+  /** Whether every sample was RUNNABLE, so the states say nothing about blocking or waiting. */
+  static boolean onlyRunnable(Map<String, Long> stateCount) {
+    return stateCount.size() == 1 && stateCount.containsKey("RUNNABLE");
+  }
+
+  /** Why thread states give no utilization, saturation or assessment for these samples (#276). */
+  static String statesUninformative(String eventType, long samples) {
+    return "All "
+        + samples
+        + " "
+        + eventType
+        + " samples are RUNNABLE, as a CPU sampler records them: the thread states show neither"
+        + " utilization nor blocking";
+  }
+
+  /** See {@link EventThreads}: {@code sampledThread} for samples, else {@code eventThread}. */
   String extractThreadId(Map<String, Object> event) {
-    Object tid = Values.get(event, "eventThread", "javaThreadId");
+    Object tid = EventThreads.id(event);
     return tid != null ? String.valueOf(tid) : "unknown";
   }
 
   String extractThreadName(Map<String, Object> event) {
-    Object name = Values.get(event, "eventThread", "javaName");
-    if (name == null) {
-      name = Values.get(event, "eventThread", "osName");
-    }
+    Object name = EventThreads.name(event);
     return name != null ? String.valueOf(name) : "unknown";
   }
 
@@ -2213,7 +2681,11 @@ public final class JfrAnalyses {
 
   public Map<String, Object> diagnose(
       AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
-    String sessionId = (String) args.get("sessionId");
+    return withEventCounts(() -> diagnoseCounted(target, args, progress));
+  }
+
+  private Map<String, Object> diagnoseCounted(
+      AnalysisTarget target, Map<String, Object> args, Progress progress) throws Exception {
     Boolean includeAnalysis = args.get("includeAnalysis") instanceof Boolean b ? b : true;
     String depth = args.get("depth") instanceof String d ? d : "full";
     boolean runDeepAnalysis = !"quick".equalsIgnoreCase(depth);
@@ -2245,7 +2717,8 @@ public final class JfrAnalyses {
 
         if (exceptionCount > 1000) {
           headlines.add(
-              String.format("HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+              String.format(
+                  Locale.ROOT, "HIGH EXCEPTION RATE: %,d exceptions detected", exceptionCount));
           thresholdFindings.add(
               Finding.of("exceptions", "rate")
                   .warning()
@@ -2273,7 +2746,8 @@ public final class JfrAnalyses {
                   + "or error handling issues");
         } else if (exceptionCount > 100) {
           headlines.add(
-              String.format("MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
+              String.format(
+                  Locale.ROOT, "MODERATE EXCEPTION RATE: %,d exceptions detected", exceptionCount));
           thresholdFindings.add(
               Finding.of("exceptions", "rate")
                   .info()
@@ -2296,8 +2770,11 @@ public final class JfrAnalyses {
           if (avgPauseMs > 100 || totalPauseMs > 10000) {
             headlines.add(
                 String.format(
+                    Locale.ROOT,
                     "HIGH GC PRESSURE: %,d collections, %.1fms avg pause, %.1fs total pause",
-                    gcCount, avgPauseMs, totalPauseMs / 1000.0));
+                    gcCount,
+                    avgPauseMs,
+                    totalPauseMs / 1000.0));
             thresholdFindings.add(
                 Finding.of("gc", "pressure")
                     .warning()
@@ -2324,6 +2801,7 @@ public final class JfrAnalyses {
             if (allocEventTypeForGc != null) {
               recommendations.add(
                   String.format(
+                      Locale.ROOT,
                       "Run jfr_flamegraph with %s to identify allocation hotspots",
                       allocEventTypeForGc));
             } else {
@@ -2334,8 +2812,10 @@ public final class JfrAnalyses {
           } else if (avgPauseMs > 50 || totalPauseMs > 5000) {
             headlines.add(
                 String.format(
+                    Locale.ROOT,
                     "MODERATE GC PRESSURE: %,d collections, %.1fms avg pause",
-                    gcCount, avgPauseMs));
+                    gcCount,
+                    avgPauseMs));
             thresholdFindings.add(
                 Finding.of("gc", "pressure")
                     .info()
@@ -2358,7 +2838,9 @@ public final class JfrAnalyses {
         Long cpuSamples = ((Number) cpuStats.get("totalSamples")).longValue();
 
         if (cpuSamples > 5000) {
-          headlines.add(String.format("CPU INTENSIVE: %,d execution samples captured", cpuSamples));
+          headlines.add(
+              String.format(
+                  Locale.ROOT, "CPU INTENSIVE: %,d execution samples captured", cpuSamples));
 
           // Run hotmethods analysis
           try {
@@ -2411,7 +2893,9 @@ public final class JfrAnalyses {
       if (allocEventType != null) {
         headlines.add(
             String.format(
-                "ALLOCATION PROFILING: %s events available for analysis", allocEventType));
+                Locale.ROOT,
+                "ALLOCATION PROFILING: %s events available for analysis",
+                allocEventType));
       } else {
         headlines.add("ALLOCATION PROFILING: Not enabled in this recording");
         capabilityGaps.add(

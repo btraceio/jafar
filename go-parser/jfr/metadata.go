@@ -115,6 +115,10 @@ type ClassType struct {
 	rawID string
 	// temporal caches the per-field tick normalisation kinds; see temporal.go.
 	temporal map[string]int
+	// startTimeAt caches the index of the field EventHeader.StartTime is read
+	// from, plus two (-1, no such field, is 1); 0 means not computed yet. See
+	// header.go.
+	startTimeAt int
 }
 
 // IsPrimitive reports whether values of this type are encoded as a single

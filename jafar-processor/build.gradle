@@ -15,6 +15,14 @@ repositories {
 // parser-core must be configured first for its sourceSets (test helpers) to exist
 evaluationDependsOn(':parser-core')
 
+// Resolved outside `dependencies {}` on purpose: inside it `project(':parser-core')` is a
+// ProjectDependency, which Gradle 9.9 no longer delegates project properties to (#228).
+def parserCoreTestOutput = project(':parser-core').sourceSets.test.output
+
+configurations {
+    typedRuntime
+}
+
 dependencies {
     implementation project(':parser-core')
 
@@ -28,12 +36,64 @@ dependencies {
     // End-to-end tests: write recordings with the JMC writer and run the generated handlers on them
     testImplementation 'org.openjdk.jmc:flightrecorder.writer:8.2.1'
     // NestedArrayFixture, built with parser-core's SyntheticRecording test helper
-    testImplementation project(':parser-core').sourceSets.test.output
+    testImplementation parserCoreTestOutput
+    // BuildTimeRuntimeParityTest only: the runtime generator, for the probe's own class loader
+    typedRuntime project(':parser-codegen')
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {
     useJUnitPlatform()
+    // BuildTimeRuntimeParityTest decodes with runtime-generated classes in a class loader of its
+    // own. parser-codegen stays off the test class path: with it there, the parser generates a
+    // runtime deserializer for every bound type, which cannot see interfaces in the in-memory
+    // loader the other tests compile into, and their parses fail.
+    def typedRuntime = configurations.typedRuntime
+    inputs.files(typedRuntime).withNormalizer(ClasspathNormalizer)
+    jvmArgumentProviders.add({ ["-Djafar.test.typedRuntimeClasspath=" + typedRuntime.asPath] } as CommandLineArgumentProvider)
+}
+
+// --- Build-time factories with parser-codegen present ------------------------------------
+// A source set and a task of their own, because both ingredients would change what the
+// module's other tests exercise: the interfaces here are compiled WITH the annotation
+// processor (so their factories are registered for ServiceLoader), and parser-codegen is on
+// the run-time classpath (so a chunk without a bound factory is decoded by a run-time
+// generated handler instead of failing loudly). See BuildTimeFactoryWithRuntimeCodegenTest.
+sourceSets {
+    codegenTest {
+        java.srcDir 'src/codegenTest/java'
+    }
+}
+
+dependencies {
+    codegenTestImplementation project(':parser-core')
+    codegenTestImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    // the processor built by this module, and what it needs to run
+    codegenTestAnnotationProcessor sourceSets.main.output
+    codegenTestAnnotationProcessor project(':parser-core')
+    codegenTestRuntimeOnly project(':parser-codegen')
+    codegenTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.register('codegenTest', Test) {
+    description = 'Runs build-time handler factories with parser-codegen on the classpath.'
+    group = 'verification'
+    testClassesDirs = sourceSets.codegenTest.output.classesDirs
+    classpath = sourceSets.codegenTest.runtimeClasspath
+    shouldRunAfter tasks.named('test')
+    useJUnitPlatform()
+    // a fixture change re-runs the task
+    inputs.file(rootProject.file('jfr-shell-tck/src/main/resources/tck-test.jfr'))
+    reports {
+        junitXml.required.set(true)
+        html.required.set(true)
+        junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/codegenTest"))
+        html.outputLocation.set(layout.buildDirectory.dir("reports/tests/codegenTest"))
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('codegenTest')
 }
 
 java {

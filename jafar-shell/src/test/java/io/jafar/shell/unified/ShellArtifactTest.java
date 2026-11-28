@@ -1,5 +1,6 @@
 package io.jafar.shell.unified;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -1124,6 +1125,21 @@ class ShellArtifactTest {
     }
   }
 
+  /**
+   * {@code jafar-shell compare} in the jar users get: it used to print the unified usage and exit
+   * 2, because only show, metadata, chunks and constants were routed to jfr-shell's command line.
+   */
+  @Test
+  void compareRunsThroughTheJar(@TempDir Path dir) throws Exception {
+    String recording =
+        Path.of("../jfr-shell-tck/src/main/resources/tck-test.jfr").toAbsolutePath().toString();
+    Run run = runJarRaw(dir, "", "compare", recording, recording, "--limit", "3");
+    assertEquals(0, run.exit(), () -> run.out() + run.err());
+    assertTrue(
+        run.out().contains("Baseline  " + recording + ": datadog.ExecutionSample"), run.out());
+    assertTrue(run.out().contains("[INFO] No regression above the noise floor"), run.out());
+  }
+
   @Test
   void routesOnlyJfrInvocationsToJfrCommandLine() {
     assertFalse(Main.isJfrCommandLine(new String[] {"script", "-"}));
@@ -1134,8 +1150,40 @@ class ShellArtifactTest {
     assertFalse(Main.isJfrCommandLine(new String[] {"script", "--backend", "jdk", "f.jfrs"}));
     assertFalse(Main.isJfrCommandLine(new String[] {"script", "-b=jdk", "f.jfrs"}));
     assertTrue(Main.isScriptCommandLine(new String[] {"script", "--backend", "jdk", "f.jfrs"}));
-    // before the command word, a JFR option still means jfr-shell's command line
-    assertTrue(Main.isJfrCommandLine(new String[] {"--backend", "jdk", "script", "-"}));
+    // before 'script', -b/--backend is the script command's own too (#268): the same shell runs
+    // the script wherever the option was typed
+    assertFalse(Main.isJfrCommandLine(new String[] {"--backend", "jdk", "script", "-"}));
+    assertFalse(Main.isJfrCommandLine(new String[] {"-bjdk", "script", "-"}));
+    assertFalse(Main.isJfrCommandLine(new String[] {"--backend=jdk", "script", "-"}));
+    assertTrue(Main.isScriptCommandLine(new String[] {"-b", "jdk", "script", "f.jfrs"}));
+    assertArrayEquals(
+        new String[] {"--backend-before-script=jdk", "f.jfrs", "x"},
+        Main.scriptArguments(new String[] {"-b", "jdk", "script", "f.jfrs", "x"}));
+    assertArrayEquals(
+        new String[] {"--backend-before-script=jdk", "-"},
+        Main.scriptArguments(new String[] {"-q", "-bjdk", "script", "-"}));
+    assertArrayEquals(
+        new String[] {"--backend-before-script=jdk", "-"},
+        Main.scriptArguments(new String[] {"-qbjdk", "script", "-"}));
+    assertArrayEquals(
+        new String[] {"--backend-before-script=jdk", "-"},
+        Main.scriptArguments(new String[] {"--backend=jdk", "script", "-"}));
+    assertArrayEquals(
+        new String[] {"--backend-before-script=jdk", "-"},
+        Main.scriptArguments(new String[] {"-qb", "jdk", "script", "-"}));
+    assertArrayEquals(
+        new String[] {"--backend-before-script=jdk", "-"},
+        Main.scriptArguments(new String[] {"--backend", "jdk", "script", "-"}));
+    assertArrayEquals(
+        new String[] {"--backend-before-script=jdk", "--backend=jafar", "-"},
+        Main.scriptArguments(new String[] {"-b", "jdk", "-b", "jafar", "script", "-"}));
+    // a value ending in 'f' is not a -qf cluster
+    assertTrue(Main.isScriptCommandLine(new String[] {"-bperf", "script", "f.jfrs"}));
+    assertTrue(Main.isScriptCommandLine(new String[] {"-qb", "jdk", "script", "f.jfrs"}));
+    // other JFR options before the command still mean jfr-shell's command line
+    assertTrue(Main.isJfrCommandLine(new String[] {"--plugin-dir", "p", "script", "-"}));
+    // before another command, -b in any spelling still means jfr-shell's command line
+    assertTrue(Main.isJfrCommandLine(new String[] {"-bjdk", "show", "x.jfr", "events"}));
     assertFalse(Main.isScriptCommandLine(new String[] {"dump.hprof", "script"}));
     // an option's value is not the command: '-f script' opens a file named script
     assertFalse(Main.isScriptCommandLine(new String[] {"-f", "script"}));
@@ -1145,7 +1193,6 @@ class ShellArtifactTest {
     assertFalse(Main.isJfrCommandLine(new String[] {"-f", "script"}));
     assertFalse(Main.isJfrCommandLine(new String[] {"-f", "show"}));
     assertTrue(Main.isScriptCommandLine(new String[] {"-q", "script", "f.jfrs"}));
-    assertTrue(Main.isJfrCommandLine(new String[] {"-b", "jdk", "script", "f.jfrs"}));
     assertEquals(2, Main.firstWordIndex(new String[] {"-f", "x.jfr", "script"}));
     assertEquals(-1, Main.firstWordIndex(new String[] {"-qf", "script"}));
     assertTrue(Main.isJfrCommandLine(new String[] {"-q", "show", "x.jfr", "events"}));

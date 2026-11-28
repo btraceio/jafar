@@ -24,7 +24,7 @@ Query heap object instances.
 ```
 objects                                    # All objects
 objects/java.lang.String                   # String objects only
-objects/instanceof/java.util.Map           # Map implementations
+objects/instanceof/java.util.AbstractMap   # Map implementations that extend AbstractMap
 objects/java.util.*                        # Glob pattern matching
 ```
 
@@ -195,11 +195,36 @@ classes/java.lang.reflect.*                # Reflection classes
 ```
 
 ### Instanceof (Subclass Matching)
-Include subclasses and implementations:
+Include subclasses:
 ```
-objects/instanceof/java.util.Map           # HashMap, TreeMap, ConcurrentHashMap, etc.
-objects/instanceof/java.io.Serializable    # All serializable objects
+objects/instanceof/java.util.AbstractMap   # HashMap, TreeMap, ConcurrentHashMap, etc.
+objects/instanceof/java.util.HashMap       # HashMap, LinkedHashMap and other subclasses
 ```
+
+`instanceof` follows **superclasses only**. A heap dump records each class's superclass but not
+the interfaces it implements (HotSpot's `HPROF_GC_CLASS_DUMP` record has no interface list), so
+`instanceof/java.util.Map` cannot find `HashMap`. Name a class the implementations extend. An
+abstract base covers only the classes that extend it, so check what you would miss (JDK 25):
+
+| Target | Covers | Does not cover |
+|---|---|---|
+| `java.util.AbstractMap` | `HashMap`, `LinkedHashMap`, `TreeMap`, `ConcurrentHashMap`, `ConcurrentSkipListMap`, `WeakHashMap`, `IdentityHashMap`, `EnumMap`, `Map.of` | `Hashtable`, `Collections.unmodifiableMap` / `synchronizedMap` |
+| `java.util.AbstractCollection` | `ArrayList`, `LinkedList`, `Vector`, `ArrayDeque`, `PriorityQueue`, `HashSet`, `TreeSet`, `List.of`, `Set.of` | `CopyOnWriteArrayList`, `Collections.unmodifiable*` / `synchronized*` wrappers, `ConcurrentHashMap` key/value views |
+| `java.util.AbstractList` | `ArrayList`, `LinkedList`, `Vector` | `List.of`, `CopyOnWriteArrayList`, `Collections.unmodifiableList` / `synchronizedList` |
+| `java.util.AbstractSet` | `HashSet`, `LinkedHashSet`, `TreeSet` | `Set.of`, `Collections.unmodifiableSet` / `synchronizedSet` |
+
+A glob matches names, not types: `objects/java.util.*Map` also matches
+`java.util.Collections$SetFromMap` (a `Set`) and misses every map outside `java.util`.
+
+`instanceof` fails instead of returning nothing when:
+
+- no class of that name (or, for a glob, no class at all) is in the dump:
+  `instanceof/com.example.Missing: no class named ...`
+- every class it matches looks like an interface (no instances, no instance fields, no subclasses
+  in the dump); for a glob, every class the glob matches. The message explains the limitation
+  above. Any field-less class with no live instances and no subclasses looks the same, an abstract
+  class or a static utility class such as `java.util.Objects`. For those, 0 is the answer: query
+  the class without `instanceof` (`objects/java.util.Objects | count`).
 
 ### Array Types
 Query array instances using Java notation or JVM descriptor format:
@@ -333,6 +358,11 @@ Pipeline operators transform query results. Chain them with `|`:
 objects/java.lang.String | top(10, shallow) | select(class, shallow)
 ```
 
+A count (`head(n)`, `tail(n)`, `top(n)`, `depth=`, `threshold=`, a numeric `join(session=)`) is a
+whole number from 0 to 2147483647, after any size suffix: `head(-1)` and `head(2.5)` fail to parse,
+naming the argument. A size in bytes (`minsize=`, `minRetained=`) is 0 or more and rounds a fraction
+of a byte down (`minsize=1.3MB` is 1363148); `minsize=` is at most 2147483647 (`minsize=3GB` fails).
+
 ### `select(field1, field2 as alias, ...)`
 Project specific fields with optional aliases.
 
@@ -373,10 +403,36 @@ objects | groupBy(class, agg=max)          # Max shallow size by class
 
 **Aggregation operations:**
 - `count` - Count items in group (default)
-- `sum` - Sum first numeric field
-- `avg` - Average of first numeric field
-- `min` - Minimum of first numeric field
-- `max` - Maximum of first numeric field
+- `sum` - Sum of the value
+- `avg` - Average of the value
+- `min` - Minimum of the value
+- `max` - Maximum of the value
+
+Without `value=`, `sum`/`avg`/`min`/`max` aggregate `shallowSize` on `objects`, and otherwise the
+first numeric column that is not an identifier (`id`, `objectId`, a GC root's `threadSerial` or
+`frameNumber`) and not a column a heap-to-heap `join` adds (`baseline.*`, `*Delta`). The check is
+by name, so any column ending in `Delta` is skipped. To aggregate a delta, name it:
+`value=shallowSizeDelta`. A `baseline.*` column can be used in a `filter(...)` (or `[...]`)
+comparison, such as `filter(baseline.exists = false)`, or quoted in a filter function, such as
+`filter(exists("baseline.instanceCount"))`; other operators take no dotted field name. Each group
+aggregates one default column, chosen by its first row that has one, and rows without it are
+skipped. The result column is named after the aggregation (`sum`, `avg`, ...);
+a `count` is always named `count`. With `value=<memory field>` (`shallow`, `retained`, ...) the
+result column is named after that field, so sort it by that name:
+`groupBy(class, agg=sum, value=retained) | top(10, retained)`. Values that are missing or not
+numbers (a `value=arrayLength` on an object that is not an array) are skipped; a group with no
+numeric value at all has `null` for `sum`/`avg`/`min`/`max`. `sortBy=key` sorts by the first group
+field, `sortBy=value` by the aggregate column, groups without a value last in either direction;
+without `sortBy`, groups come out in the order their first row was seen.
+
+`class` is an alias for `className`. Group fields are plain column names; a path such as
+`class/name` is not accepted (object rows have no nested fields).
+
+The output rows contain only the group key and the aggregate. An operator after `groupBy` that
+names any other column fails: `objects | groupBy(class) | stats(shallow)` reports
+`stats: field 'shallow' is not present in its input rows (available: class, count)`. Use
+`objects/java.lang.String | stats(shallow)` for one class, or
+`groupBy(class, agg=sum, value=shallow)` per class.
 
 ### `count`
 Count total results.
@@ -407,6 +463,12 @@ Output:
 |--------|-----------|-----|--------|--------|
 | 238750 | 9072500   | 38  | 38     | 38.0   |
 ```
+
+With no numeric value (an empty input, or a field that is null on every row) `count` is `0` and
+`min`/`max` are `null`. `stats`, `sum`, `top` and `sortBy` fail with
+`field '<name>' is not present in its input rows (available: ...)` when no input row carries the
+field, instead of returning an empty or unsorted result; so does a `filter` that matched nothing
+for that reason (see `filter(predicate)`).
 
 ### `sortBy(field [asc|desc], ...)`
 Sort results by one or more fields. Aliases: `sort`, `orderBy`, `order`.
@@ -441,6 +503,20 @@ Filter results mid-pipeline.
 objects | groupBy(class, agg=count) | filter(count > 100)
 classes | filter(instanceCount > 1000 and name ~ "java.util.*")
 ```
+
+A filter that matches no row because it compares a field that is no column of its rows fails
+with `filter: field '<name>' is not present in its input rows (available: ...)`, as `top` and
+`sortBy` do; `classes | filter(retained > 10MB)` gets their hint to aggregate `objects` instead.
+The columns are those the root's rows can have, whether or not these rows carry them:
+`objects/java.util.HashMap[arrayLength > 0]` (no arrays) and `gcroots/JNI_GLOBAL[frameNumber > 0]`
+(no frames) still return no rows. Below a column a path is not checked: `fields.<name>` depends on
+the object's class. After a stage that builds new rows (`groupBy`,
+`select`, `count`, ...) the columns are the keys its rows carry. The same holds for `[...]`
+predicates and for the field a function reads; `exists(...)` and `empty(...)` ask about absence and
+are not checked. A filter that matched some rows, or whose input is empty, is not checked either,
+and when the input is an operator's error row (`retainedBreakdown` without dominators) the filter
+reports that error. A query on `objects`, `ages` or `gcroots` that reads a retained size computes
+them first.
 
 ### `distinct(field)`
 Get distinct values of a field.
@@ -596,7 +672,11 @@ Enrich collection objects with capacity and waste metrics. Reads internal fields
 collection types to compute how much memory is wasted by over-allocation.
 
 Supported collections: `HashMap`, `LinkedHashMap`, `HashSet`, `LinkedHashSet`, `ArrayList`,
-`ConcurrentHashMap`, `ArrayDeque`.
+`ConcurrentHashMap`, `ArrayDeque`, and their subclasses: a subclass is analyzed as its nearest
+supported superclass, through the fields it inherits (`instanceof/java.util.HashMap | waste()`
+covers anonymous and custom `HashMap` subclasses). Any other object gets `null` in every added
+column. `sortBy` and `top` put rows with a `null` value last in both directions, so such rows do
+not head a `top(10, wastedBytes)` list.
 
 ```
 # Analyze all HashMap instances for waste
@@ -647,7 +727,7 @@ objects/java.util.HashMap[retained > 1MB] | threadOwner() | select(id, class, re
 objects[retained > 1MB] | threadOwner() | filter(ownerThread = "shared") | top(20)
 
 # Per-thread breakdown of large byte arrays
-objects/byte[] | threadOwner() | groupBy(ownerThread, agg=sum, value=retained) | sortBy(value desc)
+objects/byte[] | threadOwner() | groupBy(ownerThread, agg=sum, value=retained) | sortBy(retained desc)
 ```
 
 ### `dominatedSize()`
@@ -777,6 +857,8 @@ gcroots | groupBy(type, agg=count) | join(session=1)
 
 When `root=` specifies a JFR event type (e.g. `jdk.ObjectAllocationSample`), the join
 queries the JFR session for those events and aggregates them by class name.
+A hidden class (a lambda) matches when the recording and the dump come from the same run: its
+name carries an address, which the two spell with `/` and `+` and which differs between runs.
 
 **Enrichment columns added:**
 
@@ -797,7 +879,7 @@ open dump.hprof
 classes | join(session="recording.jfr", root="jdk.ObjectAllocationSample")
 
 # Find high-alloc, low-retention classes (churn)
-classes | join(session=1, root="jdk.ObjectAllocationSample") | filter(allocCount > 1000 and retained < 1MB)
+objects | groupBy(className, agg=sum, value=retainedSize) | join(session=1, root="jdk.ObjectAllocationSample", by=className) | filter(allocCount > 1000 and retainedSize < 1MB)
 
 # Top classes by allocation weight
 classes | join(session=1, root="jdk.ObjectAllocationSample") | sortBy(allocWeight desc) | top(20)
@@ -854,10 +936,10 @@ gcroots | groupBy(type) | top(10, count)
 
 ```
 # Find Map implementations
-objects/instanceof/java.util.Map | groupBy(class) | top(10, count)
+objects/instanceof/java.util.AbstractMap | groupBy(class) | top(10, count)
 
 # Collection analysis
-objects/instanceof/java.util.Collection | groupBy(class, agg=sum) | top(10, sum)
+objects/instanceof/java.util.AbstractCollection | groupBy(class, agg=sum) | top(10, sum)   # see the coverage table above
 ```
 
 ### Heap Diff (Cross-Session Comparison)
@@ -956,11 +1038,28 @@ objects | replace(className, "java/lang/", "j.l.")
 objects | select(class, shallow) | abs(shallow)
 ```
 
+## Heaps Over 5 Million Objects
+
+Above 5,000,000 objects an `objects` query streams instead of building every row in memory. Type
+patterns, predicates and leading `filter(...)` steps are applied while streaming. Then:
+
+- **Streamed exactly:** leading `waste()`, `cacheStats()` and `filter(...)` steps (each looks at
+  one row) run per object; the first other step must be one of `top(n, field)`, `groupBy(...)`,
+  `count`, `sum(field)` or `stats(field)`, and is computed over every selected object, with the
+  same result as on a smaller heap (`groupBy` keeps one entry per group). Every step after it runs
+  on its result. Example: `objects/instanceof/java.util.HashMap | waste() | top(20, wastedBytes)`.
+- **Capped at 100 objects:** when the first step that is not `waste()`, `cacheStats()` or
+  `filter(...)` is anything else (`sortBy(...)`, `select(...)`, `head(n)`, ...), or there are no
+  steps at all, the whole pipeline runs on 100 objects of the stream, and only a warning in the log
+  says so. Put an aggregation such as `top(n, field)` first:
+  `... | waste() | top(100, wastedBytes) | select(class, wastedBytes)`.
+
 ## Tips and Best Practices
 
 1. **Start broad, then filter**: Begin with `objects` or `classes`, then add predicates.
 
-2. **Use `instanceof` for polymorphism**: When analyzing interfaces or abstract classes.
+2. **Use `instanceof` for class hierarchies**: It follows superclasses, not interfaces; see
+   [Instanceof](#instanceof-subclass-matching).
 
 3. **Combine with `groupBy`**: Group results for meaningful aggregations.
 

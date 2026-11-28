@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -38,7 +39,7 @@ public final class TailRunner {
   }
 
   private static final DateTimeFormatter TIME_FMT =
-      DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(ZoneId.systemDefault());
+      DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.ROOT).withZone(ZoneId.systemDefault());
   private static final long POLL_TIMEOUT_MS = 200;
   private static final long STATUS_CADENCE_MS = 1000;
   private static final int MAX_TABLE_FIELDS = 6;
@@ -249,6 +250,10 @@ public final class TailRunner {
     }
     if (v instanceof java.util.Collection<?> c) {
       return "list(size=" + c.size() + ")";
+    }
+    if (v != null && v.getClass().isArray()) {
+      // an Object[] of frame maps or a primitive array: "[Ljava.lang.Object;@…" otherwise (#196)
+      return "list(size=" + java.lang.reflect.Array.getLength(v) + ")";
     }
     if (v instanceof Iterable<?> it) {
       int n = 0;

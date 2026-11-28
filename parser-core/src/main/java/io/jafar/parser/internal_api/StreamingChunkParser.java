@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,6 +30,23 @@ public final class StreamingChunkParser implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(StreamingChunkParser.class);
 
   private final ExecutorService executor;
+
+  /** The name prefix of the chunk parsing threads; each is numbered. */
+  static final String WORKER_THREAD_PREFIX = "jafar-chunk-parser-";
+
+  /** Numbers the chunk parsing threads across parsers, so that thread dumps tell them apart. */
+  private static final java.util.concurrent.atomic.AtomicInteger WORKER_COUNT =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  /** How long close() waits, in all, for the chunk parsing threads to end. */
+  private static final long CLOSE_TIMEOUT_MILLIS = 5_000;
+
+  /** The part of {@link #CLOSE_TIMEOUT_MILLIS} left to tasks interrupted at its end. */
+  private static final long CLOSE_INTERRUPT_RESERVE_MILLIS = 250;
+
+  /** The pool's threads, so close() can wait for them to end. */
+  private final java.util.Queue<Thread> workers =
+      new java.util.concurrent.ConcurrentLinkedQueue<>();
 
   private boolean closed = false;
   private final ParserContextFactory contextFactory;
@@ -63,8 +81,9 @@ public final class StreamingChunkParser implements AutoCloseable {
         Executors.newFixedThreadPool(
             parallelism == 0 ? defaultParallelism() : parallelism,
             r -> {
-              Thread t = new Thread(r);
+              Thread t = new Thread(r, WORKER_THREAD_PREFIX + WORKER_COUNT.incrementAndGet());
               t.setDaemon(true);
+              workers.add(t);
               return t;
             });
   }
@@ -72,10 +91,15 @@ public final class StreamingChunkParser implements AutoCloseable {
   /**
    * The number of chunk parsing threads used when none is requested.
    *
-   * @return {@code max(availableProcessors - 2, 1)}
+   * <p>Every processor: on 4 processors, 4 threads parsed a 4.16 GB recording 1.6-1.7x faster than
+   * 2 (header walk, one type decoded, every event decoded), and 6 or 8 threads were no faster than
+   * 4 (doc/performance/ParserParallelism.md). Lower it with {@link
+   * io.jafar.parser.api.ParsingContext#withParallelism(int)}.
+   *
+   * @return {@code availableProcessors}, which is at least 1
    */
   public static int defaultParallelism() {
-    return Math.max(Runtime.getRuntime().availableProcessors() - 2, 1);
+    return Runtime.getRuntime().availableProcessors();
   }
 
   /**
@@ -131,7 +155,9 @@ public final class StreamingChunkParser implements AutoCloseable {
    * </ol>
    *
    * <p>Note: Unlike {@link #parse(Path, ChunkParserListener)}, this method processes chunks
-   * sequentially as it reads from the stream.
+   * sequentially as it reads from the stream, reading each chunk whole before processing it. The
+   * recording ends where the stream ends before a chunk's first byte; a stream that ends inside a
+   * chunk fails the parse.
    *
    * @param inputStream the InputStream containing the JFR recording
    * @param listener the parser listener
@@ -141,76 +167,136 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (closed) {
       throw new IOException("Parser is closed");
     }
+    ParserContext recordingContext = contextFactory.newContext();
     try {
-      listener.onRecordingStart(null);
-
-      // Check if stream has any data
-      if (inputStream.available() == 0) {
-        return;
-      }
-
-      // Read the first 4 bytes and validate the JFR magic (FLR\0, LE-assembled = 0x00524C46)
-      byte[] magicBytes = new byte[4];
-      for (int i = 0; i < 4; i++) {
-        int b = inputStream.read();
-        if (b == -1) throw new IOException("Unexpected EOF while reading JFR magic");
-        magicBytes[i] = (byte) b;
-      }
-      int magic =
-          (magicBytes[0] & 0xFF)
-              | ((magicBytes[1] & 0xFF) << 8)
-              | ((magicBytes[2] & 0xFF) << 16)
-              | ((magicBytes[3] & 0xFF) << 24);
-      if (magic != 0x00524C46) {
-        throw new IOException("Invalid JFR Magic Number: 0x" + Integer.toHexString(magic));
-      }
-
-      // Read 64 more bytes to reach ChunkHeader's full 68-byte extent
-      byte[] restHeader = new byte[64];
-      int read = 0;
-      while (read < 64) {
-        int b = inputStream.read();
-        if (b == -1) throw new IOException("Unexpected EOF while reading chunk header");
-        restHeader[read++] = (byte) b;
-      }
+      listener.onRecordingStart(recordingContext);
+      int chunkCounter = 1;
+      long chunkOffset = 0;
       byte[] headerBytes = new byte[68];
-      System.arraycopy(magicBytes, 0, headerBytes, 0, 4);
-      System.arraycopy(restHeader, 0, headerBytes, 4, 64);
+      while (true) {
+        // The end of the stream before a chunk's first byte ends the recording; anywhere else in
+        // the chunk it is an error. (available() cannot tell: a pipe or socket returns 0 while it
+        // waits for data.)
+        int first = inputStream.read();
+        if (first == -1) {
+          return;
+        }
+        headerBytes[0] = (byte) first;
+        if (readFully(inputStream, headerBytes, 1, 3) < 3) {
+          throw new IOException("Unexpected EOF while reading JFR magic of chunk " + chunkCounter);
+        }
+        // Validate the JFR magic (FLR\0, LE-assembled = 0x00524C46)
+        int magic =
+            (headerBytes[0] & 0xFF)
+                | ((headerBytes[1] & 0xFF) << 8)
+                | ((headerBytes[2] & 0xFF) << 16)
+                | ((headerBytes[3] & 0xFF) << 24);
+        if (magic != 0x00524C46) {
+          throw new IOException(
+              "Invalid JFR Magic Number in chunk "
+                  + chunkCounter
+                  + ": 0x"
+                  + Integer.toHexString(magic));
+        }
+        // The rest of ChunkHeader's 68-byte extent
+        if (readFully(inputStream, headerBytes, 4, 64) < 64) {
+          throw new IOException("Unexpected EOF while reading the header of chunk " + chunkCounter);
+        }
 
-      // Parse the header; use wrap() so nativeOrder=false matches the file-mapped path
-      RecordingStream headerStream =
-          new RecordingStream(
-              new BufferedRecordingStreamReader(CustomByteBuffer.wrap(headerBytes)),
-              contextFactory.newContext());
-      ChunkHeader parsedHeader = new ChunkHeader(headerStream, 1);
-      int headerSize = (int) headerStream.position();
+        // Parse the header; use wrap() so nativeOrder=false matches the file-mapped path
+        RecordingStream headerStream =
+            new RecordingStream(
+                new BufferedRecordingStreamReader(CustomByteBuffer.wrap(headerBytes)),
+                contextFactory.newContext(recordingContext, chunkCounter));
+        ChunkHeader parsedHeader = new ChunkHeader(headerStream, chunkCounter, chunkOffset);
+        int headerSize = (int) headerStream.position();
 
-      // Build chunkData = header bytes + payload, then hand it to processChunk
-      int totalSize = parsedHeader.size;
-      int payloadSize = totalSize - headerSize;
-      if (payloadSize < 0) {
-        throw new IOException("Chunk size " + totalSize + " is smaller than header " + headerSize);
-      }
-      byte[] chunkData = new byte[totalSize];
-      System.arraycopy(headerBytes, 0, chunkData, 0, headerSize);
-      read = 0;
-      while (read < payloadSize) {
-        int got = inputStream.read(chunkData, headerSize + read, payloadSize - read);
-        if (got == -1) break;
-        read += got;
-      }
-      if (read < payloadSize) {
-        throw new IOException("Unexpected end of stream while reading chunk");
-      }
+        // Build chunkData = header bytes + payload, then hand it to processChunk
+        int totalSize = parsedHeader.size;
+        int payloadSize = totalSize - headerSize;
+        if (payloadSize < 0) {
+          throw new IOException(
+              "Chunk "
+                  + chunkCounter
+                  + " size "
+                  + totalSize
+                  + " is smaller than its header "
+                  + headerSize);
+        }
+        byte[] chunkData = readChunk(inputStream, headerBytes, headerSize, totalSize, chunkCounter);
 
-      RecordingStream chunkStream =
-          new RecordingStream(
-              new BufferedRecordingStreamReader(CustomByteBuffer.wrap(chunkData)),
-              contextFactory.newContext());
-      processChunk(chunkStream, parsedHeader, listener, headerSize);
+        RecordingStream chunkStream =
+            new RecordingStream(
+                new BufferedRecordingStreamReader(CustomByteBuffer.wrap(chunkData)),
+                contextFactory.newContext(recordingContext, chunkCounter));
+        try {
+          processChunk(chunkStream, parsedHeader, listener, headerSize);
+        } finally {
+          chunkStream.close();
+        }
+        chunkOffset += totalSize;
+        chunkCounter++;
+      }
     } finally {
-      listener.onRecordingEnd(null);
+      listener.onRecordingEnd(recordingContext);
     }
+  }
+
+  /** The most a chunk's buffer grows by at once while the stream has not yet shown it is there. */
+  private static final int CHUNK_READ_STEP = 1 << 20;
+
+  /**
+   * The chunk whose header is the first {@code headerSize} bytes of {@code header}: those bytes and
+   * the rest of the chunk's {@code totalSize}, read from {@code in}.
+   *
+   * <p>The buffer grows as the bytes arrive instead of being allocated at the declared size: a
+   * corrupt or hostile header may declare up to 2 GiB, and a stream that ends long before that must
+   * fail with an {@link IOException}, not an {@link OutOfMemoryError}.
+   */
+  private static byte[] readChunk(
+      InputStream in, byte[] header, int headerSize, int totalSize, int chunkCounter)
+      throws IOException {
+    byte[] chunk = new byte[Math.min(totalSize, headerSize + CHUNK_READ_STEP)];
+    System.arraycopy(header, 0, chunk, 0, headerSize);
+    int filled = headerSize;
+    while (filled < totalSize) {
+      if (filled == chunk.length) {
+        int grown = (int) Math.min(totalSize, 2L * chunk.length);
+        chunk = java.util.Arrays.copyOf(chunk, grown);
+      }
+      int got = readFully(in, chunk, filled, chunk.length - filled);
+      filled += got;
+      if (filled < chunk.length) {
+        throw new IOException(
+            "Unexpected end of stream while reading chunk "
+                + chunkCounter
+                + ": "
+                + filled
+                + " of its declared "
+                + totalSize
+                + " byte(s)");
+      }
+    }
+    return chunk;
+  }
+
+  /**
+   * Reads up to {@code length} bytes into {@code buffer} at {@code offset}, stopping early only at
+   * the end of the stream.
+   *
+   * @return the number of bytes read
+   */
+  private static int readFully(InputStream in, byte[] buffer, int offset, int length)
+      throws IOException {
+    int read = 0;
+    while (read < length) {
+      int got = in.read(buffer, offset + read, length - read);
+      if (got == -1) {
+        break;
+      }
+      read += got;
+    }
+    return read;
   }
 
   private void processChunk(
@@ -324,6 +410,52 @@ public final class StreamingChunkParser implements AutoCloseable {
     if (!closed) {
       closed = true;
       executor.shutdown();
+      // Wait for the workers to end. Until a thread ends, its thread-locals keep the last parse's
+      // data reachable, and through it the mapped file: a collection requested right after close,
+      // as jfr-mcp's jfr_close does, could miss it and leave the file mapped (#279). A worker
+      // closing its own parser cannot wait for itself.
+      if (!workers.contains(Thread.currentThread())) {
+        awaitWorkers();
+      }
+      workers.clear();
+    }
+  }
+
+  /**
+   * Waits up to {@link #CLOSE_TIMEOUT_MILLIS} in all for the pool to terminate and its threads to
+   * end; the pool reports termination just before its threads end. Interrupts the tasks still
+   * running near the deadline, or when the caller is interrupted (its interrupt status is kept),
+   * and leaves the interrupted tasks the rest of the time to end.
+   */
+  private void awaitWorkers() {
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CLOSE_TIMEOUT_MILLIS);
+    try {
+      if (!executor.awaitTermination(
+          CLOSE_TIMEOUT_MILLIS - CLOSE_INTERRUPT_RESERVE_MILLIS, TimeUnit.MILLISECONDS)) {
+        executor.shutdownNow();
+      }
+      for (Thread worker : workers) {
+        long left = deadline - System.nanoTime();
+        if (left <= 0) {
+          break;
+        }
+        // Ceiling, so a positive remainder never becomes join(0), which waits forever
+        worker.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(left + 999_999)));
+      }
+    } catch (InterruptedException e) {
+      executor.shutdownNow();
+      Thread.currentThread().interrupt();
+    }
+    if (!executor.isTerminated()) {
+      // A task still runs; a thread of a terminated pool is only ending
+      for (Thread worker : workers) {
+        if (worker.isAlive()) {
+          log.warn(
+              "Chunk parsing thread {} is still running after close(); the recording it reads may"
+                  + " stay open until it ends",
+              worker.getName());
+        }
+      }
     }
   }
 

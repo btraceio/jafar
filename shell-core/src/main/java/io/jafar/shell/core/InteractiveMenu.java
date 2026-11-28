@@ -2,6 +2,7 @@ package io.jafar.shell.core;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.jline.reader.LineReader;
 import org.jline.terminal.Terminal;
 
@@ -41,8 +42,12 @@ public final class InteractiveMenu {
       terminal
           .writer()
           .printf(
+              Locale.ROOT,
               "  [%s] %d. %s - %s%n",
-              selected[i] ? "x" : " ", i + 1, item.label(), item.description());
+              selected[i] ? "x" : " ",
+              i + 1,
+              item.label(),
+              item.description());
     }
     terminal.writer().println();
 
@@ -84,7 +89,7 @@ public final class InteractiveMenu {
     if (input == null || input.isBlank()) {
       return defaultValue;
     }
-    return input.trim().toLowerCase().startsWith("y");
+    return input.trim().toLowerCase(Locale.ROOT).startsWith("y");
   }
 
   /**

@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -589,7 +590,7 @@ public final class FunctionRegistry {
 
   private static void register(FunctionSpec spec) {
     // For filter/select functions, use category prefix to avoid collisions
-    String key = spec.name().toLowerCase();
+    String key = spec.name().toLowerCase(Locale.ROOT);
     if (spec.isFilter()) {
       key = "filter:" + key;
     } else if (spec.isSelect()) {
@@ -602,15 +603,15 @@ public final class FunctionRegistry {
 
   /** Get a pipeline operator by name */
   public static FunctionSpec getPipelineOperator(String name) {
-    return FUNCTIONS.get(name.toLowerCase());
+    return FUNCTIONS.get(name.toLowerCase(Locale.ROOT));
   }
 
   /** Get a filter function by name */
   public static FunctionSpec getFilterFunction(String name) {
-    FunctionSpec spec = FUNCTIONS.get("filter:" + name.toLowerCase());
+    FunctionSpec spec = FUNCTIONS.get("filter:" + name.toLowerCase(Locale.ROOT));
     if (spec == null) {
       // Some functions exist in multiple categories (e.g., len, contains)
-      spec = FUNCTIONS.get(name.toLowerCase());
+      spec = FUNCTIONS.get(name.toLowerCase(Locale.ROOT));
       if (spec != null && !spec.isFilter()) {
         // Found but not a filter - check if there's a filter version
         return null;
@@ -621,10 +622,10 @@ public final class FunctionRegistry {
 
   /** Get a select expression function by name */
   public static FunctionSpec getSelectFunction(String name) {
-    FunctionSpec spec = FUNCTIONS.get("select:" + name.toLowerCase());
+    FunctionSpec spec = FUNCTIONS.get("select:" + name.toLowerCase(Locale.ROOT));
     if (spec == null) {
       // Some functions may be shared
-      spec = FUNCTIONS.get(name.toLowerCase());
+      spec = FUNCTIONS.get(name.toLowerCase(Locale.ROOT));
       if (spec != null && !spec.isSelect()) {
         return null;
       }
@@ -656,7 +657,7 @@ public final class FunctionRegistry {
 
   /** Check if a function exists (any category) */
   public static boolean exists(String name) {
-    String lower = name.toLowerCase();
+    String lower = name.toLowerCase(Locale.ROOT);
     return FUNCTIONS.containsKey(lower)
         || FUNCTIONS.containsKey("filter:" + lower)
         || FUNCTIONS.containsKey("select:" + lower);

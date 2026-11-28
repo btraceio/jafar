@@ -7,7 +7,6 @@ import io.jafar.hdump.util.ClassNameUtil;
 import io.jafar.shell.core.AllocationAggregator;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.QueryEvaluator;
-import io.jafar.shell.core.RowSorter;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
 import io.jafar.shell.core.SessionResolver;
@@ -33,6 +32,12 @@ public final class HdumpPathEvaluator {
 
   private static final Logger LOG = LoggerFactory.getLogger(HdumpPathEvaluator.class);
 
+  /**
+   * Object count above which {@code objects} queries stream instead of materializing every row.
+   * Package-private and mutable only so tests can drive the streaming path with a small heap.
+   */
+  static long streamingThreshold = 5_000_000;
+
   /** Maps short alias field names to their canonical counterparts. */
   private static final Map<String, String> FIELD_ALIASES =
       Map.of(
@@ -45,6 +50,21 @@ public final class HdumpPathEvaluator {
    * are never stored; lookups for alias names transparently delegate to canonical names.
    */
   private static final class AliasMap extends LinkedHashMap<String, Object> {
+    /**
+     * Writing to an alias ({@code class}) whose canonical column ({@code className}) is present
+     * writes the canonical column, so an alias never becomes a second, diverging column ({@code
+     * uppercase(class)} used to add {@code class=COM.EXAMPLE.FOO} next to an unchanged {@code
+     * className}). ({@code putAll} does not call this; the rows it copies hold no alias keys.)
+     */
+    @Override
+    public Object put(String key, Object value) {
+      String canonical = FIELD_ALIASES.get(key);
+      if (canonical != null && !super.containsKey(key) && super.containsKey(canonical)) {
+        return super.put(canonical, value);
+      }
+      return super.put(key, value);
+    }
+
     @Override
     public Object get(Object key) {
       Object v = super.get(key);
@@ -64,6 +84,101 @@ public final class HdumpPathEvaluator {
       }
       return false;
     }
+  }
+
+  /**
+   * Fails loudly when {@code field} is absent from every input row. An operator over a column that
+   * does not exist would otherwise return an empty aggregate or an unsorted list that reads like a
+   * measurement (issue #226: {@code groupBy(class) | stats(shallow)} reported {@code count: 0}
+   * because group rows carry only the key and the aggregate).
+   */
+  private static void requireField(List<Map<String, Object>> rows, String field, String opName) {
+    if (rows.isEmpty()) {
+      return;
+    }
+    for (Map<String, Object> row : rows) {
+      if (getField(row, field) != null) {
+        return;
+      }
+    }
+    throw new IllegalArgumentException(
+        opName
+            + ": field '"
+            + field
+            + "' is not present in its input rows (available: "
+            + String.join(", ", rows.get(0).keySet())
+            + ")");
+  }
+
+  private static final Set<String> IDENTIFIER_COLUMNS =
+      Set.of(
+          ObjectFields.ID,
+          GcRootFields.OBJECT_ID,
+          GcRootFields.THREAD_SERIAL,
+          GcRootFields.FRAME_NUMBER);
+
+  /**
+   * Columns never aggregated by default: identifiers, and the columns a heap-to-heap {@code join}
+   * adds ({@code baseline.*}, {@code *Delta}), which describe the other dump, not this row. After a
+   * join, an unresolved GC root (no {@code shallowSize}) offered {@code baseline.objectId}, or in a
+   * two-dump diff {@code baseline.shallowSize}, and its group summed that. The check is by name, so
+   * any column ending in {@code Delta} is skipped too. A {@code *Delta} column can be aggregated
+   * with {@code value=}; a {@code baseline.*} one only in a {@code filter(...)} comparison or,
+   * quoted, a filter function (other operators take no dotted field name).
+   */
+  private static boolean isExcludedFromDefault(String column) {
+    return IDENTIFIER_COLUMNS.contains(column)
+        || column.startsWith("baseline.")
+        || column.endsWith("Delta");
+  }
+
+  /**
+   * The column a {@code groupBy} aggregates when it has no {@code value=}: {@code shallowSize}
+   * where the rows carry it (objects), otherwise the first numeric column that is not an identifier
+   * ({@code id}, {@code objectId}, a GC root's {@code threadSerial} or {@code frameNumber}) and not
+   * a {@code join} column, see {@link #isExcludedFromDefault}. Summing object ids is meaningless,
+   * and it is what {@code groupBy(class, agg=sum)} used to return.
+   */
+  static String defaultAggregationField(Map<String, Object> row) {
+    if (row.get(ObjectFields.SHALLOW_SIZE) instanceof Number) {
+      return ObjectFields.SHALLOW_SIZE;
+    }
+    for (Map.Entry<String, Object> e : row.entrySet()) {
+      String k = e.getKey();
+      if (e.getValue() instanceof Number && !isExcludedFromDefault(k)) {
+        return k;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Builds the single {@code stats(field)} result row. Shared by the in-memory and the streaming
+   * paths so both name the columns the same way. With no numeric value, {@code min}/{@code max} are
+   * {@code null} rather than {@code ±Infinity}.
+   */
+  private static Map<String, Object> statsRow(
+      String field, long count, double sum, double min, double max) {
+    Map<String, Object> row = new LinkedHashMap<>();
+    // For stats, use field name as prefix if it's a memory field
+    boolean isMemory = isMemoryFieldName(field);
+    row.put("count", count);
+    row.put(isMemory ? field + "_sum" : "sum", sum);
+    row.put(isMemory ? field + "_min" : "min", count > 0 ? min : null);
+    row.put(isMemory ? field + "_max" : "max", count > 0 ? max : null);
+    row.put(isMemory ? field + "_avg" : "avg", count > 0 ? sum / count : 0.0);
+    return row;
+  }
+
+  /**
+   * Copies a row for an operator that adds columns, keeping the field aliases ({@code class},
+   * {@code shallow}, {@code retained}) resolvable for {@code select()} and anything else that reads
+   * the row directly. A plain {@code LinkedHashMap} copy dropped them.
+   */
+  private static Map<String, Object> aliasCopy(Map<String, Object> row) {
+    Map<String, Object> copy = new AliasMap();
+    copy.putAll(row);
+    return copy;
   }
 
   /** Gets a value from a map, resolving field aliases. */
@@ -109,7 +224,9 @@ public final class HdumpPathEvaluator {
     // If the query references retained size, ensure it is computed before evaluation starts.
     // This prevents per-object lazy computation mid-stream (which would be a side-effect of
     // objectToMap() after the switch to getRetainedSizeIfAvailable()).
-    if (query.root() == Root.OBJECTS
+    // ages and gcroots rows carry the same retainedSize column (#295: ages[...] | top(n,
+    // retained) failed, and gcroots[retained > 1KB] counted 0 until another query computed it)
+    if ((query.root() == Root.OBJECTS || query.root() == Root.AGES || query.root() == Root.GCROOTS)
         && !dump.hasDominators()
         && session != null
         && queryNeedsRetainedSize(query)) {
@@ -118,7 +235,7 @@ public final class HdumpPathEvaluator {
 
     // Optimization: For large heaps with object queries, use streaming to avoid OOM
     // This handles all cases: unfiltered, type patterns, predicates
-    if (query.root() == Root.OBJECTS && dump.getObjectCount() > 5_000_000) {
+    if (query.root() == Root.OBJECTS && dump.getObjectCount() > streamingThreshold) {
 
       // If no pipeline, default to top(100) to prevent OOME
       if (query.pipeline().isEmpty()) {
@@ -127,7 +244,7 @@ public final class HdumpPathEvaluator {
             dump.getObjectCount());
 
         TopOp defaultTop = new TopOp(100, null, false);
-        return evaluateObjectsStreamingWithFilters(dump, session, query, defaultTop, List.of());
+        return evaluateObjectsStreamingWithFilters(dump, session, query, List.of(), defaultTop);
       }
 
       // Peel any leading FilterOps into the query predicates so they are applied during streaming
@@ -158,59 +275,50 @@ public final class HdumpPathEvaluator {
             dump.getObjectCount());
         TopOp defaultTop = new TopOp(100, null, false);
         return evaluateObjectsStreamingWithFilters(
-            dump, session, streamingQuery, defaultTop, List.of());
+            dump, session, streamingQuery, List.of(), defaultTop);
       }
 
-      PipelineOp firstOp = streamingPipeline.get(0);
-      List<PipelineOp> remaining = streamingPipeline.subList(1, streamingPipeline.size());
+      // Streamed head: leading row-local ops (waste(), cacheStats(), filter(): each row on its
+      // own) run per object, then one op that can consume a stream. Everything after it runs on
+      // that op's (small) result, through the resolver so join() works here as elsewhere.
+      int rowOpCount = 0;
+      while (rowOpCount < streamingPipeline.size()
+          && isRowLocal(streamingPipeline.get(rowOpCount))) {
+        rowOpCount++;
+      }
+      List<PipelineOp> rowOps = streamingPipeline.subList(0, rowOpCount);
+      PipelineOp head =
+          rowOpCount < streamingPipeline.size() ? streamingPipeline.get(rowOpCount) : null;
+      List<PipelineOp> rest =
+          head == null
+              ? List.of()
+              : streamingPipeline.subList(rowOpCount + 1, streamingPipeline.size());
 
-      // Check if first operation is an aggregation that can be streamed
-      if (firstOp instanceof TopOp topOp) {
-        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, topOp, remaining);
-
-      } else if (firstOp instanceof GroupByOp groupByOp) {
-        // Check if followed by top(N) - if so, use bounded accumulation
-        if (!remaining.isEmpty() && remaining.get(0) instanceof TopOp topOp) {
-          return evaluateObjectsStreamingGroupByTop(
-              dump,
-              session,
-              streamingQuery,
-              groupByOp,
-              topOp,
-              remaining.subList(1, remaining.size()));
-        } else {
-          return evaluateObjectsStreamingWithFilters(
-              dump, session, streamingQuery, groupByOp, remaining);
-        }
-
-      } else if (firstOp instanceof CountOp countOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, session, streamingQuery, countOp, remaining);
-
-      } else if (firstOp instanceof SumOp sumOp) {
-        return evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, sumOp, remaining);
-
-      } else if (firstOp instanceof StatsOp statsOp) {
-        return evaluateObjectsStreamingWithFilters(
-            dump, session, streamingQuery, statsOp, remaining);
-
+      // groupBy | top(N) used a bounded accumulator that trimmed groups every 10K rows (approximate
+      // totals for evicted groups) and ranked by the aggregate before top()'s field: it now
+      // accumulates every group (one per key, not per object) and top() runs on the result.
+      List<Map<String, Object>> results;
+      if (isStreamable(head)) {
+        results = evaluateObjectsStreamingWithFilters(dump, session, streamingQuery, rowOps, head);
       } else {
-        // Other operations - default to top(100) to prevent OOME
+        // Nothing here consumes a stream: run every op on 100 objects of the stream
         LOG.warn(
-            "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as first operation.",
+            "Large heap ({} objects): non-aggregating pipeline, capping at 100. Use '| top(N)' as"
+                + " first operation.",
             dump.getObjectCount());
-
-        TopOp defaultTop = new TopOp(100, null, false);
-        List<Map<String, Object>> results =
+        results =
             evaluateObjectsStreamingWithFilters(
-                dump, session, streamingQuery, defaultTop, List.of());
-
-        // Apply the remaining (non-filter) pipeline ops to the limited results
-        for (PipelineOp op : streamingPipeline) {
-          results = applyPipelineOp(session, results, op, query, resolver);
-        }
-        return results;
+                dump, session, streamingQuery, List.of(), new TopOp(100, null, false));
+        rest = streamingPipeline;
       }
+      // Object rows still, unless a streamed head other than top() built new ones (groups, a count)
+      Set<String> shape =
+          !isStreamable(head) || head instanceof TopOp ? columnsOf(Root.OBJECTS) : null;
+      for (PipelineOp op : rest) {
+        results = applyStage(session, results, op, query, resolver, shape);
+        shape = keepsRows(op) ? withAddedColumns(shape, op) : null;
+      }
+      return results;
     }
 
     // Standard path: materialize all results first
@@ -224,68 +332,76 @@ public final class HdumpPathEvaluator {
           case AGES -> evaluateAges(session, query);
         };
 
-    // Apply pipeline operations
+    // Apply pipeline operations; a filter knows its rows' columns while they are the root's
+    Set<String> shape = columnsOf(query.root());
     for (PipelineOp op : query.pipeline()) {
-      results = applyPipelineOp(session, results, op, query, resolver);
+      results = applyStage(session, results, op, query, resolver, shape);
+      shape = keepsRows(op) ? withAddedColumns(shape, op) : null;
     }
 
     return results;
   }
 
   /** Streaming evaluation from a filtered stream (supports type patterns and predicates). */
-  private static List<Map<String, Object>> evaluateObjectsStreamingTopFromStream(
-      Stream<HeapObject> stream, long totalObjects, TopOp topOp) {
-    Comparator<Map<String, Object>> comparator;
-    if (topOp.orderBy() != null) {
-      comparator =
-          (m1, m2) -> {
-            Object v1 = getField(m1, topOp.orderBy());
-            Object v2 = getField(m2, topOp.orderBy());
-            int cmp = compareValues(v1, v2);
-            return topOp.descending() ? -cmp : cmp;
-          };
-    } else {
-      // No ordering - just take first N
-      comparator = (m1, m2) -> 0;
+  /**
+   * The {@code top(n, field)} rows of a stream, best first, keeping at most {@code n + 1} rows. The
+   * same answer as {@link #applyTop}: rows without a value are worst in either direction, ties keep
+   * their stream order (as a stable sort followed by {@code limit} would), and a field no row
+   * carries fails with the same message. The heap is ordered worst-first so that {@code poll()}
+   * evicts the worst row; it used to be best-first, which evicted the best row and returned the n
+   * smallest values, ascending. Without an order field this is the first {@code n} rows.
+   */
+  static List<Map<String, Object>> selectTop(Stream<Map<String, Object>> rows, TopOp topOp) {
+    if (topOp.orderBy() == null) {
+      return rows.limit(topOp.n()).collect(Collectors.toList());
     }
-
-    // Min-heap of size N (removes smallest when full)
-    java.util.PriorityQueue<Map<String, Object>> topN =
-        new java.util.PriorityQueue<>(topOp.n() + 1, comparator);
-
-    long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
-
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
-          topN.add(map);
-          if (topN.size() > topOp.n()) {
-            topN.poll(); // Remove smallest
+    record Ranked(Map<String, Object> row, long seq) {}
+    Comparator<Map<String, Object>> byValue =
+        nullsLastBy(m -> getField(m, topOp.orderBy()), topOp.descending());
+    Comparator<Ranked> bestFirst =
+        Comparator.comparing(Ranked::row, byValue).thenComparingLong(Ranked::seq);
+    java.util.PriorityQueue<Ranked> heap =
+        new java.util.PriorityQueue<>(topOp.n() + 1, bestFirst.reversed());
+    long[] seq = {0};
+    Map<String, Object>[] firstRow = new Map[1];
+    boolean[] fieldSeen = {false};
+    rows.forEach(
+        row -> {
+          if (firstRow[0] == null) {
+            firstRow[0] = row;
           }
-
-          counter[0]++;
+          if (!fieldSeen[0] && getField(row, topOp.orderBy()) != null) {
+            fieldSeen[0] = true;
+          }
+          heap.add(new Ranked(row, seq[0]++));
+          if (heap.size() > topOp.n()) {
+            heap.poll(); // evict the worst
+          }
         });
-
-    // Convert priority queue to list in correct order
-    List<Map<String, Object>> results = new ArrayList<>(topN);
-    results.sort(comparator.reversed()); // Reverse to get descending order
+    if (firstRow[0] != null && !fieldSeen[0]) {
+      requireField(List.of(firstRow[0]), topOp.orderBy(), "top");
+    }
+    List<Ranked> kept = new ArrayList<>(heap);
+    kept.sort(bestFirst);
+    List<Map<String, Object>> results = new ArrayList<>(kept.size());
+    for (Ranked r : kept) {
+      results.add(r.row());
+    }
     return results;
   }
 
   /**
-   * Streaming evaluation from a filtered stream for groupBy operations. Accumulates groups as we
-   * stream to avoid materializing all objects.
+   * The one {@code groupBy} implementation, for materialized rows and for the streaming path alike,
+   * so both give the same result (they were two implementations that disagreed on NaN, empty
+   * groups, the {@code sortBy=value} column, null order and the count's type). Groups come out in
+   * first-seen order; {@code sortBy=key|value} then sorts them, rows without a value last.
    */
-  private static List<Map<String, Object>> evaluateObjectsStreamingGroupByFromStream(
-      Stream<HeapObject> stream, long totalObjects, GroupByOp op) {
+  private static List<Map<String, Object>> groupRows(
+      Stream<Map<String, Object>> rows, GroupByOp op) {
     Map<List<Object>, GroupAccumulator> groups = new LinkedHashMap<>();
-    long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
+    rows.forEach(
+        map -> {
 
           // Extract group key
           List<Object> key = new ArrayList<>();
@@ -296,8 +412,6 @@ public final class HdumpPathEvaluator {
           // Get or create accumulator for this group
           GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(k, op));
           acc.accumulate(map, op);
-
-          counter[0]++;
         });
 
     // Convert groups to result maps
@@ -309,6 +423,9 @@ public final class HdumpPathEvaluator {
       // Translate "key" or "value" to actual column name
       String sortColumn;
       if ("key".equals(op.sortBy())) {
+        if (op.groupFields().isEmpty()) {
+          return results; // groupBy(agg=...) without fields: one group, no key to sort by
+        }
         sortColumn = op.groupFields().get(0); // Sort by first group field
       } else if ("value".equals(op.sortBy())) {
         // Use same logic as toResultMap() to determine actual column name
@@ -317,112 +434,7 @@ public final class HdumpPathEvaluator {
         sortColumn = op.sortBy(); // Use as-is (shouldn't happen based on parser)
       }
 
-      results.sort(
-          (m1, m2) -> {
-            Object v1 = m1.get(sortColumn);
-            Object v2 = m2.get(sortColumn);
-            int cmp = compareValues(v1, v2);
-            return op.ascending() ? cmp : -cmp;
-          });
-    }
-
-    return results;
-  }
-
-  /**
-   * Optimized streaming evaluation for "groupBy | top(N)" pattern. Uses bounded priority queue to
-   * avoid materializing all groups.
-   */
-  private static List<Map<String, Object>> evaluateObjectsStreamingGroupByTop(
-      HeapDump dump,
-      HeapSession session,
-      Query query,
-      GroupByOp groupByOp,
-      TopOp topOp,
-      List<PipelineOp> remainingOps) {
-
-    // Build filtered stream
-    Stream<HeapObject> stream = dump.getObjects();
-    long totalObjects = dump.getObjectCount();
-    String filterDesc = "";
-
-    // Filter by type pattern
-    if (query.typePattern() != null) {
-      String pattern = normalizeClassName(query.typePattern());
-      filterDesc = " matching " + query.typePattern();
-
-      if (query.instanceof_()) {
-        Set<String> matchingClasses = findMatchingClasses(dump, pattern, true);
-        stream =
-            stream.filter(
-                obj -> {
-                  HeapClass cls = obj.getHeapClass();
-                  return cls != null && matchingClasses.contains(cls.getName());
-                });
-      } else {
-        if (pattern.contains("*")) {
-          Pattern regex = globToRegex(pattern);
-          stream =
-              stream.filter(
-                  obj -> {
-                    HeapClass cls = obj.getHeapClass();
-                    return cls != null && regex.matcher(cls.getName()).matches();
-                  });
-        } else {
-          stream =
-              stream.filter(
-                  obj -> {
-                    HeapClass cls = obj.getHeapClass();
-                    return cls != null && pattern.equals(cls.getName());
-                  });
-        }
-      }
-    }
-
-    // Apply predicates
-    if (!query.predicates().isEmpty()) {
-      stream = stream.filter(obj -> matchesAllPredicates(objectToMap(obj), query.predicates()));
-      if (!filterDesc.isEmpty()) {
-        filterDesc += " with predicates";
-      } else {
-        filterDesc = " with predicates";
-      }
-    }
-
-    // Use bounded accumulation with priority queue
-    int bufferSize = Math.max(topOp.n() * 5, 1000); // Keep 5x top N (min 1000)
-    BoundedGroupAccumulator accumulator =
-        new BoundedGroupAccumulator(groupByOp, bufferSize, topOp.n());
-
-    long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
-
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
-          accumulator.accumulate(map, groupByOp);
-
-          counter[0]++;
-        });
-
-    // Get final top N results
-    List<Map<String, Object>> results = accumulator.getTopN(topOp.n());
-
-    // Apply sorting from TopOp
-    if (topOp.orderBy() != null) {
-      Comparator<Map<String, Object>> comparator =
-          (m1, m2) -> {
-            Object v1 = getField(m1, topOp.orderBy());
-            Object v2 = getField(m2, topOp.orderBy());
-            int cmp = compareValues(v1, v2);
-            return topOp.descending() ? -cmp : cmp;
-          };
-      results.sort(comparator);
-    }
-
-    // Apply remaining pipeline operations
-    for (PipelineOp op : remainingOps) {
-      results = applyPipelineOp(session, results, op);
+      results.sort(nullsLastBy(m -> m.get(sortColumn), !op.ascending()));
     }
 
     return results;
@@ -432,7 +444,6 @@ public final class HdumpPathEvaluator {
   private static List<Map<String, Object>> evaluateObjectsStreamingCountFromStream(
       Stream<HeapObject> stream, long totalObjects) {
     long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
 
     stream.forEach(
         obj -> {
@@ -446,41 +457,47 @@ public final class HdumpPathEvaluator {
 
   /** Streaming evaluation from a filtered stream for sum operations. */
   private static List<Map<String, Object>> evaluateObjectsStreamingSumFromStream(
-      Stream<HeapObject> stream, long totalObjects, SumOp op) {
+      Stream<Map<String, Object>> rows, long totalObjects, SumOp op) {
     double[] sum = {0.0};
-    long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
+    boolean[] fieldSeen = {false};
+    Map<String, Object>[] firstRow = new Map[1];
 
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
-          Object value = map.get(op.field());
+    rows.forEach(
+        map -> {
+          if (firstRow[0] == null) {
+            firstRow[0] = map;
+          }
+          Object value = getField(map, op.field());
+          if (value != null) {
+            fieldSeen[0] = true;
+          }
           if (value instanceof Number num) {
             sum[0] += num.doubleValue();
           }
-
-          counter[0]++;
         });
 
-    Map<String, Object> result = new LinkedHashMap<>();
-    result.put("sum", sum[0]);
-    return List.of(result);
+    // Same check and column name as applySum
+    if (firstRow[0] != null && !fieldSeen[0]) {
+      requireField(List.of(firstRow[0]), op.field(), "sum");
+    }
+    return List.of(sumRow(op.field(), sum[0]));
   }
 
   /** Streaming evaluation from a filtered stream for stats operations. */
   private static List<Map<String, Object>> evaluateObjectsStreamingStatsFromStream(
-      Stream<HeapObject> stream, long totalObjects, StatsOp op) {
+      Stream<Map<String, Object>> rows, long totalObjects, StatsOp op) {
     double[] sum = {0.0};
-    double[] min = {Double.MAX_VALUE};
+    double[] min = {Double.POSITIVE_INFINITY};
     double[] max = {Double.NEGATIVE_INFINITY};
     long[] count = {0};
-    long[] counter = {0};
-    long[] lastReport = {System.currentTimeMillis()};
+    Map<String, Object>[] firstRow = new Map[1];
 
-    stream.forEach(
-        obj -> {
-          Map<String, Object> map = objectToMap(obj);
-          Object value = map.get(op.field());
+    rows.forEach(
+        map -> {
+          if (firstRow[0] == null) {
+            firstRow[0] = map;
+          }
+          Object value = getField(map, op.field());
           if (value instanceof Number num) {
             double d = num.doubleValue();
             sum[0] += d;
@@ -488,26 +505,25 @@ public final class HdumpPathEvaluator {
             max[0] = Math.max(max[0], d);
             count[0]++;
           }
-
-          counter[0]++;
         });
 
-    Map<String, Object> result = new LinkedHashMap<>();
-    result.put("count", count[0]);
-    result.put("sum", sum[0]);
-    result.put("avg", count[0] > 0 ? sum[0] / count[0] : 0.0);
-    result.put("min", min[0]);
-    result.put("max", max[0]);
-    return List.of(result);
+    if (count[0] == 0 && firstRow[0] != null) {
+      requireField(List.of(firstRow[0]), op.field(), "stats");
+    }
+    return List.of(statsRow(op.field(), count[0], sum[0], min[0], max[0]));
   }
 
   /** Helper class to accumulate aggregation results for a group. */
   private static class GroupAccumulator {
     private final List<Object> key;
     private long count = 0;
+    private long numericCount = 0;
     private double sum = 0.0;
-    private double min = Double.MAX_VALUE;
+    private double min = Double.POSITIVE_INFINITY;
     private double max = Double.NEGATIVE_INFINITY;
+    // Without value=: the field this group aggregates, fixed by the first row that offers one, so
+    // a row offering a different column is skipped, not mixed in
+    private String defaultField;
 
     GroupAccumulator(List<Object> key, GroupByOp op) {
       this.key = key;
@@ -521,18 +537,22 @@ public final class HdumpPathEvaluator {
       if (op.valueExpr() != null) {
         value = op.valueExpr().evaluate(row);
       } else if (op.aggregation() != AggOp.COUNT) {
-        // For non-COUNT aggregations, need a value field
-        // Use first group field as default
-        value = getField(row, op.groupFields().get(0));
+        // shallowSize where rows carry it, never an identifier; one field per group
+        if (defaultField == null) {
+          defaultField = defaultAggregationField(row);
+        }
+        value = defaultField != null ? row.get(defaultField) : null;
       } else {
         value = null;
       }
 
-      if (value instanceof Number num) {
+      // A value expression yields NaN for a missing or non-numeric field: not a value
+      if (value instanceof Number num && !Double.isNaN(num.doubleValue())) {
         double d = num.doubleValue();
         sum += d;
         min = Math.min(min, d);
         max = Math.max(max, d);
+        numericCount++;
       }
     }
 
@@ -551,119 +571,53 @@ public final class HdumpPathEvaluator {
       // Add aggregation value
       switch (op.aggregation()) {
         case COUNT -> result.put(aggColumnName, count);
-        case SUM -> result.put(aggColumnName, sum);
-        case AVG -> result.put(aggColumnName, count > 0 ? sum / count : 0.0);
-        case MIN -> result.put(aggColumnName, min);
-        case MAX -> result.put(aggColumnName, max);
+        case SUM -> result.put(aggColumnName, numericCount > 0 ? sum : null);
+        case AVG -> result.put(aggColumnName, numericCount > 0 ? sum / numericCount : null);
+        case MIN -> result.put(aggColumnName, numericCount > 0 ? min : null);
+        case MAX -> result.put(aggColumnName, numericCount > 0 ? max : null);
       }
 
       return result;
     }
-
-    double getAggregationValue(AggOp aggOp) {
-      return switch (aggOp) {
-        case COUNT -> count;
-        case SUM -> sum;
-        case AVG -> count > 0 ? sum / count : 0.0;
-        case MIN -> min;
-        case MAX -> max;
-      };
-    }
   }
 
   /**
-   * Bounded accumulator for groupBy + top(N) optimization. Keeps only the top groups by
-   * periodically trimming to buffer size.
+   * {@code [B}, {@code [I}, ...: classes whose instances the class-instances index does not list.
    */
-  private static class BoundedGroupAccumulator {
-    private final Map<List<Object>, GroupAccumulator> groups;
-    private final int bufferSize;
-    private final int targetSize;
-    private final GroupByOp op;
-    private long totalAccumulated = 0;
-
-    BoundedGroupAccumulator(GroupByOp op, int bufferSize, int targetSize) {
-      this.op = op;
-      this.bufferSize = bufferSize;
-      this.targetSize = targetSize;
-      this.groups = new LinkedHashMap<>();
-    }
-
-    void accumulate(Map<String, Object> row, GroupByOp op) {
-      // Extract group key
-      List<Object> key = new ArrayList<>();
-      for (String field : op.groupFields()) {
-        key.add(getField(row, field));
-      }
-
-      // Get or create accumulator
-      GroupAccumulator acc = groups.computeIfAbsent(key, k -> new GroupAccumulator(k, op));
-      acc.accumulate(row, op);
-
-      totalAccumulated++;
-
-      // Periodically trim to buffer size (every 10K objects)
-      if (totalAccumulated % 10000 == 0 && groups.size() > bufferSize) {
-        trimToBufferSize();
-      }
-    }
-
-    private void trimToBufferSize() {
-      // Sort groups by aggregation value and keep only top bufferSize
-      List<Map.Entry<List<Object>, GroupAccumulator>> entries = new ArrayList<>(groups.entrySet());
-      entries.sort(
-          (e1, e2) -> {
-            double v1 = e1.getValue().getAggregationValue(op.aggregation());
-            double v2 = e2.getValue().getAggregationValue(op.aggregation());
-            return Double.compare(v2, v1); // Descending
-          });
-
-      // Keep only top bufferSize
-      groups.clear();
-      for (int i = 0; i < Math.min(bufferSize, entries.size()); i++) {
-        groups.put(entries.get(i).getKey(), entries.get(i).getValue());
-      }
-    }
-
-    int size() {
-      return groups.size();
-    }
-
-    List<Map<String, Object>> getTopN(int n) {
-      String aggField = getAggregationColumnName(op);
-      // Final sort and return top N
-      List<Map<String, Object>> results =
-          groups.values().stream()
-              .map(acc -> acc.toResultMap(op))
-              .sorted((m1, m2) -> -compareValues(m1.get(aggField), m2.get(aggField))) // Descending
-              .limit(n)
-              .collect(Collectors.toList());
-      return results;
-    }
+  private static boolean isPrimitiveArrayClass(HeapClass cls) {
+    String name = cls.getName();
+    return name != null
+        && name.length() == 2
+        && name.charAt(0) == '['
+        && "ZCFDBSIJ".indexOf(name.charAt(1)) >= 0;
   }
 
   /**
-   * Streaming evaluation with filter support for large heaps. Applies type pattern and predicate
-   * filters during streaming, then delegates to specialized streaming method based on operation
-   * type.
+   * Operators whose output for a row depends on that row alone, so they can run while streaming.
    */
-  private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
-      HeapDump dump, Query query, PipelineOp firstOp, List<PipelineOp> remainingOps) {
-    return evaluateObjectsStreamingWithFilters(dump, null, query, firstOp, remainingOps);
+  private static boolean isRowLocal(PipelineOp op) {
+    return op instanceof WasteOp || op instanceof CacheStatsOp || op instanceof FilterOp;
   }
 
-  private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
-      HeapDump dump,
-      HeapSession session,
-      Query query,
-      PipelineOp firstOp,
-      List<PipelineOp> remainingOps) {
+  /** Operators {@link #evaluateObjectsStreamingWithFilters} can compute from a stream of rows. */
+  private static boolean isStreamable(PipelineOp op) {
+    return op instanceof TopOp
+        || op instanceof GroupByOp
+        || op instanceof CountOp
+        || op instanceof SumOp
+        || op instanceof StatsOp;
+  }
 
+  /**
+   * Streams the objects the query's type pattern and predicates select, applies {@code rowOps} (see
+   * {@link #isRowLocal}) to each row, and computes {@code head} (see {@link #isStreamable}) from
+   * the stream without materializing it.
+   */
+  private static List<Map<String, Object>> evaluateObjectsStreamingWithFilters(
+      HeapDump dump, HeapSession session, Query query, List<PipelineOp> rowOps, PipelineOp head) {
     // Build filtered stream
     Stream<HeapObject> stream;
-    long totalObjects = dump.getObjectCount();
     String filterDesc = "";
-    boolean usedClassIndex = false;
 
     // Try to use class-instances index for type filtering
     if (query.typePattern() != null && dump.hasClassInstancesIndex()) {
@@ -673,15 +627,32 @@ public final class HdumpPathEvaluator {
 
       Set<String> matchingClassNames = findMatchingClasses(dump, pattern, query.instanceof_());
 
-      // For each matching class, get instances directly from index
-      stream =
+      // For each matching class, get instances directly from index. Primitive arrays are not in
+      // that index (each would cost a full scan of its own), so all matched primitive-array
+      // classes share one scan.
+      List<HeapClass> matched =
           matchingClassNames.stream()
               .map(name -> dump.getClassByName(name))
               .filter(Optional::isPresent)
               .map(Optional::get)
+              .toList();
+      Set<HeapClass> primitiveArrays = Collections.newSetFromMap(new IdentityHashMap<>());
+      for (HeapClass cls : matched) {
+        if (isPrimitiveArrayClass(cls)) {
+          primitiveArrays.add(cls);
+        }
+      }
+      Stream<HeapObject> indexed =
+          matched.stream()
+              .filter(cls -> !primitiveArrays.contains(cls))
               .flatMap(cls -> dump.getObjectsOfClassFast(cls));
+      stream =
+          primitiveArrays.isEmpty()
+              ? indexed
+              : Stream.concat(
+                  indexed,
+                  dump.getObjects().filter(o -> primitiveArrays.contains(o.getHeapClass())));
 
-      usedClassIndex = true;
     } else {
       // SLOW PATH: Full scan with per-object filtering
       stream = dump.getObjects();
@@ -721,8 +692,12 @@ public final class HdumpPathEvaluator {
     }
 
     // Apply predicates
-    if (!query.predicates().isEmpty()) {
-      stream = stream.filter(obj -> matchesAllPredicates(objectToMap(obj), query.predicates()));
+    FilterFieldCheck check =
+        query.predicates().isEmpty()
+            ? null
+            : FilterFieldCheck.of(query.predicates(), columnsOf(Root.OBJECTS));
+    if (check != null) {
+      stream = stream.filter(obj -> check.test(objectToMap(obj)));
       if (!filterDesc.isEmpty()) {
         filterDesc += " with predicates";
       } else {
@@ -730,29 +705,51 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    // Delegate to specialized streaming method based on operation type
-    List<Map<String, Object>> results;
-    if (firstOp instanceof TopOp topOp) {
-      results = evaluateObjectsStreamingTopFromStream(stream, dump.getObjectCount(), topOp);
-    } else if (firstOp instanceof GroupByOp groupByOp) {
-      results = evaluateObjectsStreamingGroupByFromStream(stream, dump.getObjectCount(), groupByOp);
-    } else if (firstOp instanceof CountOp) {
-      results = evaluateObjectsStreamingCountFromStream(stream, dump.getObjectCount());
-    } else if (firstOp instanceof SumOp sumOp) {
-      results = evaluateObjectsStreamingSumFromStream(stream, dump.getObjectCount(), sumOp);
-    } else if (firstOp instanceof StatsOp statsOp) {
-      results = evaluateObjectsStreamingStatsFromStream(stream, dump.getObjectCount(), statsOp);
-    } else {
-      throw new IllegalStateException(
-          "Unsupported streaming operation: " + firstOp.getClass().getSimpleName());
+    if (head instanceof CountOp && rowOps.isEmpty()) {
+      List<Map<String, Object>> count =
+          evaluateObjectsStreamingCountFromStream(stream, dump.getObjectCount());
+      verify(check);
+      return count;
     }
-
-    // Apply remaining pipeline operations
-    for (PipelineOp op : remainingOps) {
-      results = applyPipelineOp(session, results, op);
+    Stream<Map<String, Object>> rows = stream.map(HdumpPathEvaluator::objectToMap);
+    // One check per filter() over the whole stream: each row passes through on its own
+    Map<PipelineOp, FilterFieldCheck> rowChecks = new IdentityHashMap<>();
+    for (PipelineOp op : rowOps) {
+      if (op instanceof FilterOp f) {
+        rowChecks.put(op, FilterFieldCheck.of(List.of(f.predicate()), columnsOf(Root.OBJECTS)));
+      }
     }
-
-    return results;
+    if (!rowOps.isEmpty()) {
+      rows =
+          rows.flatMap(
+              row -> {
+                List<Map<String, Object>> out = List.of(row);
+                for (PipelineOp op : rowOps) {
+                  FilterFieldCheck rowCheck = rowChecks.get(op);
+                  out =
+                      rowCheck != null
+                          ? out.stream().filter(rowCheck::test).toList()
+                          : applyPipelineOp(session, out, op);
+                }
+                return out.stream();
+              });
+    }
+    List<Map<String, Object>> result =
+        switch (head) {
+          case TopOp topOp -> selectTop(rows, topOp);
+          case GroupByOp groupByOp -> groupRows(rows, groupByOp);
+          case CountOp ignored -> List.of(new LinkedHashMap<>(Map.of("count", rows.count())));
+          case SumOp sumOp ->
+              evaluateObjectsStreamingSumFromStream(rows, dump.getObjectCount(), sumOp);
+          case StatsOp statsOp ->
+              evaluateObjectsStreamingStatsFromStream(rows, dump.getObjectCount(), statsOp);
+          default ->
+              throw new IllegalStateException(
+                  "Unsupported streaming operation: " + head.getClass().getSimpleName());
+        };
+    verify(check);
+    rowChecks.values().forEach(HdumpPathEvaluator::verify);
+    return result;
   }
 
   private static List<Map<String, Object>> evaluateObjects(HeapDump dump, Query query) {
@@ -793,7 +790,14 @@ public final class HdumpPathEvaluator {
 
     // Apply predicates
     if (!query.predicates().isEmpty()) {
-      stream = stream.filter(obj -> matchesAllPredicates(objectToMap(obj), query.predicates()));
+      FilterFieldCheck check = FilterFieldCheck.of(query.predicates(), columnsOf(Root.OBJECTS));
+      List<Map<String, Object>> rows =
+          stream
+              .map(HdumpPathEvaluator::objectToMap)
+              .filter(check::test)
+              .collect(Collectors.toList());
+      verify(check);
+      return rows;
     }
 
     // Warn about memory usage for large unfiltered queries
@@ -827,10 +831,7 @@ public final class HdumpPathEvaluator {
         stream.map(HdumpPathEvaluator::classToMap).collect(Collectors.toList());
 
     if (!query.predicates().isEmpty()) {
-      results =
-          results.stream()
-              .filter(map -> matchesAllPredicates(map, query.predicates()))
-              .collect(Collectors.toList());
+      results = filterRows(results, query.predicates(), columnsOf(Root.CLASSES));
     }
 
     return results;
@@ -841,7 +842,7 @@ public final class HdumpPathEvaluator {
 
     // Filter by type
     if (query.typePattern() != null) {
-      String typeStr = query.typePattern().toUpperCase();
+      String typeStr = query.typePattern().toUpperCase(Locale.ROOT);
       try {
         GcRoot.Type type = GcRoot.Type.valueOf(typeStr);
         stream = stream.filter(root -> root.getType() == type);
@@ -856,10 +857,7 @@ public final class HdumpPathEvaluator {
         stream.map(HdumpPathEvaluator::gcRootToMap).collect(Collectors.toList());
 
     if (!query.predicates().isEmpty()) {
-      results =
-          results.stream()
-              .filter(map -> matchesAllPredicates(map, query.predicates()))
-              .collect(Collectors.toList());
+      results = filterRows(results, query.predicates(), columnsOf(Root.GCROOTS));
     }
 
     return results;
@@ -870,10 +868,7 @@ public final class HdumpPathEvaluator {
     List<Map<String, Object>> results = new ArrayList<>(clusterResult.rows());
 
     if (!query.predicates().isEmpty()) {
-      results =
-          results.stream()
-              .filter(map -> matchesAllPredicates(map, query.predicates()))
-              .collect(Collectors.toList());
+      results = filterRows(results, query.predicates(), columnsOf(Root.CLUSTERS));
     }
 
     return results;
@@ -884,10 +879,7 @@ public final class HdumpPathEvaluator {
     SubgraphFingerprinter.Result result = session.getOrComputeDuplicates(depth);
     List<Map<String, Object>> rows = new ArrayList<>(result.rows());
     if (!query.predicates().isEmpty()) {
-      rows =
-          rows.stream()
-              .filter(m -> matchesAllPredicates(m, query.predicates()))
-              .collect(Collectors.toList());
+      rows = filterRows(rows, query.predicates(), columnsOf(Root.DUPLICATES));
     }
     return rows;
   }
@@ -961,17 +953,24 @@ public final class HdumpPathEvaluator {
   }
 
   private static List<Map<String, Object>> evaluateAges(HeapSession session, Query query) {
-    // Delegate object filtering to evaluateObjects, then enrich with age data
+    // Delegate object filtering to evaluateObjects, then enrich with age data. Predicates on the
+    // age columns run after the enrichment: run before it, ages[estimatedAge > 50] matched nothing
+    boolean onObjectColumns =
+        query.predicates().stream()
+            .allMatch(p -> FilterFieldCheck.comparesOnly(p, columnsOf(Root.OBJECTS)));
     Query objectsQuery =
         new Query(
             Root.OBJECTS,
             query.typePattern(),
             query.instanceof_(),
-            query.predicates(),
+            onObjectColumns ? query.predicates() : List.of(),
             List.of(),
             0);
     List<Map<String, Object>> objectRows = evaluateObjects(session.getHeapDump(), objectsQuery);
-    return applyEstimateAge(session, objectRows);
+    List<Map<String, Object>> aged = applyEstimateAge(session, objectRows);
+    return onObjectColumns || query.predicates().isEmpty()
+        ? aged
+        : filterRows(aged, query.predicates(), columnsOf(Root.AGES));
   }
 
   private static List<Map<String, Object>> applyEstimateAge(
@@ -1112,7 +1111,12 @@ public final class HdumpPathEvaluator {
       }
     }
 
-    int threadSerial = root.getThreadSerial();
+    // A THREAD_OBJ root's serial is its own accessor: getThreadSerial() is the serial of the
+    // thread a frame or local belongs to, and -1 for THREAD_OBJ (#302)
+    int threadSerial =
+        root.getType() == GcRoot.Type.THREAD_OBJ
+            ? root.getThreadObjSerial()
+            : root.getThreadSerial();
     if (threadSerial >= 0) {
       map.put(GcRootFields.THREAD_SERIAL, threadSerial);
     }
@@ -1126,6 +1130,28 @@ public final class HdumpPathEvaluator {
   }
 
   // === Predicate matching ===
+
+  /**
+   * The rows matching every predicate; fails when none does because a compared field is absent from
+   * every row (#295).
+   */
+  private static List<Map<String, Object>> filterRows(
+      List<Map<String, Object>> rows, List<Predicate> predicates, Set<String> known) {
+    FilterFieldCheck check = FilterFieldCheck.of(predicates, known);
+    List<Map<String, Object>> kept = rows.stream().filter(check::test).collect(Collectors.toList());
+    verify(check);
+    return kept;
+  }
+
+  /** {@link #matchesAllPredicates}, for {@link FilterFieldCheck}. */
+  static boolean matchesAll(Map<String, Object> map, List<Predicate> predicates) {
+    return matchesAllPredicates(map, predicates);
+  }
+
+  /** {@link #extractFieldValue}, for {@link FilterFieldCheck}. */
+  static Object fieldValue(Map<String, Object> map, List<String> path) {
+    return extractFieldValue(map, path);
+  }
 
   private static boolean matchesAllPredicates(Map<String, Object> map, List<Predicate> predicates) {
     for (Predicate pred : predicates) {
@@ -1219,6 +1245,16 @@ public final class HdumpPathEvaluator {
   private static Object extractFieldValue(Map<String, Object> map, List<String> path) {
     if (path.isEmpty()) return null;
 
+    // join() stores its columns under flat dotted keys ("baseline.exists"); a filter path a.b
+    // means that column when the row has it, otherwise a nested field. Read only as nested, the
+    // documented filter(baseline.exists = false) matched no row.
+    if (path.size() > 1) {
+      String flat = String.join(".", path);
+      if (map.containsKey(flat)) {
+        return map.get(flat);
+      }
+    }
+
     Object current = getField(map, path.get(0));
     for (int i = 1; i < path.size() && current != null; i++) {
       if (current instanceof Map<?, ?> m) {
@@ -1290,13 +1326,126 @@ public final class HdumpPathEvaluator {
     return applyPipelineOp(session, results, op);
   }
 
+  /**
+   * {@link #applyPipelineOp}, with a {@code filter()} checked against {@code shape}: the columns of
+   * the root its rows still are, or null once a stage reshaped them (#295).
+   */
+  private static List<Map<String, Object>> applyStage(
+      HeapSession session,
+      List<Map<String, Object>> results,
+      PipelineOp op,
+      Query query,
+      SessionResolver resolver,
+      Set<String> shape) {
+    if (op instanceof FilterOp f) {
+      return filterRows(results, List.of(f.predicate()), shape);
+    }
+    return applyPipelineOp(session, results, op, query, resolver);
+  }
+
+  /**
+   * Whether {@code op} keeps its input rows as they are (fewer, reordered, or with columns added),
+   * so they keep their root's columns. The others build new rows (groups, values, paths, reports).
+   */
+  private static boolean keepsRows(PipelineOp op) {
+    return switch (op) {
+      case FilterOp _,
+          TopOp _,
+          SortByOp _,
+          HeadOp _,
+          TailOp _,
+          JoinOp _,
+          WasteOp _,
+          CacheStatsOp _,
+          ThreadOwnerOp _,
+          EstimateAgeOp _,
+          DominatedSizeOp _,
+          LenOp _,
+          UppercaseOp _,
+          LowercaseOp _,
+          TrimOp _,
+          ReplaceOp _,
+          AbsOp _,
+          RoundOp _,
+          FloorOp _,
+          CeilOp _ ->
+          true;
+      default -> false;
+    };
+  }
+
+  /**
+   * {@code shape} with the columns {@code op} adds to only some rows: {@code dominatedSize()} adds
+   * its columns to the THREAD_OBJ rows of {@code gcroots} alone. (The other ops that keep rows add
+   * their keys to every row, a null value included, so the rows' keys show them.)
+   */
+  private static Set<String> withAddedColumns(Set<String> shape, PipelineOp op) {
+    // Only gcroots rows (objectId) get them: objects and classes rows never do
+    if (shape == null
+        || !(op instanceof DominatedSizeOp)
+        || !shape.contains(GcRootFields.OBJECT_ID)) {
+      return shape;
+    }
+    Set<String> columns = new HashSet<>(shape);
+    columns.addAll(List.of("threadName", "dominated", "dominatedCount"));
+    return Set.copyOf(columns);
+  }
+
+  /**
+   * The columns a row of {@code root} can have, whether or not a given row carries them, aliases
+   * included. Rows of a root carry only some: an array's length, a computed retained size, a
+   * String's value, a frame root's frame number.
+   */
+  static Set<String> columnsOf(Root root) {
+    return ROOT_COLUMNS.get(root);
+  }
+
+  private static final Map<Root, Set<String>> ROOT_COLUMNS = rootColumns();
+
+  private static Map<Root, Set<String>> rootColumns() {
+    Set<String> objects = new HashSet<>(constants(ObjectFields.class));
+    objects.add("fields");
+    Set<String> ages = new HashSet<>(objects);
+    ages.addAll(constants(HdumpPath.AgeFields.class));
+    Map<Root, Set<String>> columns = new EnumMap<>(Root.class);
+    columns.put(Root.OBJECTS, Set.copyOf(objects));
+    columns.put(Root.CLASSES, constants(ClassFields.class));
+    columns.put(Root.GCROOTS, constants(GcRootFields.class));
+    columns.put(Root.CLUSTERS, constants(HdumpPath.ClusterFields.class));
+    columns.put(Root.DUPLICATES, constants(HdumpPath.DuplicateFields.class));
+    columns.put(Root.AGES, Set.copyOf(ages));
+    return columns;
+  }
+
+  /** The values of {@code holder}'s public static String constants: its column names. */
+  private static Set<String> constants(Class<?> holder) {
+    Set<String> names = new HashSet<>();
+    for (java.lang.reflect.Field f : holder.getFields()) {
+      if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) && f.getType() == String.class) {
+        try {
+          names.add((String) f.get(null));
+        } catch (IllegalAccessException e) {
+          throw new IllegalStateException(e);
+        }
+      }
+    }
+    return Set.copyOf(names);
+  }
+
+  /** Fails, naming the field, when {@code check} filtered rows on a field none of them has. */
+  private static void verify(FilterFieldCheck check) {
+    if (check != null) {
+      check.verify("filter");
+    }
+  }
+
   private static List<Map<String, Object>> applyPipelineOp(
       HeapSession session, List<Map<String, Object>> results, PipelineOp op) {
     return switch (op) {
       case SelectOp s -> applySelect(results, s);
       case TopOp t -> applyTop(results, t);
       case GroupByOp g -> applyGroupBy(results, g);
-      case CountOp c -> applyCount(results);
+      case CountOp _ -> applyCount(results);
       case SumOp s -> applySum(results, s);
       case StatsOp s -> applyStats(results, s);
       case SortByOp s -> applySortBy(results, s);
@@ -1322,10 +1471,10 @@ public final class HdumpPathEvaluator {
               });
       case UppercaseOp u ->
           applyStringTransform(
-              results, u.field(), v -> v instanceof String s ? s.toUpperCase() : v);
+              results, u.field(), v -> v instanceof String s ? s.toUpperCase(Locale.ROOT) : v);
       case LowercaseOp l ->
           applyStringTransform(
-              results, l.field(), v -> v instanceof String s ? s.toLowerCase() : v);
+              results, l.field(), v -> v instanceof String s ? s.toLowerCase(Locale.ROOT) : v);
       case TrimOp t ->
           applyStringTransform(results, t.field(), v -> v instanceof String s ? s.trim() : v);
       case ReplaceOp r ->
@@ -1370,14 +1519,14 @@ public final class HdumpPathEvaluator {
                 if (v instanceof Number n) return (long) Math.ceil(n.doubleValue());
                 return v;
               });
-      case PathToRootOp p -> {
+      case PathToRootOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "pathToRoot requires heap session context (not available after streaming aggregation)");
         }
         yield applyPathToRoot(session.getHeapDump(), results);
       }
-      case RetentionPathsOp r -> {
+      case RetentionPathsOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "retentionPaths requires heap session context (not available after streaming aggregation)");
@@ -1405,56 +1554,56 @@ public final class HdumpPathEvaluator {
         }
         yield applyDominators(session, session.getHeapDump(), results, d);
       }
-      case WasteOp w -> {
+      case WasteOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "waste requires heap session context (not available after streaming aggregation)");
         }
         yield applyWaste(session.getHeapDump(), results);
       }
-      case ObjectsOp o -> {
+      case ObjectsOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "objects requires heap session context (not available after streaming aggregation)");
         }
         yield applyObjectsDrillDown(session, results);
       }
-      case ThreadOwnerOp t -> {
+      case ThreadOwnerOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "threadOwner requires heap session context (not available after streaming aggregation)");
         }
         yield applyThreadOwner(session, results);
       }
-      case DominatedSizeOp d -> {
+      case DominatedSizeOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "dominatedSize requires heap session context (not available after streaming aggregation)");
         }
         yield applyDominatedSize(session, results);
       }
-      case EstimateAgeOp e -> {
+      case EstimateAgeOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "estimateAge requires heap session context (not available after streaming aggregation)");
         }
         yield applyEstimateAge(session, results);
       }
-      case WhatIfOp w -> {
+      case WhatIfOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "whatif() requires heap session context (not available after streaming aggregation)");
         }
         yield applyWhatIf(session, results);
       }
-      case CacheStatsOp c -> {
+      case CacheStatsOp _ -> {
         if (session == null) {
           throw new IllegalStateException(
               "cacheStats() requires heap session context (not available after streaming aggregation)");
         }
         yield applyCacheStats(session, results);
       }
-      case JoinOp j ->
+      case JoinOp _ ->
           throw new IllegalStateException(
               "join() is not supported in this context (no multi-session access available)");
     };
@@ -1549,7 +1698,7 @@ public final class HdumpPathEvaluator {
     // Left-join: for each current row, lookup baseline, add baseline.* and *Delta columns
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
     for (Map<String, Object> row : results) {
-      Map<String, Object> out = new LinkedHashMap<>(row);
+      Map<String, Object> out = aliasCopy(row);
       Object key = getField(row, joinKey);
       Map<String, Object> baseRow = key != null ? baselineIndex.get(key) : null;
 
@@ -1618,17 +1767,22 @@ public final class HdumpPathEvaluator {
           "Failed to query JFR session for " + joinOp.root() + ": " + e.getMessage(), e);
     }
 
-    // Aggregate JFR events by class
-    Map<String, Map<String, Object>> allocStats = AllocationAggregator.aggregate(jfrRows);
+    // Aggregate JFR events by class, keyed with the heap dump's hidden-class separator (#280)
+    Map<String, Map<String, Object>> allocStats = new HashMap<>();
+    for (Map.Entry<String, Map<String, Object>> e :
+        AllocationAggregator.aggregate(jfrRows).entrySet()) {
+      allocStats.putIfAbsent(hiddenClassKey(e.getKey()), e.getValue());
+    }
 
     // Left-join: enrich each heap row with allocation statistics
     List<Map<String, Object>> joined = new ArrayList<>(results.size());
     for (Map<String, Object> row : results) {
-      Map<String, Object> out = new LinkedHashMap<>(row);
+      Map<String, Object> out = aliasCopy(row);
       Object keyObj = getField(row, joinKey);
       String className = keyObj != null ? String.valueOf(keyObj) : null;
 
-      Map<String, Object> stats = className != null ? allocStats.get(className) : null;
+      Map<String, Object> stats =
+          className != null ? allocStats.get(hiddenClassKey(className)) : null;
 
       if (stats != null) {
         out.put("allocCount", stats.get("allocCount"));
@@ -1658,6 +1812,25 @@ public final class HdumpPathEvaluator {
     }
 
     return joined;
+  }
+
+  /**
+   * A hidden class's address written as {@code +0x<hex>}. A heap dump names a hidden class {@code
+   * Main$$Lambda+0x0000000019040210}; JFR stores {@code Class.getName()}'s {@code
+   * Main$$Lambda/0x0000000019040210} for the class itself (it writes {@code +} for an array of it),
+   * which reads as {@code .0x...} once dotted. Within one run the address is the same, so it is
+   * kept: only the separator differs (#280). It ends the name or comes before an array's {@code
+   * []}. Both sides are dotted before keying, so the {@code /} arm is reached only by a caller that
+   * passes an undotted name. Two keys meet only for a class whose simple name is {@code 0x<hex>},
+   * which javac does not emit; one of them is kept, which one is unspecified.
+   */
+  private static final Pattern HIDDEN_CLASS_SEPARATOR =
+      Pattern.compile("[./+](0x[0-9a-fA-F]+)(?=(\\[\\])*$)");
+
+  static String hiddenClassKey(String className) {
+    return className.contains("0x")
+        ? HIDDEN_CLASS_SEPARATOR.matcher(className).replaceFirst("+$1")
+        : className;
   }
 
   private static String inferJoinKey(Root root) {
@@ -1695,30 +1868,35 @@ public final class HdumpPathEvaluator {
           && !results.isEmpty()
           && results.get(0).containsKey(ClassFields.NAME)
           && !results.get(0).containsKey(ObjectFields.RETAINED_SIZE)) {
-        throw new IllegalArgumentException(
-            "Field '"
-                + op.orderBy()
-                + "' is not available on classes. "
-                + "To aggregate retained sizes by class, use: "
-                + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
+        throw new IllegalArgumentException(retainedOnClassesMessage(op.orderBy()));
       }
+      requireField(results, op.orderBy(), "top");
 
-      // Create comparator that compares actual values with null-safe handling
+      // top() defaults to descending (largest first). Rows without a value sort last in both
+      // directions: reversing a nulls-last comparator would rank them first (issue #225, where
+      // waste() rows with null wastedBytes headed the "top waste" list).
       Comparator<Map<String, Object>> cmp =
-          (m1, m2) -> {
-            Object v1 = m1.get(op.orderBy());
-            Object v2 = m2.get(op.orderBy());
-            return compareValues(v1, v2);
-          };
-
-      // top() defaults to descending (largest first) - reverse for ascending if needed
-      if (op.descending()) {
-        cmp = cmp.reversed();
-      }
+          nullsLastBy(m -> getField(m, op.orderBy()), op.descending());
       stream = stream.sorted(cmp);
     }
 
     return stream.limit(op.n()).collect(Collectors.toList());
+  }
+
+  /**
+   * Orders rows by {@code key}, ascending or descending, with rows whose key is null always last.
+   */
+  private static Comparator<Map<String, Object>> nullsLastBy(
+      Function<Map<String, Object>, Object> key, boolean descending) {
+    return (m1, m2) -> {
+      Object v1 = key.apply(m1);
+      Object v2 = key.apply(m2);
+      if (v1 == null || v2 == null) {
+        return v1 == null ? (v2 == null ? 0 : 1) : -1;
+      }
+      int c = compareValues(v1, v2);
+      return descending ? -c : c;
+    };
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -1738,164 +1916,28 @@ public final class HdumpPathEvaluator {
     return String.valueOf(v1).compareTo(String.valueOf(v2));
   }
 
-  @SuppressWarnings({"unchecked", "rawtypes"})
-  private static Comparable<Object> toComparable(Object value) {
-    if (value == null) return o -> 1; // nulls sort last
-    if (value instanceof Comparable comp) {
-      // Wrap to handle type mismatch gracefully (e.g., comparing Integer with String)
-      return o -> {
-        if (o == null) return -1;
-        if (value.getClass().isInstance(o)) {
-          return comp.compareTo(o);
-        }
-        // Fall back to string comparison for incompatible types
-        return String.valueOf(value).compareTo(String.valueOf(o));
-      };
-    }
-    return o -> String.valueOf(value).compareTo(String.valueOf(o));
-  }
-
   private static List<Map<String, Object>> applyGroupBy(
       List<Map<String, Object>> results, GroupByOp op) {
-    // Group by the specified fields
-    Map<List<Object>, List<Map<String, Object>>> groups =
-        results.stream()
-            .collect(
-                Collectors.groupingBy(
-                    row -> {
-                      List<Object> key = new ArrayList<>();
-                      for (String field : op.groupFields()) {
-                        key.add(row.get(field));
-                      }
-                      return key;
-                    }));
-
-    // Apply aggregation
-    List<Map<String, Object>> aggregated = new ArrayList<>();
-    for (Map.Entry<List<Object>, List<Map<String, Object>>> entry : groups.entrySet()) {
-      Map<String, Object> row = new LinkedHashMap<>();
-
-      // Add group key fields
-      List<Object> keyValues = entry.getKey();
-      for (int i = 0; i < op.groupFields().size(); i++) {
-        row.put(op.groupFields().get(i), keyValues.get(i));
-      }
-
-      // Add aggregation result
-      List<Map<String, Object>> group = entry.getValue();
-      switch (op.aggregation()) {
-        case COUNT -> row.put("count", group.size());
-        case SUM, AVG, MIN, MAX -> {
-          ValueExpr valueExpr = op.valueExpr();
-          if (valueExpr != null) {
-            // Use provided expression
-            double[] values =
-                group.stream()
-                    .mapToDouble(valueExpr::evaluate)
-                    .filter(v -> !Double.isNaN(v))
-                    .toArray();
-            if (values.length > 0) {
-              // Extract field name from valueExpr if it's a simple field reference
-              String fieldName = extractFieldNameFromExpr(valueExpr);
-              applyAggregation(row, op.aggregation(), values, fieldName);
-            }
-          } else {
-            // Fall back to first numeric field
-            String valueField = findFirstNumericField(group);
-            if (valueField != null) {
-              double[] values =
-                  group.stream()
-                      .map(m -> m.get(valueField))
-                      .filter(v -> v instanceof Number)
-                      .mapToDouble(v -> ((Number) v).doubleValue())
-                      .toArray();
-              if (values.length > 0) {
-                applyAggregation(row, op.aggregation(), values, valueField);
-              }
-            }
-          }
-        }
-      }
-
-      aggregated.add(row);
-    }
-
-    // Apply sorting if requested
-    if (op.sortBy() != null) {
-      String keyField = op.groupFields().isEmpty() ? "key" : op.groupFields().get(0);
-      String valueField = getAggregationFieldName(op.aggregation());
-      RowSorter.sortGroupByResults(aggregated, op.sortBy(), keyField, valueField, op.ascending());
-    }
-
-    return aggregated;
-  }
-
-  /** Returns the field name for the given aggregation operation. */
-  private static String getAggregationFieldName(AggOp aggOp) {
-    return switch (aggOp) {
-      case COUNT -> "count";
-      case SUM -> "sum";
-      case AVG -> "avg";
-      case MIN -> "min";
-      case MAX -> "max";
-    };
-  }
-
-  private static String findFirstNumericField(List<Map<String, Object>> rows) {
-    if (rows.isEmpty()) return null;
-    for (Map.Entry<String, Object> entry : rows.get(0).entrySet()) {
-      if (entry.getValue() instanceof Number) {
-        return entry.getKey();
-      }
-    }
-    return null;
-  }
-
-  private static void applyAggregation(
-      Map<String, Object> row, AggOp aggOp, double[] values, String valueField) {
-    // Use field name as column name if it's a memory field, otherwise use aggregation name
-    String columnName;
-    if (valueField != null && isMemoryFieldName(valueField)) {
-      columnName = valueField;
-    } else {
-      columnName =
-          switch (aggOp) {
-            case COUNT -> "count";
-            case SUM -> "sum";
-            case AVG -> "avg";
-            case MIN -> "min";
-            case MAX -> "max";
-          };
-    }
-
-    switch (aggOp) {
-      case SUM -> {
-        double sum = 0;
-        for (double v : values) sum += v;
-        row.put(columnName, sum);
-      }
-      case AVG -> {
-        double sum = 0;
-        for (double v : values) sum += v;
-        row.put(columnName, sum / values.length);
-      }
-      case MIN -> {
-        double min = Double.MAX_VALUE;
-        for (double v : values) if (v < min) min = v;
-        row.put(columnName, min);
-      }
-      case MAX -> {
-        double max = Double.NEGATIVE_INFINITY;
-        for (double v : values) if (v > max) max = v;
-        row.put(columnName, max);
-      }
-      default -> {}
-    }
+    return groupRows(results.stream(), op);
   }
 
   // === Retained size dependency analysis ===
 
-  private static boolean isRetainedField(String field) {
+  /** The column an alias names ({@code class} is {@code className}); any other name as it is. */
+  static String canonicalField(String field) {
+    return FIELD_ALIASES.getOrDefault(field, field);
+  }
+
+  /** The error for a retained-size field asked of classes, which have none. */
+  static String retainedOnClassesMessage(String field) {
+    return "Field '"
+        + field
+        + "' is not available on classes. "
+        + "To aggregate retained sizes by class, use: "
+        + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)";
+  }
+
+  static boolean isRetainedField(String field) {
     return ObjectFields.RETAINED.equals(field) || ObjectFields.RETAINED_SIZE.equals(field);
   }
 
@@ -1926,7 +1968,7 @@ public final class HdumpPathEvaluator {
       case FieldRef fr -> isRetainedField(fr.field());
       case BinaryExpr be ->
           valueExprReferencesRetained(be.left()) || valueExprReferencesRetained(be.right());
-      case NumberLiteral nl -> false;
+      case NumberLiteral _ -> false;
     };
   }
 
@@ -1944,10 +1986,10 @@ public final class HdumpPathEvaluator {
           g.groupFields().stream().anyMatch(HdumpPathEvaluator::isRetainedField)
               || (g.valueExpr() != null && valueExprReferencesRetained(g.valueExpr()));
       // Ops that always produce or consume retained sizes
-      case PathToRootOp p -> true;
-      case RetentionPathsOp r -> true;
-      case CheckLeaksOp c -> true;
-      case CacheStatsOp c -> true;
+      case PathToRootOp _ -> true;
+      case RetentionPathsOp _ -> true;
+      case CheckLeaksOp _ -> true;
+      case CacheStatsOp _ -> true;
       default -> false;
     };
   }
@@ -1969,7 +2011,7 @@ public final class HdumpPathEvaluator {
   /** Checks if a field name indicates memory values. */
   private static boolean isMemoryFieldName(String fieldName) {
     if (fieldName == null) return false;
-    String lower = fieldName.toLowerCase();
+    String lower = fieldName.toLowerCase(Locale.ROOT);
     return lower.endsWith("size")
         || lower.contains("shallow")
         || lower.contains("retained")
@@ -1983,6 +2025,11 @@ public final class HdumpPathEvaluator {
    * avg, etc.).
    */
   private static String getAggregationColumnName(GroupByOp op) {
+    // A count is a count of rows, whatever value= says: naming it after a memory field broke
+    // "groupBy(class, count(shallow)) | top(3, count)" and made the formatter print it as bytes
+    if (op.aggregation() == AggOp.COUNT) {
+      return "count";
+    }
     // Try to extract field name from valueExpr
     String fieldName = extractFieldNameFromExpr(op.valueExpr());
 
@@ -2016,38 +2063,34 @@ public final class HdumpPathEvaluator {
   }
 
   private static List<Map<String, Object>> applySum(List<Map<String, Object>> results, SumOp op) {
+    requireField(results, op.field(), "sum");
     double sum =
         results.stream()
-            .map(m -> m.get(op.field()))
+            .map(m -> getField(m, op.field()))
             .filter(v -> v instanceof Number)
             .mapToDouble(v -> ((Number) v).doubleValue())
             .sum();
+    return List.of(sumRow(op.field(), sum));
+  }
 
+  /** The {@code sum(field)} result row, for both paths: named after a memory field, else "sum". */
+  private static Map<String, Object> sumRow(String field, double sum) {
     Map<String, Object> row = new LinkedHashMap<>();
-    // Use field name if it's a memory field, otherwise use "sum"
-    String columnName = isMemoryFieldName(op.field()) ? op.field() : "sum";
-    row.put(columnName, sum);
-    return List.of(row);
+    row.put(isMemoryFieldName(field) ? field : "sum", sum);
+    return row;
   }
 
   private static List<Map<String, Object>> applyStats(
       List<Map<String, Object>> results, StatsOp op) {
+    requireField(results, op.field(), "stats");
     DoubleSummaryStatistics stats =
         results.stream()
-            .map(m -> m.get(op.field()))
+            .map(m -> getField(m, op.field()))
             .filter(v -> v instanceof Number)
             .mapToDouble(v -> ((Number) v).doubleValue())
             .summaryStatistics();
-
-    Map<String, Object> row = new LinkedHashMap<>();
-    // For stats, use field name as prefix if it's a memory field
-    boolean isMemory = isMemoryFieldName(op.field());
-    row.put("count", stats.getCount());
-    row.put(isMemory ? op.field() + "_sum" : "sum", stats.getSum());
-    row.put(isMemory ? op.field() + "_min" : "min", stats.getMin());
-    row.put(isMemory ? op.field() + "_max" : "max", stats.getMax());
-    row.put(isMemory ? op.field() + "_avg" : "avg", stats.getAverage());
-    return List.of(row);
+    return List.of(
+        statsRow(op.field(), stats.getCount(), stats.getSum(), stats.getMin(), stats.getMax()));
   }
 
   private static List<Map<String, Object>> applySortBy(
@@ -2060,19 +2103,12 @@ public final class HdumpPathEvaluator {
           && !results.isEmpty()
           && results.get(0).containsKey(ClassFields.NAME)
           && !results.get(0).containsKey(ObjectFields.RETAINED_SIZE)) {
-        throw new IllegalArgumentException(
-            "Field '"
-                + sf.field()
-                + "' is not available on classes. "
-                + "To aggregate retained sizes by class, use: "
-                + "show objects | groupBy(className, agg=sum, value=retainedSize) | top(10)");
+        throw new IllegalArgumentException(retainedOnClassesMessage(sf.field()));
       }
 
+      requireField(results, sf.field(), "sortBy");
       Comparator<Map<String, Object>> fieldCmp =
-          (m1, m2) -> compareValues(getField(m1, sf.field()), getField(m2, sf.field()));
-      if (sf.descending()) {
-        fieldCmp = fieldCmp.reversed();
-      }
+          nullsLastBy(m -> getField(m, sf.field()), sf.descending());
       cmp = cmp == null ? fieldCmp : cmp.thenComparing(fieldCmp);
     }
 
@@ -2101,7 +2137,7 @@ public final class HdumpPathEvaluator {
     return results.stream()
         .map(
             row -> {
-              Map<String, Object> newRow = new LinkedHashMap<>(row);
+              Map<String, Object> newRow = aliasCopy(row);
               Object val = newRow.get(field);
               if (val != null) {
                 newRow.put(field, transform.apply(val));
@@ -2146,7 +2182,62 @@ public final class HdumpPathEvaluator {
       }
     }
 
+    if (includeSubclasses) {
+      checkInstanceofTarget(dump, pattern, result);
+    }
     return result;
+  }
+
+  /**
+   * Fails loudly when {@code instanceof/<type>} cannot match anything (issue #225). HPROF class
+   * records carry only the superclass, never the implemented interfaces (see the
+   * HPROF_GC_CLASS_DUMP layout in HotSpot's {@code heapDumper.cpp}), so subtype matching walks
+   * superclass chains only. An interface is in the dump as a class of its own: no instance fields,
+   * instance size 0, no instances, and no class names it as a superclass. When every class the
+   * target matched (itself, its subclasses, or every class a glob matched) looks like that, the
+   * query would silently return nothing, as it would for a name that is not in the dump at all.
+   *
+   * <p>A concrete class with no instance fields and no live instances (a static utility class)
+   * looks the same in a heap dump; the message says so and names the query that answers 0 for it.
+   */
+  private static void checkInstanceofTarget(HeapDump dump, String pattern, Set<String> matched) {
+    String shown = ClassNameUtil.toHumanReadable(pattern);
+    boolean glob = pattern.contains("*") || pattern.contains("?");
+    if (matched.isEmpty()) {
+      throw new IllegalArgumentException(
+          "instanceof/"
+              + shown
+              + ": no class "
+              + (glob ? "matches" : "named")
+              + " '"
+              + shown
+              + "' in this heap dump");
+    }
+    for (String name : matched) {
+      HeapClass cls = dump.getClassByName(name).orElse(null);
+      if (cls == null
+          || cls.isArray()
+          || cls.getInstanceCount() > 0
+          || cls.getInstanceSize() != 0
+          || !cls.getInstanceFields().isEmpty()) {
+        return; // something here can have instances: an empty result is a real answer
+      }
+    }
+    throw new IllegalArgumentException(
+        "instanceof/"
+            + shown
+            + ": "
+            + (glob ? "every class matching '" + shown + "' has" : "'" + shown + "' has")
+            + " no instances, no instance fields and no subclasses in this heap dump, which is"
+            + " what an interface looks like. A heap dump records each class's superclass but not"
+            + " the interfaces it implements, so instanceof cannot match through an interface:"
+            + " name a class the implementations extend instead (for java.util.Map, for example,"
+            + " java.util.AbstractMap or java.util.HashMap). If "
+            + (glob ? "these are classes" : "it is a class")
+            + " with no live instances (a static utility class looks the same), the answer is 0:"
+            + " query objects/"
+            + shown
+            + " without instanceof.");
   }
 
   private static void addSubclasses(HeapDump dump, String className, Set<String> result) {
@@ -2270,7 +2361,7 @@ public final class HdumpPathEvaluator {
     for (Map<String, Object> row : results) {
       Object idObj = row.get("id");
       if (idObj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = aliasCopy(row);
         CollectionWasteAnalyzer.addNullWasteColumns(copy);
         enriched.add(copy);
         continue;
@@ -2280,13 +2371,13 @@ public final class HdumpPathEvaluator {
           idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
       HeapObject obj = dump.getObjectById(id).orElse(null);
       if (obj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = aliasCopy(row);
         CollectionWasteAnalyzer.addNullWasteColumns(copy);
         enriched.add(copy);
         continue;
       }
 
-      Map<String, Object> enrichedRow = new LinkedHashMap<>(row);
+      Map<String, Object> enrichedRow = aliasCopy(row);
       if (!CollectionWasteAnalyzer.analyze(obj, enrichedRow, refSize)) {
         CollectionWasteAnalyzer.addNullWasteColumns(enrichedRow);
       }
@@ -2304,7 +2395,7 @@ public final class HdumpPathEvaluator {
     for (Map<String, Object> row : results) {
       Object idObj = row.get("id");
       if (idObj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = aliasCopy(row);
         CacheStatsAnalyzer.addNullColumns(copy);
         enriched.add(copy);
         continue;
@@ -2314,7 +2405,7 @@ public final class HdumpPathEvaluator {
           idObj instanceof Number ? ((Number) idObj).longValue() : Long.parseLong(idObj.toString());
       HeapObject obj = dump.getObjectById(id).orElse(null);
       if (obj == null) {
-        Map<String, Object> copy = new LinkedHashMap<>(row);
+        Map<String, Object> copy = aliasCopy(row);
         CacheStatsAnalyzer.addNullColumns(copy);
         enriched.add(copy);
         continue;
@@ -2325,7 +2416,7 @@ public final class HdumpPathEvaluator {
       long retainedSize =
           retainedObj instanceof Number n ? n.longValue() : obj.getRetainedSizeIfAvailable();
 
-      Map<String, Object> enrichedRow = new LinkedHashMap<>(row);
+      Map<String, Object> enrichedRow = aliasCopy(row);
       if (!CacheStatsAnalyzer.analyze(obj, enrichedRow, retainedSize)) {
         CacheStatsAnalyzer.addNullColumns(enrichedRow);
       }
@@ -2579,6 +2670,7 @@ public final class HdumpPathEvaluator {
       String connector = depth == 0 ? "├── " : "└── ";
       sb.append(
           String.format(
+              Locale.ROOT,
               "%s%s%s  ×%,d  shallow=%s  retained=%s%n",
               indent,
               connector,
@@ -2592,9 +2684,10 @@ public final class HdumpPathEvaluator {
 
   private static String formatBytes(long bytes) {
     if (bytes < 1024) return bytes + "B";
-    if (bytes < 1024 * 1024) return String.format("%.1fKB", bytes / 1024.0);
-    if (bytes < 1024L * 1024 * 1024) return String.format("%.1fMB", bytes / (1024.0 * 1024));
-    return String.format("%.2fGB", bytes / (1024.0 * 1024 * 1024));
+    if (bytes < 1024 * 1024) return String.format(Locale.ROOT, "%.1fKB", bytes / 1024.0);
+    if (bytes < 1024L * 1024 * 1024)
+      return String.format(Locale.ROOT, "%.1fMB", bytes / (1024.0 * 1024));
+    return String.format(Locale.ROOT, "%.2fGB", bytes / (1024.0 * 1024 * 1024));
   }
 
   private static List<Map<String, Object>> applyCheckLeaks(
@@ -2877,7 +2970,10 @@ public final class HdumpPathEvaluator {
               : "unknown";
       tree.append(
           String.format(
-              "%s (retained: %,d bytes)\n", dominatorClassName, dominator.getRetainedSize()));
+              Locale.ROOT,
+              "%s (retained: %,d bytes)\n",
+              dominatorClassName,
+              dominator.getRetainedSize()));
       formatDominatorTree(root, tree, "", true);
 
       int totalDominated = countDominatedObjects(root);
@@ -2996,8 +3092,11 @@ public final class HdumpPathEvaluator {
       sb.append(last ? "└── " : "├── ");
       sb.append(
           String.format(
+              Locale.ROOT,
               "%s (%,d objects, retained: %,d bytes)\n",
-              child.className, child.count, child.retainedSize));
+              child.className,
+              child.count,
+              child.retainedSize));
 
       String childPrefix = prefix + (last ? "    " : "│   ");
       formatDominatorTree(child, sb, childPrefix, last);

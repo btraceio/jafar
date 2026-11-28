@@ -22,6 +22,7 @@ documented gaps are in [Gates.md](Gates.md).
 - Language: Java 25 (shell/MCP modules), Java 8 bytecode (parser/tools/demo), Groovy (plugin). Indent 4 spaces, no tabs; aim for 120 col width.
 - Packages: `io.jafar.*`. Classes `PascalCase`, methods/fields `camelCase`, constants `UPPER_SNAKE_CASE`.
 - Keep public API minimal; prefer package-private for internals. Use meaningful names and final where sensible.
+- Format numbers with an explicit locale: `String.format(Locale.ROOT, ...)`, `printf(Locale.ROOT, ...)`. The default locale makes output depend on the machine (`"47,8%"` on ru-RU); arch rule (j) fails the build on a call without one. The same holds for case mapping: `toLowerCase(Locale.ROOT)`, `toUpperCase(Locale.ROOT)`; under tr-TR `"I".toLowerCase()` is a dotless `"ı"` (#264).
 
 ## Formatting
 - Spotless enforces formatting for Java, Groovy, and Gradle files.
@@ -29,6 +30,55 @@ documented gaps are in [Gates.md](Gates.md).
   `check`); run `./gradlew spotlessApply` before committing to keep builds green.
 - The repository ships no git hooks; do not set `core.hooksPath` for it — that would
   replace your own global hooks.
+
+## Architectural invariants
+
+The boundary rules live in the `arch-tests` module as frozen ArchUnit rules and are catalogued in
+[Gates.md](Gates.md#architecture-boundaries-archunit-freeze): the (a)–(j) plain-words list, the
+committed freeze store and the fire tests that prove each rule fires. The load-bearing ones, in one
+line each:
+
+- **(c)/(f)** — a module's `api` package is its public surface: no dependencies on its
+  implementation packages, and no implementation types in public or protected signatures
+  (generic arguments included). Factories may construct impl classes *in method bodies* —
+  `HeapDumpParser.parse` builds a `HeapDumpImpl` behind `HeapDump` — but signatures may not leak
+  them.
+- **(a)/(b)/(g)** — `impl`/`internal`/`index` packages are module-private.
+  `io.jafar.parser.internal_api` is the parser plane's shared internal contract; extending its
+  consumer list is an architecture decision, not a convenience import.
+- **(h)/(i)** — every extension point is a ServiceLoader-discovered SPI
+  (`JfrBackend`, `ShellModule`, `LlmBackend`, `HandlerFactory`, `DeserializerFactory`,
+  `UntypedEventStreamFactory`): the types stay interfaces, and the SPI packages never know their
+  implementations. An integration that special-cases a concrete backend defeats the plugin
+  architecture the shells are built on.
+- The published API surfaces are guarded by japicmp against the last release
+  ([Gates.md](Gates.md#api-evolution)); changing an SPI is a release decision — evolve compatibly
+  or deprecate first. The jfr-shell-tck is the behavioural net for backends.
+
+Existing reach-ins are grandfathered in the committed freeze store (shrink-only: a new one fails
+the build, a deliberate grandfathering is a visible hand edit). Run `./gradlew :arch-tests:test`
+locally in the dev loop — CI is the final gate, not the first place you learn.
+
+### Clean code
+
+Mechanically enforced on main sources by PMD (`./gradlew pmdMain`, part of `check`; ruleset:
+`config/pmd/ruleset.xml` — curated, must stay green): no empty catch blocks, no empty control
+statements, no constructors calling overridable methods, no dead locals/fields/methods. When a
+member is reflection-driven or updater-driven (invisible to the analysis), suppress at the member
+with `@SuppressWarnings("PMD.<Rule>")` and a comment saying why — see `JafarMcpServer` and
+`MetadataClass.typeSkipper` for the two living examples. Everything the ruleset flags that is not
+suppressed is genuinely dead: delete it, keep the side effects (an "unused" local in a parser is
+often a stream-advancing read — drop the variable, keep the call).
+
+Beyond the gates, the conventions the codebase already follows:
+
+- Keep public API minimal; package-private is the default, `public` earns its place.
+- Reach for the pattern the area already uses: Factory (api entry points), Strategy/Adapter
+  (shell output formats, providers), Command (command dispatch), sealed exhaustive hierarchies
+  for value types (`Value`, `BoolExpr`, `ValueExpr`), SPI for anything pluggable. The full
+  pattern inventory lives in `doc/cli/Architecture.md` (Design Patterns).
+- Prefer sealed types + exhaustive switches: the compiler catches the missed case.
+- Fail loud over fail quiet — except where a comment documents a deliberate best-effort catch.
 
 ## Parser APIs
 - **Typed API**: Uses interface definitions with `@JfrType("event.name")` annotations
@@ -47,6 +97,67 @@ documented gaps are in [Gates.md](Gates.md).
   `GeneratedDeserializerSupport` rather than re-implementing them. Generated deserializers are
   shared across chunks only by structural key, never by class id — see
   [DataShapes.md](DataShapes.md#a-type-id-is-not-a-type).
+- **Typed parser: two generators.** The typed parser decodes an `@JfrType` interface with a handler
+  from one of two generators. `jafar-processor` generates one at build time (a `<Interface>Handler`
+  and its `HandlerFactory`, found by `ServiceLoader` or passed to `registerFactory`).
+  `parser-codegen`'s `CodeGenerator` generates one at runtime, from the chunk's metadata, when no
+  factory serves the interface or the parser was told `ignoreDiscoveredFactories()`. They must read
+  the same values and do comparable work per value; `BuildTimeRuntimeParityTest` compares their
+  values on the generated fixtures, and AGENTS.md has the rule and its gate. Kept differences:
+  - The build-time handler is reused: `HandlerFactory.get` hands every event of a thread the same
+    instance after `reset()`, so an event must not be kept past its handler call. The runtime
+    class is a new object per event. Pool entries are new objects on both sides.
+  - A runtime-generated class is defined with `CodeGenerator` as its lookup host, so it lives in
+    `parser-codegen`'s class loader, unless that loader cannot see the interface or sees another
+    copy of it (a plugin's or a deployment's loader, child-first or not). Then it is defined in a
+    `CodeGenerator.BridgeLoader`: the JDK's and the parser's own packages resolve through
+    `parser-codegen`'s loader, everything else, the interface first, through the interface's
+    loader (`TypedChildClassLoaderTest`, and `TypedChildFirst8Test` on JDK 8). Such a class's
+    deserializer is kept per metadata class, not in the JVM-wide `GlobalHandlerCache`, which would
+    hold the interface and its loader for as long as the JVM runs; so it is generated again for
+    each parse. Build-time handlers in a child loader also work with `parser-codegen` on the class
+    path (`ChildLoaderFactoryTest`): `MutableMetadataLookup.bindDeserializers` still generates a
+    runtime deserializer for every bound type, factory-served ones included, which costs time.
+  - Several accessors for one JFR field (`@JfrField` naming the same field twice), pooled or
+    inline, are generated at runtime when they declare the field's one generated type (an inline
+    primitive may be widened), next to any number of `raw = true` indices on a pooled scalar field
+    (raw is refused on inline and array fields); accessors of unrelated types fail generation
+    naming them (`TypedTwoAccessorsOneFieldTest`). `jafar-processor` reads such a field once per
+    accessor: `opOf` maps the field to a group op, and its `read` case rewinds the stream to the
+    field's start before each accessor's own read (`readOp`). Each accessor is planned and
+    checked as if it read the field alone (`BuildTimeRuntimeParityTest` compares an alias, a raw
+    index next to its pooled reference, a widened `int` and a second `String` accessor). An
+    interface with no such field generates the same handler as before, byte for byte. Both
+    generators accept an integer accessor of the field's own type or a wider one and refuse a
+    narrower one (an `int` accessor of a `long` field). Kept differences: the processor decodes
+    such a field once per accessor (and, for an inline complex value, allocates one handler per
+    accessor), where the runtime class reads it once; and it reads `byte` and `boolean` as each
+    other, which the runtime does not.
+  - How an event's fields are read. A runtime class is generated for one metadata layout and
+    reads straight through. A build-time handler cannot know the layout, so it reads in a loop
+    dispatching on each field's op (`Plan`), and for the layouts `jafar-processor` knew when it
+    generated the handler (`Layouts`: recordings named by `-Ajafar.layouts`, and the compiling
+    JDK's own for `jdk.*` types) it also has a straight-line read (`readLayoutK`), which `Plan`
+    picks when the recording's ops equal one of them. Any other layout uses the loop with the same
+    values (`BuildTimeRuntimeParityTest`, which also compiles with a layout that differs). With
+    the straight-line read, `BuildTimeHandlerBenchmark.parseAndConsumeEvent` ran 8.8% faster in
+    median over 8 paired runs against `-Pjafar.jmh.layouts=false`, 7 of 8 faster.
+  - Interface methods with no field read behind them (`TypedAccessorShapesTest`). Both sides
+    bind only abstract, non-static, parameterless methods without `@JfrIgnore`; a `default`
+    method is left to the interface even when its name matches a field. An accessor of a field
+    the recording lacks returns `0`, `false` or `null` at runtime. An accessor of a field present
+    whose declared type cannot be produced (a narrowing primitive, a `raw = true` accessor not
+    returning `long`) fails the parse at build time, naming the field (`HandlerTemplate`'s plan
+    check). At runtime it throws `IllegalStateException` naming the accessor and the field when
+    called, and generation does not fail, so a parse that never calls it runs: a kept
+    difference. A field no accessor reads generates nothing at runtime, so an alias may take its
+    name (`@JfrField("bytecodeIndex") int lineNumber()`).
+
+  Both read a simple type (one field, such as `jdk.types.Symbol`) as the value it wraps, unless the
+  accessor returns the interface registered for that type (`ThreadState state()` for a pooled
+  `jdk.types.ThreadState`): then it is read as that interface. Until `CodeGenerator` did the
+  same, the runtime class implemented such an accessor with the wrapped type's return type, which
+  is not the interface's method: `AbstractMethodError` (`TypedSimpleTypeInterfaceTest`).
 - Both APIs support handler registration and synchronous event processing
 
 ## Key Classes to Understand

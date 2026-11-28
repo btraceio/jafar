@@ -7,7 +7,9 @@ import io.jafar.shell.cli.FlameGraphRenderer;
 import io.jafar.shell.cli.ShowShape;
 import io.jafar.shell.core.CrossSessionContext;
 import io.jafar.shell.core.FlameNode;
+import io.jafar.shell.core.JsonText;
 import io.jafar.shell.core.ModuleSessionFactory;
+import io.jafar.shell.core.OpenArguments;
 import io.jafar.shell.core.QueryEvaluator;
 import io.jafar.shell.core.Session;
 import io.jafar.shell.core.SessionManager;
@@ -169,6 +171,7 @@ public final class Shell implements AutoCloseable {
       try {
         Files.createDirectories(histPath.getParent());
       } catch (Exception ignore) {
+        // history dir may be unwritable; history is best-effort
       }
     }
 
@@ -187,7 +190,7 @@ public final class Shell implements AutoCloseable {
 
           @Override
           public void printf(String fmt, Object... args) {
-            out.printf(fmt, args);
+            out.printf(Locale.ROOT, fmt, args);
             flush();
           }
 
@@ -444,11 +447,24 @@ public final class Shell implements AutoCloseable {
     }
 
     if (matchesCommand(input, "open")) {
-      String path = argumentOf(input);
-      if (path.isEmpty()) {
+      String argument = argumentOf(input);
+      if (argument.isEmpty()) {
         printError("Usage: open <path>");
+        return true;
+      }
+      // The same reading as jfr-shell's open, so a script either shell writes opens here: a
+      // quoted path loses its quotes (#233)
+      OpenArguments parsed;
+      try {
+        parsed = OpenArguments.parse(argument);
+      } catch (IllegalArgumentException e) {
+        printError(e.getMessage());
+        return true;
+      }
+      if (parsed.alias() != null) {
+        printError("open: --alias is not supported in this shell");
       } else {
-        handleOpen(path);
+        handleOpen(parsed.path());
       }
       return true;
     }
@@ -826,8 +842,10 @@ public final class Shell implements AutoCloseable {
       }
       err.println(
           String.format(
+              Locale.ROOT,
               "%nExecuted %d/%d commands successfully.",
-              result.getSuccessCount(), result.getSuccessCount() + result.getErrors().size()));
+              result.getSuccessCount(),
+              result.getSuccessCount() + result.getErrors().size()));
     } else if (result.getSuccessCount() > 0) {
       out.println();
       out.println("Script executed successfully: " + result.getSuccessCount() + " commands");
@@ -1189,7 +1207,7 @@ public final class Shell implements AutoCloseable {
 
     java.util.regex.Matcher formatMatcher = FORMAT_FLAG.matcher(cleanQuery);
     if (formatMatcher.find()) {
-      format = formatMatcher.group(1).toLowerCase();
+      format = formatMatcher.group(1).toLowerCase(Locale.ROOT);
       cleanQuery = formatMatcher.replaceFirst("").trim();
     }
 
@@ -1258,7 +1276,7 @@ public final class Shell implements AutoCloseable {
       Map<String, Object> copy = new java.util.LinkedHashMap<>(field);
       rememberResult(query, List.of(copy));
       if ("json".equalsIgnoreCase(format)) {
-        out.println(toJson(copy, 0));
+        out.println(JsonText.pretty(copy));
         flush();
       } else {
         Map<String, Object> shown = new java.util.LinkedHashMap<>(copy);
@@ -1276,9 +1294,8 @@ public final class Shell implements AutoCloseable {
     rememberResult(query, valueRows(values, projectedColumn(q)));
     if ("json".equalsIgnoreCase(format)) {
       out.println(
-          toJson(
-              ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values,
-              0));
+          JsonText.pretty(
+              ConstantValues.holdsRecordingValues(q) ? ConstantValues.unwrapEach(values) : values));
       flush();
     } else {
       // a 'value' column, as jfr-shell prints one
@@ -1550,7 +1567,7 @@ public final class Shell implements AutoCloseable {
     result = forDisplay(result, sessionType, query);
     if (result instanceof List<?> list) {
       if ("json".equalsIgnoreCase(format)) {
-        out.println(toJson(result, 0));
+        out.println(JsonText.pretty(result));
       } else if ("csv".equalsIgnoreCase(format)) {
         printCsv(list);
       } else {
@@ -1647,57 +1664,6 @@ public final class Shell implements AutoCloseable {
     return s;
   }
 
-  private static String toJson(Object obj, int indent) {
-    String ind = "  ".repeat(indent);
-    if (obj == null) return "null";
-    if (obj instanceof String s) return '"' + escapeJson(s) + '"';
-    if (obj instanceof Number || obj instanceof Boolean) return String.valueOf(obj);
-    if (obj instanceof Map<?, ?> m) {
-      var sb = new StringBuilder("{\n");
-      boolean first = true;
-      for (var e : m.entrySet()) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind)
-            .append("  \"")
-            .append(escapeJson(String.valueOf(e.getKey())))
-            .append("\": ")
-            .append(toJson(e.getValue(), indent + 1));
-      }
-      return sb.append("\n").append(ind).append("}").toString();
-    }
-    if (obj instanceof Iterable<?> coll) {
-      var sb = new StringBuilder("[\n");
-      boolean first = true;
-      for (Object v : coll) {
-        if (!first) sb.append(",\n");
-        first = false;
-        sb.append(ind).append("  ").append(toJson(v, indent + 1));
-      }
-      return sb.append("\n").append(ind).append("]").toString();
-    }
-    return '"' + escapeJson(String.valueOf(obj)) + '"';
-  }
-
-  private static String escapeJson(String s) {
-    var sb = new StringBuilder();
-    for (int i = 0; i < s.length(); i++) {
-      char c = s.charAt(i);
-      switch (c) {
-        case '"' -> sb.append("\\\"");
-        case '\\' -> sb.append("\\\\");
-        case '\n' -> sb.append("\\n");
-        case '\r' -> sb.append("\\r");
-        case '\t' -> sb.append("\\t");
-        default -> {
-          if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
-          else sb.append(c);
-        }
-      }
-    }
-    return sb.toString();
-  }
-
   private void printBanner() {
     out.println("╔═══════════════════════════════════════╗");
     out.println("║            Jafar Shell                ║");
@@ -1712,7 +1678,8 @@ public final class Shell implements AutoCloseable {
     out.println("Jafar Shell Commands:");
     out.println();
     out.println("Session Management:");
-    out.println("  open <path>        Open a file (auto-detects format)");
+    out.println(
+        "  open <path>        Open a file (auto-detects format; the path may be \"quoted\")");
     out.println("  sessions           List all open sessions");
     out.println("  use <id>           Switch to a session ('session <id>' is the same)");
     out.println("  close [id]         Close session (current if no id given)");
@@ -1853,17 +1820,20 @@ public final class Shell implements AutoCloseable {
     try {
       globalStore.clear();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
 
     try {
       sessions.closeAll();
     } catch (Exception ignore) {
+      // best-effort cleanup: keep closing the rest
     }
 
     if (history != null) {
       try {
         history.save();
       } catch (Exception ignore) {
+        // best-effort history save; shutdown continues
       }
     }
 

@@ -133,6 +133,12 @@ Simple field comparisons:
 - `<=` : Less than or equal
 - `~` : Regex match
 
+Against `null`, `=` and `!=` are presence checks: `[field = null]` matches events where the field
+is missing or null (a missing step on a nested path included), `[field != null]` events where it is
+present. A path that crosses an array needs an index (`frames/0/lineNumber`); without one it does
+not resolve, and reads as missing. The `any:`/`all:`/`none:` forms keep their own rules: there a
+missing list or element matches nothing.
+
 **Examples**:
 ```
 events/jdk.FileRead[bytesRead>1000]
@@ -143,7 +149,8 @@ metadata/jdk.types.Method[name="toString"]
 
 ### Numeric Literals and Units
 
-Numeric literals accept unit suffixes, so a filter reads the way the value does.
+Numeric literals may be negative (`[delta > -1]`, `between(x, -10, 10)`, `-0.5`, `-.5`), and accept
+unit suffixes, so a filter reads the way the value does.
 
 **Size suffixes** are binary and apply to byte-valued fields:
 
@@ -434,7 +441,14 @@ Filter rows in the pipeline using the same predicate syntax as path filters, wit
 ```
 events/jdk.FileRead | groupBy(path, agg=sum, value=bytesRead) | filter(sum>1048576)
 events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(count>100)
+events/jdk.ExecutionSample | groupBy(sampledThread/javaName) | filter(startsWith(key, "worker-"))
+events/jdk.ExecutionSample | filter(len(stackTrace/frames) > 50) | count()
 ```
+
+The predicate functions (`contains`, `between`, `len(...) > n`, ...) work as in path filters, and
+so do nested paths with array indexes (`stackTrace/frames/0/lineNumber`). In both, `field == null`
+is a presence check: it matches rows where the field is missing or null, and `field != null` rows
+where it is present.
 
 ### Distinct
 ```
@@ -593,8 +607,10 @@ Decorate events with information from time-overlapping events on the same thread
 **Parameters**:
 - `decoratorEventType` - Event type to use as decorator (quoted string)
 - `fields` - Comma-separated list of fields to extract from decorator
-- `threadPath` - Optional: path to thread ID in primary event (default: `eventThread/javaThreadId`)
-- `decoratorThreadPath` - Optional: path to thread ID in decorator (default: `eventThread/javaThreadId`)
+- `threadPath` - Optional: path to thread ID in primary event (default: the event's own thread's
+  `javaThreadId` — `sampledThread` for `jdk.ExecutionSample` and `jdk.NativeMethodSample`, which
+  have no `eventThread`, else `eventThread`)
+- `decoratorThreadPath` - Optional: path to thread ID in decorator (default: the same rule)
 
 **Overlap Logic**: Events overlap if their time ranges intersect:
 ```
@@ -738,6 +754,11 @@ Expressions support arithmetic operations, string concatenation, and built-in fu
 - `-` - Subtraction
 - `*` - Multiplication
 - `/` - Division
+
+Number literals in expressions may be negative or start with the decimal point (`-1`, `-0.5`,
+`.5`, `-.5`). Unlike filter literals, they take no unit suffix (`5s`, `1MB`). Put spaces around a
+minus that subtracts: a field name may contain `-`, so `v-1` and `v-.5` read as field paths, while
+`v - 1` and `v -.5` subtract.
 
 ```
 # Convert bytes to kilobytes
@@ -932,7 +953,11 @@ Computes the min/max time span covered by events. Returns a single-row summary w
 **Parameters**:
 - `path` - Time field to analyze (default: `startTime`)
 - `duration` - Duration field; if present, max is computed as `startTime + duration`
-- `format` - Output format string for `minTime`/`maxTime` (default: ISO local datetime)
+- `format` - Output format string for `minTime`/`maxTime` (default: ISO local datetime). A
+  `java.time` pattern, formatted with US English conventions on every machine: month, day, era
+  and zone names, the `AM`/`PM` marker, and US week numbering for `w`/`W`/`Y`/`e`/`c` (weeks start
+  on Sunday; week 1 is the one containing 1 January). The time zone is
+  the machine's
 
 **Output fields**: `count`, `field`, `minEpochNanos`, `maxEpochNanos`, `minTime`, `maxTime`, `durationNanos`, `durationMs`, `duration`
 
@@ -957,7 +982,8 @@ Converts epoch-nanosecond fields to human-readable datetime strings. Can be used
 
 **Parameters**:
 - `path` - Time field to format (default: `startTime`)
-- `format` - Date format string (default: ISO local datetime)
+- `format` - Date format string (default: ISO local datetime). A `java.time` pattern, formatted
+  with US English conventions on every machine, as for `timerange`
 
 **Examples**:
 ```
@@ -1312,7 +1338,7 @@ constants/jdk.types.StackTrace | crossref()
 
 In the interactive shell, use these commands:
 
-- `open <path> [--alias NAME]` - Open a recording
+- `open <path> [--alias NAME]` - Open a recording (a path may contain spaces, or be quoted)
 - `sessions` - List all sessions
 - `use <id|alias>` (or `session`) - Switch session
 - `close [<id|alias>|--all]` - Close session(s)

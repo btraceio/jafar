@@ -46,7 +46,8 @@ jfr> events/jdk.FileRead/bytesRead --limit 5
 ## Available Commands
 
 ### Session Management
-- `open <path> [--alias NAME]`: Open a recording file.
+- `open <path> [--alias NAME]`: Open a recording file. A path may contain spaces; quote it
+  (`open "/data/my recordings/app.jfr"`) when it also contains ` --alias`.
 - `connect`: List local JVMs (`[jfr]` marks one with a discoverable disk-backed JFR event repository).
 - `connect <pid> [--alias NAME] [--repository <dir>]`: Attach a live session to a running JVM's JFR event repository (local machine only, no attach API). While a live session is current, file-bound commands (`show`, `metadata`, `chunks`, `cp`, `backend`) are not available — use `tail`.
 - `tail [filter] [--limit N] [--format table|json]`: Stream events from the live session until Ctrl-C, the target JVM exits, or the limit is reached. The filter is a JfrPath expression with per-event operators only (`filter`, `select`, transforms) — aggregations (`count()`, `groupBy()`, …) need the full row set and are rejected.
@@ -151,6 +152,18 @@ jfr-shell constants <jfr-file> [options]
   --type, -t <name>         Constant pool type name
   --summary                 Show summary only
   --format, -f <format>     Output format: table (default), json
+
+# Compare command - Compare a candidate recording, pprof or OTLP profile against a baseline
+jfr-shell compare <baseline> <candidate> [options]
+  --json                    Print the full result as JSON
+  --event-type <type>       Execution sample event type of a JFR side (default: detected)
+  --sample-type <t[/unit]>  Sample type of a pprof or OTLP side (default: first CPU, else first)
+  --baseline-sample-type, --candidate-sample-type <t[/unit]>
+                            The same for one side; overrides --sample-type
+  --allow-mixed-samplers    Compare CPU against wall clock instead of refusing (nothing judged)
+  --list-sample-types       List both files' sample types and exit
+  --min-delta-pct <pct>     Noise floor in percentage points for frame changes (default: 1.0)
+  --limit, -l <N>           Maximum number of changed frames per list (default: 25)
 ```
 
 **Non-Interactive Examples:**
@@ -177,11 +190,144 @@ jfr-shell constants recording.jfr --type jdk.types.Symbol
 jfr-shell show recording.jfr "constants/jdk.types.StackTrace | crossref()"
 ```
 
+#### Comparing two recordings
+
+`jfr-shell compare` runs the comparison behind the MCP tool `jfr_compare`, with no server. Event
+counts are compared as rates per second of each recording's own observed span. Frames are compared
+as shares of each recording's execution samples, in two lists:
+
+- **Self time** (`frames`): the share of samples whose leaf frame is the method.
+- **Inclusive time** (`inclusiveFrames`): the share of samples whose stack contains the method,
+  counted once per sample even when it recurses. This list names a caller whose own code did not
+  change but whose callees got slower, which self time cannot show.
+
+Frame names are `<class>.<method>` with the class name dotted (`java.lang.String.indexOf`, though
+JFR stores `java/lang/String`), or the bare symbol for a native frame. They leave out what the JVM
+assigns per run, a hidden class's address (`/0x…` or `.0x…`, as in
+`LambdaForm$MH/0x00007f2e141a1000`) and a lambda class's number (`$$Lambda$14`), and what javac
+assigns per compilation: the number in a synthetic accessor (`access$300`, for code compiled for
+Java 8) and in a lambda body (`lambda$main$0`). Two recordings come from two JVMs, often running
+two builds, so with those parts the same frame would have a different name on each side. Frames
+that differ only in them are counted as one.
+
+JFR cuts every stack at its stack depth, 64 frames unless the recorded JVM ran with
+`-XX:FlightRecorderOptions:stackdepth=<n>`. On JDK 21 that option was measured to cap at 2048 frames.
+A cut stack lacks its outermost frames, so their inclusive share is understated. Each side's
+`truncatedStacks` and `truncatedStacksPct` say how many stacks were cut. When more than 1% were cut
+on either side, a comparability note says so and no inclusive change is called significant; self
+time is judged as usual.
+
+A frame is reported only if its share moved by at least `--min-delta-pct` points. It is called a
+`regression` or an `improvement` only when the move is significant: both recordings have at least
+30 samples, the frame has at least 5 samples in one of them, and the two-proportion z score is at
+least 3. Anything less is `inconclusive`. A share moving says where time went, not that the build
+got slower. Findings are drawn from self time and event rates only.
+
+```bash
+# Short report: rates, both frame lists, findings
+jfr-shell compare before.jfr after.jfr
+
+# Machine output for CI: the keys jfr_compare returns (without session ids), plus inclusiveFrames
+jfr-shell compare before.jfr after.jfr --json | jq '.inclusiveFrames[] | select(.significant)'
+```
+
+The JSON object has the keys `baseline`, `candidate` (each with `recordingPath`, `eventType`,
+`samples`, `observedDurationSeconds`, `totalEvents`, `truncatedStacks`, `truncatedStacksPct`),
+`comparability`, `metrics`, `frames`,
+`inclusiveFrames`, `minDeltaPct`, `sufficientSamples`, `minSamplesPerRecording`, `findings` and
+`findingCounts`. Self-time rows carry `baselineSelfPct` and `candidateSelfPct`; inclusive rows carry
+`baselineTotalPct` and `candidateTotalPct`. The exit code is `0` whenever the comparison ran,
+whatever it found, `1` when a recording is missing or cannot be read, and `2` on a usage error.
+
+#### Comparing a pprof profile
+
+Either side can be a pprof profile (`.pb.gz`, `.pprof`) when `compare` runs from the `jafar-shell`
+jar, which carries the pprof module; jfr-shell's own jar knows JFR only, and reads every file as a
+recording. A file that starts with JFR's magic is a recording; any other file is read by the
+module that recognises it. The comparison is the same, with these differences:
+
+- **Shares are of the chosen sample type.** A pprof profile has one value column per sample type.
+  `--sample-type` (or `--baseline-sample-type` / `--candidate-sample-type`) picks one by `type` or
+  `type/unit`; the default is the first CPU type, else the first, and the side's description says
+  which was chosen, why, and where its counts came from (`sampleTypeChosen`).
+  `--list-sample-types` prints them (a JFR side by its bare event type, which `--event-type` takes).
+  Using an option on a side of the other format (`--sample-type` with two recordings) is a usage
+  error, exit 2.
+- **Significance needs observation counts.** They come from, in order: the column itself when its
+  unit is `count` and it counts samples; the column a producer pairs with it (`samples/count`
+  beside `cpu/nanoseconds`, when there is exactly one; `cpu-samples` beside `cpu-time`); or the
+  column's values summed per frame and divided by the period once, when the period has the column's
+  unit. Allocation and lock columns never give counts: allocation object counts (`alloc_objects`,
+  `inuse_objects`) are estimates scaled from the sampled allocations, not trials, so a Go heap
+  profile has no counts; Go's mutex and block profiles scale each sampled contention by the
+  sampling rate and write period 1 whatever the rate, so `contentions` divided by the period is
+  not a count either. A profile without counts still gets its shares, but no change is called
+  significant, and a note says why.
+- **Samplers must measure the same thing.** A sample type named `cpu`, `cpu-time`, `cpu_time` or
+  any other `cpu*` is CPU; `wall*` is wall clock. With a pprof side, CPU against wall clock is
+  refused unless `--allow-mixed-samplers`, which compares with nothing judged; an allocation profile
+  against a CPU or wall one is always refused. Allocation types are `alloc_*`, `inuse_*`,
+  async-profiler's `allocations` and `malloc`; lock types `contentions`, `delay`, `lock` and
+  async-profiler's `locks`. A sample type whose kind is not recognised is compared with a note. The
+  kind comes from the name alone: async-profiler's `jfrconv --wall` names its column `cpu`, so a
+  wall-clock profile it converted reads as CPU. Two recordings are never refused: they get the event-type note, as with
+  `jfr_compare`.
+- **Frame names follow the profile.** A slashed Java name (`java/lang/String.indexOf`) is dotted
+  only when the profile looks JVM-originated: some function is `<init>`, `<clinit>` or a
+  `$$Lambda`, or comes from a `.java`, `.kt` or `.scala` file. A Go profile keeps
+  `encoding/json.Marshal` as stored. A trailing `:<line>` is dropped, so a recording still matches
+  its conversion with `includeLineNumbers: true`.
+- **No event rates** unless both sides are recordings, and **no truncation count** for a pprof side:
+  pprof does not record when a stack was cut, so a note says inclusive shares may be understated.
+  Inclusive moves are still judged.
+
+```bash
+# A recording against its jfr2pprof conversion: the same frames, so nothing moves
+jafar-shell compare before.jfr before.pb.gz
+# Two Go-style CPU profiles, comparing the cpu/nanoseconds column
+jafar-shell compare old.pb.gz new.pb.gz --sample-type cpu/nanoseconds --json
+```
+
+#### Comparing an OTLP profile
+
+An OTLP profiles file (`.otlp`, binary `ProfilesData`) is compared the same way, also from the
+`jafar-shell` jar, with the pprof rules above. What differs:
+
+- **Sample types are profiles.** An OTLP file holds profiles of one sample type each; its sample
+  types are their distinct `type/unit` pairs, and `--sample-type` selects every profile of one.
+  async-profiler writes one profile per file. Its agent names the sample type after its engine:
+  `perf_events/count` (CPU, by its `perf_events/ns` period type), `itimer`, `ctimer`, `wall`,
+  `object_sampler` (allocations), `malloc_tracer`, `lock_tracer`; `jfrconv -o otlp` writes `cpu`,
+  `allocations` and, for `--wall`, `cpu` again, so a wall profile it converted reads as CPU.
+- **Counts:** a `count` sample type counts samples (not an allocation or lock one); otherwise one
+  per sample timestamp, when every sample has timestamps; otherwise values over the period. A
+  sample's weight is the sum of its values, or its number of timestamps when it has none.
+- **Layout:** the reader reads opentelemetry-proto v1.10.0's layout (async-profiler 4.6). An older
+  file, such as async-profiler 4.1's (v1.7.0), fails with "unsupported OTLP profiles layout"
+  rather than giving wrong numbers.
+- **Frame names:** async-profiler's frame-type marks (`byte[]_[i]`, `do_syscall_64_[k]`) are not
+  part of the name, so its agent's OTLP and its JFR agree.
+
+```bash
+# One async-profiler run as JFR and as its OTLP conversion: the same frames and counts
+java -agentpath:/path/to/libasyncProfiler.so=start,event=cpu,file=run.jfr -jar app.jar
+jfrconv -o otlp run.jfr run.otlp
+jafar-shell compare run.jfr run.otlp
+# The agent can write OTLP itself
+java -agentpath:/path/to/libasyncProfiler.so=start,event=cpu,otlp,file=after.otlp -jar app.jar
+jafar-shell compare before.otlp after.otlp --list-sample-types
+```
+
 **Exit Codes:**
 - `0` - Success
 - `1` - Error (with message to stderr)
+- `2` - Usage error: a missing or malformed argument (message and the command's usage to stderr)
 
 All non-interactive commands execute without prompts, making them suitable for automation and CI pipelines.
+
+The stdout of `show`, `metadata`, `chunks` and `constants` carries the result only, so `--format
+json` output pipes into a JSON parser. With `-Djfr.shell.verbose=true` or `JFR_SHELL_VERBOSE=1`
+they also print notes such as `Opened session #1: <file>` on stdout, before the result.
 
 ## Metadata Field Paths (mini guide)
 

@@ -10,6 +10,22 @@ Read [AGENTS.md](../../../AGENTS.md) first. The rules live in
 change actually works, in the order that catches the most per unit of effort. Every case file in
 Verification.md shipped green, so a passing build is the floor, not the ceiling.
 
+## Gates that ride every build
+
+Spotless formatting, the architectural invariants (`:arch-tests:test`, see
+[Gates.md](../../../doc/agents/Gates.md)) and PMD clean-code analysis (`pmdMain`)
+all run as part of `check`/`build` — locally and in CI. Before claiming done, run the narrow gate
+for the module you touched plus these:
+
+```bash
+./gradlew :arch-tests:test        # module-boundary, api-signature and SPI rules ((a)–(i))
+./gradlew pmdMain                 # clean-code rules (config/pmd/ruleset.xml)
+./gradlew spotlessCheck           # formatting
+```
+
+A violation found by CI that these three would have caught locally is a verification failure,
+not CI being picky.
+
 ## R1 — type it into the built artifact
 
 A green unit test, a completer entry and a doc line are not evidence a command runs. Type the
@@ -81,7 +97,7 @@ recording run at the same time. When writing or reviewing one:
       :shell-core:test --tests '*JFRSessionDeterminismTest' --rerun \
       :jfr-shell:test --tests '*MultiChunkDeterminismTest' --tests '*ConstantPoolChunkLocalityTest' --rerun \
       :parser-core:test --tests '*EventDecodeFailureTest' --tests '*JfrGoldenDumpTest' --rerun \
-      :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --rerun
+      :parser-codegen:test --tests '*GeneratedEventDecodeFailureTest' --tests '*SharedParsingContextStressTest' --tests '*TypedTypeFilterChunkRaceTest' --rerun
   done
   ```
 

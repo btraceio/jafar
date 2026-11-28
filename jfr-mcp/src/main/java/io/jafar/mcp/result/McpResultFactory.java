@@ -22,12 +22,19 @@ public final class McpResultFactory {
     this.prettyWriter = mapper.writerWithDefaultPrettyPrinter();
   }
 
+  /**
+   * The result for {@code data}, as text and as structured content. Both are made of {@link
+   * PlainValues}: parser wrappers in query rows would otherwise be written as Java beans (#283).
+   */
   public CallToolResult success(Map<String, Object> data) {
+    // A constant that throws while resolving throws here as it did in serialization before; the
+    // tool handler turns it into an error result
+    Map<String, Object> plain = PlainValues.of(data);
     try {
-      String json = prettyWriter.writeValueAsString(data);
-      return new CallToolResult(List.of(new TextContent(json)), false, data, null);
+      String json = prettyWriter.writeValueAsString(plain);
+      return new CallToolResult(List.of(new TextContent(json)), false, plain, null);
     } catch (Exception e) {
-      return new CallToolResult(List.of(new TextContent(data.toString())), false, data, null);
+      return new CallToolResult(List.of(new TextContent(plain.toString())), false, plain, null);
     }
   }
 

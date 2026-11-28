@@ -25,7 +25,7 @@ final class PathValues {
       String base = baseName(last);
       List<String> head = new java.util.ArrayList<>(proj);
       head.set(head.size() - 1, base);
-      Object arrVal = Values.get(root, buildPathTokens(head).toArray());
+      Object arrVal = Values.get(root, tokensOf(head).toArray());
       Object arr = unwrapArrayLike(arrVal);
       if (arr == null) return;
       int len = java.lang.reflect.Array.getLength(arr);
@@ -37,7 +37,7 @@ final class PathValues {
       return;
     }
     // Try new recursive array iteration approach
-    extractWithArrayIteration(root, buildPathTokens(proj), out);
+    extractWithArrayIteration(root, tokensOf(proj), out);
   }
 
   /**
@@ -149,7 +149,35 @@ final class PathValues {
    * select() and expression field references keep one value per row.
    */
   static Object resolveSingle(Map<String, Object> root, List<String> segments) {
-    return resolveSingleValue(root, buildPathTokens(segments));
+    return resolveSingleValue(root, tokensOf(segments));
+  }
+
+  /**
+   * Parsed paths, by path. A filter resolves its field path for every event it tests, and a sort
+   * for every comparison, always with the same few paths of one query; parsing them each time was
+   * about a tenth of a filtered query's time. Bounded: cleared when it reaches {@link
+   * #MAX_CACHED_PATHS}, which a session reaches only with that many distinct paths.
+   */
+  private static final java.util.concurrent.ConcurrentHashMap<List<String>, List<Object>> TOKENS =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  static final int MAX_CACHED_PATHS = 4096;
+
+  /**
+   * {@link #buildPathTokens} of {@code segments}, parsed once per distinct path. The result is
+   * unmodifiable and shared; the key is an unmodifiable copy, so a caller that later changes its
+   * list does not change the entry.
+   */
+  static List<Object> tokensOf(List<String> segments) {
+    List<Object> tokens = TOKENS.get(segments);
+    if (tokens == null) {
+      tokens = java.util.Collections.unmodifiableList(buildPathTokens(segments));
+      if (TOKENS.size() >= MAX_CACHED_PATHS) {
+        TOKENS.clear();
+      }
+      TOKENS.put(List.copyOf(segments), tokens);
+    }
+    return tokens;
   }
 
   private static Object resolveSingleValue(Map<String, Object> root, List<Object> tokens) {
@@ -200,14 +228,9 @@ final class PathValues {
       String seg = segs.get(si);
       int b = seg.indexOf('[');
       if (b < 0) {
-        // No brackets - check if segment is a numeric index
-        try {
-          int index = Integer.parseInt(seg);
-          tokens.add(index);
-        } catch (NumberFormatException e) {
-          // Not a number, add as string
-          tokens.add(seg);
-        }
+        // No brackets: a numeric segment is an index, anything else a field name
+        Integer index = parseIndex(seg);
+        tokens.add(index != null ? index : seg);
         continue;
       }
       String name = seg.substring(0, b);
@@ -232,15 +255,34 @@ final class PathValues {
           Slice sl = parseSlice("[" + inside + "]");
           if (sl != null) tokens.add(sl);
         } else {
-          try {
-            tokens.add(Integer.parseInt(inside));
-          } catch (Exception ignore) {
-          }
+          Integer index = parseIndex(inside);
+          if (index != null) tokens.add(index); // not a numeric token: skip it
         }
         i = e + 1;
       }
     }
     return tokens;
+  }
+
+  /**
+   * {@code s} as {@link Integer#parseInt} reads it (an optional sign, then decimal digits), or
+   * {@code null} where parseInt would throw. Checked before parsing because this runs for every
+   * path segment of every event a filter tests: a field name is the common case, and a thrown
+   * {@link NumberFormatException} per segment dominated filtered queries.
+   */
+  static Integer parseIndex(String s) {
+    int n = s.length();
+    int i = n > 0 && (s.charAt(0) == '-' || s.charAt(0) == '+') ? 1 : 0;
+    if (i == n) return null;
+    for (int j = i; j < n; j++) {
+      // Character.digit, not '0'..'9': parseInt accepts every Unicode decimal digit
+      if (Character.digit(s.charAt(j), 10) < 0) return null;
+    }
+    try {
+      return Integer.parseInt(s);
+    } catch (NumberFormatException overflow) {
+      return null;
+    }
   }
 
   static String baseName(String seg) {
@@ -262,11 +304,13 @@ final class PathValues {
       try {
         from = Integer.parseInt(a);
       } catch (Exception ignore) {
+        // unparseable lower bound: keep default
       }
     if (!bb.isEmpty())
       try {
         to = Integer.parseInt(bb);
       } catch (Exception ignore) {
+        // unparseable upper bound: keep default
       }
     return new Slice(from, to);
   }

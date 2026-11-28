@@ -1,5 +1,7 @@
 package io.jafar.shell.cli;
 
+import java.util.Locale;
+
 /** Simple, self-contained pager for CLI output. */
 final class PagedPrinter {
   private final CommandDispatcher.IO io;
@@ -59,7 +61,7 @@ final class PagedPrinter {
     // it might have been set after PagedPrinter was created
     String prop = System.getProperty("jfr.shell.pager");
     if (prop != null) {
-      String v = prop.trim().toLowerCase();
+      String v = prop.trim().toLowerCase(Locale.ROOT);
       if (v.equals("0") || v.equals("off") || v.equals("false")) {
         return true; // Don't prompt, continue showing output
       }
@@ -87,14 +89,14 @@ final class PagedPrinter {
     // Check system property first (allows ScriptCommand to disable paging)
     String prop = System.getProperty("jfr.shell.pager");
     if (prop != null) {
-      String v = prop.trim().toLowerCase();
+      String v = prop.trim().toLowerCase(Locale.ROOT);
       if (v.equals("0") || v.equals("off") || v.equals("false")) return false;
       if (v.equals("1") || v.equals("on") || v.equals("true")) return true;
     }
     // Check environment variable
     String env = System.getenv("JFR_SHELL_PAGER");
     if (env != null) {
-      String v = env.trim().toLowerCase();
+      String v = env.trim().toLowerCase(Locale.ROOT);
       if (v.equals("0") || v.equals("off") || v.equals("false")) return false;
       if (v.equals("1") || v.equals("on") || v.equals("true")) return true;
     }
@@ -108,6 +110,7 @@ final class PagedPrinter {
       try {
         return Math.max(5, Integer.parseInt(env.trim()));
       } catch (NumberFormatException ignore) {
+        // malformed JFR_SHELL_PAGE_SIZE: fall back to the default
       }
     }
     return 24; // conservative default

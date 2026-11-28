@@ -181,6 +181,9 @@ public final class JfrPathParser {
     try {
       io.jafar.shell.jfrpath.JfrPath.BoolExpr expr = parseBoolExpr();
       return new io.jafar.shell.jfrpath.JfrPath.ExprPredicate(expr);
+    } catch (NotAValueFunction ex) {
+      // The legacy form cannot read name(...) either: its error would hide this one
+      throw ex;
     } catch (IllegalArgumentException ex) {
       pos = start;
       return parseLegacyPredicate();
@@ -276,14 +279,26 @@ public final class JfrPathParser {
     }
     int save = pos;
     String name = readIdent();
+    io.jafar.shell.jfrpath.JfrPath.ValueExpr ve;
     if (!name.isEmpty() && peek() == '(') {
       pos++;
       var args = parseFuncArgs();
       expect(')');
-      return new io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr(name, args);
+      skipWs();
+      if (!startsComparison()) {
+        return new io.jafar.shell.jfrpath.JfrPath.FuncBoolExpr(name, args);
+      }
+      // A value function compared, as documented: [len(path)>50]. Read as a boolean function,
+      // the comparison after it failed to parse (#303)
+      if (!VALUE_FUNCTIONS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+        throw new NotAValueFunction(
+            error(name + "() is not a value function and cannot be compared").getMessage());
+      }
+      ve = new io.jafar.shell.jfrpath.JfrPath.FuncValueExpr(name, args);
+    } else {
+      pos = save;
+      ve = parseValueExpr();
     }
-    pos = save;
-    var ve = parseValueExpr();
     skipWs();
     Op op;
     if (match("=~") || match("~")) op = Op.REGEX;
@@ -297,6 +312,22 @@ public final class JfrPathParser {
     skipWs();
     Object lit = parseLiteral();
     return new io.jafar.shell.jfrpath.JfrPath.CompExpr(ve, op, lit);
+  }
+
+  /** A boolean function compared ({@code contains(...) = true}): reported as is, no fallback. */
+  private static final class NotAValueFunction extends IllegalArgumentException {
+    NotAValueFunction(String message) {
+      super(message);
+    }
+  }
+
+  /** The functions with a value to compare (MatchEngine.evalValueExpr). */
+  private static final java.util.Set<String> VALUE_FUNCTIONS = java.util.Set.of("len");
+
+  /** Whether a comparison operator ({@code = == != < <= > >= ~ =~}) starts here. */
+  private boolean startsComparison() {
+    int c = peek();
+    return c == '=' || c == '!' || c == '<' || c == '>' || c == '~';
   }
 
   private io.jafar.shell.jfrpath.JfrPath.ValueExpr parseValueExpr() {
@@ -322,7 +353,9 @@ public final class JfrPathParser {
       skipWs();
       if (peek() == '"' || peek() == '\'') {
         args.add(new io.jafar.shell.jfrpath.JfrPath.LiteralArg(parseLiteral()));
-      } else if (Character.isDigit((char) peek())) {
+      } else if (Character.isDigit((char) peek()) || startsNegativeNumber()) {
+        // A negative bound was read as a field named "-1" (#304: between(f, -1, 5) failed with
+        // 'For input string: "null"')
         args.add(new io.jafar.shell.jfrpath.JfrPath.LiteralArg(parseLiteral()));
       } else {
         args.add(new io.jafar.shell.jfrpath.JfrPath.PathArg(parsePathSegments()));
@@ -450,8 +483,11 @@ public final class JfrPathParser {
       return Boolean.FALSE;
     }
 
-    // number (int or decimal)
+    // number (int or decimal), optionally negative (#304: [gcId > -1] was "Expected literal")
     int start = pos;
+    if (startsNegativeNumber()) {
+      pos++;
+    }
     boolean dot = false;
     while (!eof()) {
       char c = (char) peek();
@@ -510,9 +546,12 @@ public final class JfrPathParser {
 
     try {
       if (dot) return Double.parseDouble(num) * multiplier;
-      return Long.parseLong(num) * multiplier;
+      // Exact: 9223372036854775807K wrapped around silently (#312)
+      return Math.multiplyExact(Long.parseLong(num), multiplier);
     } catch (NumberFormatException e) {
       throw error("Invalid number literal: " + num);
+    } catch (ArithmeticException e) {
+      throw error("Number literal out of range: " + num);
     }
   }
 
@@ -625,7 +664,9 @@ public final class JfrPathParser {
           } else {
             Object lit = parseLiteral();
             if (!(lit instanceof Number)) throw error("quantiles() expects numeric quantiles 0..1");
-            qs.add(((Number) lit).doubleValue());
+            double q = ((Number) lit).doubleValue();
+            if (q < 0 || q > 1) throw error("quantiles() expects numeric quantiles 0..1");
+            qs.add(q);
           }
           skipWs();
         }
@@ -778,7 +819,7 @@ public final class JfrPathParser {
         // First arg is the count
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("top() expects numeric count");
-        n = ((Number) lit).intValue();
+        n = count(lit, "top()");
         skipWs();
         // Parse optional by=/asc= named params or positional field + asc/desc keywords
         while (peek() == ',') {
@@ -815,7 +856,7 @@ public final class JfrPathParser {
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("head() expects numeric count");
-        n = ((Number) lit).intValue();
+        n = count(lit, "head()");
         skipWs();
         expect(')');
       }
@@ -827,7 +868,7 @@ public final class JfrPathParser {
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("tail() expects numeric count");
-        n = ((Number) lit).intValue();
+        n = count(lit, "tail()");
         skipWs();
         expect(')');
       }
@@ -1123,12 +1164,29 @@ public final class JfrPathParser {
       fields.add(field);
       skipWs();
       if (peek() == ',') {
+        int comma = pos;
         pos++; // ,
         skipWs();
         if (peek() == ')' || peek() == ',') break; // trailing comma or end of params
+        // 'fields=a, threadPath=...': the next named parameter, not a field. Leave the comma for
+        // the caller's parameter loop; read as a field, it failed with "Expected ')'".
+        if (atNamedParameter()) {
+          pos = comma;
+          break;
+        }
       } else break;
     }
     return fields;
+  }
+
+  /** Whether the input at {@code pos} is {@code name=}, a named parameter. */
+  private boolean atNamedParameter() {
+    int p = pos;
+    while (p < input.length()
+        && (Character.isLetterOrDigit(input.charAt(p)) || input.charAt(p) == '_')) {
+      p++;
+    }
+    return p > pos && p < input.length() && input.charAt(p) == '=';
   }
 
   private JfrPath.KeyExpr parseKeyExpr() {
@@ -1324,13 +1382,14 @@ public final class JfrPathParser {
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("buckets= expects a number");
-        buckets = ((Number) lit).intValue();
+        buckets = count(lit, "buckets=");
       } else if (startsWithIgnoreCase("minPct=")) {
         pos += 7;
         skipWs();
         Object lit = parseLiteral();
         if (!(lit instanceof Number)) throw error("minPct= expects a number");
         minPct = ((Number) lit).doubleValue();
+        if (minPct < 0) throw error("minPct= expects a percentage of 0 or more");
       } else if (peek() != ')' && peek() != ',') {
         throw error("stackprofile() expects direction=, buckets=, or minPct= parameters");
       }
@@ -1373,8 +1432,6 @@ public final class JfrPathParser {
   }
 
   private JfrPath.SelectItem parseSelectItem() {
-    int start = pos;
-
     // Try to detect if this is an expression or simple field path
     boolean isExpression = detectExpression();
 
@@ -1428,7 +1485,10 @@ public final class JfrPathParser {
 
       // Check for literal (number or string)
       char first = (char) peek();
-      if (Character.isDigit(first) || first == '"' || first == '\'') {
+      if (Character.isDigit(first)
+          || first == '"'
+          || first == '\''
+          || (first == '.' && Character.isDigit((char) peekAhead(1)))) {
         return true;
       }
 
@@ -1571,9 +1631,10 @@ public final class JfrPathParser {
       return parseStringLiteralOrTemplate();
     }
 
-    // Number literal
+    // Number literal: 5, -5, .5 and -.5 (#312: -.5 was read as the field path ["-", "5"])
     if (Character.isDigit((char) peek())
-        || (peek() == '-' && Character.isDigit((char) peekAhead(1)))) {
+        || startsNegativeNumber()
+        || (peek() == '.' && Character.isDigit((char) peekAhead(1)))) {
       return new JfrPath.Literal(parseNumberLiteral());
     }
 
@@ -1615,9 +1676,6 @@ public final class JfrPathParser {
   }
 
   private JfrPath.Expr parseStringLiteralOrTemplate() {
-    char quote = (char) peek();
-    int startPos = pos;
-
     // First pass: parse the string and check if it contains ${...}
     String rawString = parseStringLiteral();
 
@@ -1773,6 +1831,30 @@ public final class JfrPathParser {
 
   private int peek() {
     return eof() ? -1 : input.charAt(pos);
+  }
+
+  /**
+   * A count argument: a literal may be negative since #304, a count may not ("fromIndex(0) >
+   * toIndex(-1)" otherwise).
+   */
+  private int count(Object lit, String what) {
+    Number num = (Number) lit;
+    double d = num.doubleValue();
+    // Whole, 0 or more, and an int: (int) 3000000000 wrapped to a negative count
+    if (d < 0 || d != Math.rint(d) || d > Integer.MAX_VALUE) {
+      throw error(what + " expects a whole count of 0 or more, at most " + Integer.MAX_VALUE);
+    }
+    return num.intValue();
+  }
+
+  /** Whether a minus sign followed by a digit or a decimal point and digit starts here. */
+  private boolean startsNegativeNumber() {
+    if (peek() != '-' || pos + 1 >= input.length()) {
+      return false;
+    }
+    char next = input.charAt(pos + 1);
+    return Character.isDigit(next)
+        || (next == '.' && pos + 2 < input.length() && Character.isDigit(input.charAt(pos + 2)));
   }
 
   private boolean eof() {

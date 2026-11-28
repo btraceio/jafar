@@ -207,6 +207,11 @@ A handler registered without a filter makes the parser decode every event. See
 `QueryPushdownBenchmark` in `parser-codegen` for what the filter is worth on a multi-chunk
 recording.
 
+To count events, or to look only at their types, sizes and start times, read the headers and
+decode nothing: `parser.countEvents()`, or `parser.handleHeaders(filter, handler)` for the type,
+size and `startTime` of each event. `QueryPushdownBenchmark.countEventsFromHeaders` measures it
+against `countByDecoding`.
+
 ### 5. Adjust Heap Size
 For large files (>1 GB):
 ```bash
@@ -242,6 +247,18 @@ those files, exactly as the workflow builds it:
 
 ```bash
 python3 scripts/jmh_trend.py --current build/jmh
+```
+
+To compare two builds rather than two nights, run the same benchmarks for both on one
+machine, interleaved (A B B A, `-rf json` each), and hand the result files to
+`scripts/perf_ab.py`. It pools the forks per side and prints, per benchmark, both medians,
+the head/base ratio with a 99% interval, an exact Mann-Whitney p and a verdict. Like the
+trend, it is advisory: it exits 0 whatever the numbers say, and 2 only on malformed data.
+Its header documents the options and the calibration file:
+
+```bash
+python3 scripts/perf_ab.py --base base-r1.json --base base-r2.json \
+    --head head-r1.json --head head-r2.json [--calibration FILE] [--json report.json]
 ```
 
 The workflow triggers nightly (03:41 UTC, off the hour), on `workflow_dispatch`,
